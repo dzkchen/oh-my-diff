@@ -10,7 +10,7 @@ const checker = program.getTypeChecker();
 const results = {};
 for (const file of files) {
   const source = program.getSourceFile(file);
-  const result = { commands: [], tools: 0, component: false, imports: false, keys: [], errors: [], registrations: [] };
+  const result = { commands: [], replaced: [], tools: 0, component: false, imports: false, keys: [], errors: [], registrations: [] };
   results[file] = result;
   result.errors = source.parseDiagnostics.map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
   const visit = node => {
@@ -39,6 +39,13 @@ for (const file of files) {
         result.registrations.push({ method: name, names: literals });
         if (name === 'tool') result.tools++;
         if (name === 'component') result.component = true;
+        const field = (object, key) => object && ts.isObjectLiteralExpression(object) && object.properties
+          .find(property => ts.isPropertyAssignment(property) && property.name.getText().replace(/^['"]|['"]$/g, '') === key)?.initializer;
+        const replace = name === 'builtins' && field(field(node.arguments[0], 'commands'), 'replace');
+        for (const property of replace?.properties ?? []) {
+          const key = property.name?.getText().replace(/^['"]|['"]$/g, '');
+          if (ts.isPropertyAssignment(property) && ts.isStringLiteralLike(property.initializer) && property.initializer.text === key) result.replaced.push(key);
+        }
         if (name === 'command') {
           const type = node.arguments[0] && checker.getTypeAtLocation(node.arguments[0]);
           result.commands.push(type?.isStringLiteral() ? type.value : null);

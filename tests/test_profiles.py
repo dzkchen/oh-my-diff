@@ -290,14 +290,12 @@ class ProfileModeTests(unittest.TestCase):
             host = {"mods": [{"id": "omd_logo", "error": None}, {"id": "omd_bad", "error": "activation_failed"}], "rejected": []}
             with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
                     patch.object(profiles, "invoke", return_value=host), patch.object(profiles.shutil, "which", return_value="/usr/local/bin/codex"), \
-                    patch.object(profiles.authority_broker, "status", return_value={"deployed": False, "loaded": False, "authority": "unprotected (same-user)"}), \
-                    patch.object(profiles.Path, "cwd", return_value=Path.home()):
+                    patch.object(profiles.authority_broker, "status", return_value={"deployed": False, "loaded": False, "authority": "unprotected (same-user)"}):
                 checks = {item["check"]: item for item in profiles.doctor_checks(base, base / "bin")}
                 self.assertEqual({name: item["status"] for name, item in checks.items()},
-                                 {"path": "fail", "launcher": "ok", "store": "fail", "folder": "warn", "runner": "ok", "broker": "ok", "updates": "warn"})
+                                 {"path": "fail", "launcher": "ok", "store": "fail", "runner": "ok", "broker": "ok", "updates": "warn"})
                 self.assertIn(f'export PATH="{base / "links"}:$PATH"', checks["path"]["fix"])
                 self.assertEqual(checks["store"]["detail"], "omd_bad: activation_failed")
-                self.assertEqual(checks["folder"]["fix"], "cd into a project, then run codex")
                 self.assertTrue(checks["updates"]["detail"].startswith("stable channel, update checks off; 2.0.0 can't be installed"))
                 upstream = subprocess.CompletedProcess([], 0, stdout='{"checks": []}', stderr="")
                 printed = []

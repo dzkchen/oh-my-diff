@@ -21,7 +21,7 @@ omd mods enable omd_tool_absorb
 
 ## Use it
 
-There is nothing to run. `/absorb` shows the merged batches in this thread, how many duplicate reads were skipped
+There is nothing to run. `/merged_reads` shows the merged batches in this thread, how many duplicate reads were skipped
 and which host call ran each read.
 
 ### What it merges
@@ -55,7 +55,7 @@ It has no settings.
 
 ## Needs and limits
 
-- It asks to add `/absorb`, see and merge the model's tool calls, run merged reads through a tool of its own, check
+- It asks to add `/merged_reads`, see and merge the model's tool calls, run merged reads through a tool of its own, check
   files for changes, keep shared outputs in thread storage and follow turns. The capabilities are `commands`,
   `interception`, `tools`, `fs.read`, `store`, `events`, `lifecycle` and `inventory` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).

@@ -207,7 +207,7 @@ impl Mods {
                 .canonicalize()
                 .map_err(|_| "protected_path_unavailable")?
                 != path
-                || path.starts_with(&this.host.repository)
+                || codex_omd::inside_repository(&path, &this.host.repository)
             {
                 return Err("protected_mod_path_must_be_canonical_and_external".into());
             }
@@ -639,14 +639,14 @@ fn publish(
     runtime: &mut ModHost,
     host: &Host,
     views: &view::Views,
-    terminal_owner: bool,
+    terminal_owner: Option<&str>,
     event: &str,
     ledger: Value,
     active: impl Fn() -> bool,
 ) {
     let mut input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
         "presentation": codex_omd::client_surface::presented(views.current_presentation()),
-        "client": codex_omd::client_surface::client(),
+        "client": clients::client_facts(terminal_owner),
         "clients": codex_omd::client_surface::clients()});
     let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
     let rendered_ms = codex_omd::peers::now_ms();
@@ -705,7 +705,7 @@ fn publish(
         rendered_ms,
         state_fingerprint,
     );
-    if terminal_owner {
+    if terminal_owner.is_some() {
         return;
     }
     let _ = host.persist_json("mod-status.json", &status);
@@ -809,7 +809,7 @@ impl Core {
         let runtime = self.runtime.clone();
         let host = self.host.clone();
         let views = self.views.clone();
-        let terminal_owner = self.terminal_owner.is_some();
+        let terminal_owner = self.terminal_owner.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
         let _cancellation = Cancellation(cancelled.clone());
         let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
@@ -871,7 +871,7 @@ impl Core {
                 &mut runtime,
                 &host,
                 &views,
-                terminal_owner,
+                terminal_owner.as_deref(),
                 event,
                 ledger,
                 || !flag.load(Ordering::Acquire),

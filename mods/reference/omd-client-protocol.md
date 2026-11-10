@@ -53,11 +53,16 @@ omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('sv
 ### `omd/client/update`
 
 ```text
-omd/client/update {renderer?, viewport?: {width, height, unit}, focus?}
+omd/client/update {renderer?, viewport?: {width, height, unit}, focus?, client?}
 // → {}
 ```
 
 `focus` sets the entry's `focused`. Every client gets `omd/roster/updated` and mods render again.
+
+`client` is a terminal frontend's facts, the [`TerminalClient`](terminal-operations.md#terminal-event-client) object mods receive as `client` in
+the `terminal` handler (`columns`, `rows`, `chat`, `welcome`, `sites`, `colors` and the rest). When the host has no
+terminal of its own, mods of the client's terminal owner receive the facts of its focused client, else of the one
+that attached last. It must be an object of at most 16 KiB (`client_facts_invalid`). It isn't part of the roster.
 
 ### `omd/client/detach`
 

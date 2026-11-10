@@ -617,14 +617,14 @@ def installed(result):
         say(f"  {paint('!', '33')} " + (f"codex on your PATH is {tilde(shadowing)}, not OMD's." if shadowing != "missing"
                                          else f"OMD isn't on your PATH: {tilde(result['bin_dir'])} is missing from it."))
         profile = tilde(result["shell_profile"]) if result["shell_profile"] else "your shell's startup file"
-        say(f"    Add this line to the end of {profile}, then open a new terminal, cd into a project and run codex:")
+        say(f"    Add this line to the end of {profile}, then open a new terminal and run codex:")
         say()
         say(f"      {result['path_line']}")
         say()
     elif result.get("path_added_to") or result.get("path_in"):
-        rows.insert(0, ("Start", "open a new terminal, cd into a project, then run codex"))
+        rows.insert(0, ("Start", "open a new terminal, then run codex"))
     else:
-        rows.insert(0, ("Start", "cd into a project, then run codex (run hash -r first in this terminal)"))
+        rows.insert(0, ("Start", "run codex (run hash -r first in this terminal)"))
     for label, text in rows:
         say(f"    {paint(f'{label:<9}', '2')}{text}")
     say()

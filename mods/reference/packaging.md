@@ -355,7 +355,7 @@ These `packages.list` fields say whether a package change has taken effect.
 ### `packages.apply`, `packages.preview` and `packages.reload`
 
 ```text
-packages.preview {...request, expected_generation?} → {action, id, changes, grants_added}
+packages.preview {...request, expected_generation?} → {action, id, changes, grants_added, phrases?}
 packages.apply {...request, expected_generation} → {status: 'applied', generation, enabled?, reason?} | {status: 'declined'}
 packages.reload → {generation, failed, applies: 'next_boundary'}
 ```
@@ -367,9 +367,12 @@ The request is the one under
 | --- | --- |
 | `expected_generation` | The `generation` from `packages.list`; required on `apply`, optional on `preview` |
 
+- `phrases` lists `grants_added` in plain words, `risky` (authority) capabilities first, as
+  `{capability, phrase, risky}`.
 - `apply` returns the new generation, or `declined` when the user declines the confirmation. In the terminal a
-  `disable` from the mod's own slash command or panel action applies without asking, unless the target mod
-  registers a required interceptor or holds `request_policy`.
+  `disable`, or an `enable` that adds no grants, from the mod's own slash command or
+  panel action applies without asking, unless the target mod registers a required interceptor or holds
+  `request_policy`.
 - An `install` with `enable: true` that installs but can't turn the mod on returns `enabled: false` and the
   `reason`; the mod stays installed and off.
 - `reload` returns the generation, the ids of mods that failed, and `next_boundary`, when the revalidation applies.

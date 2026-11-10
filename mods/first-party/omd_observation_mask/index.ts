@@ -218,7 +218,7 @@ export default function activate(api: ModAPI) {
     return { call_id: callId, tool: record.tool, bytes: record.bytes, text: page.value.text, next_cursor: page.value.cursor };
   });
 
-  api.command('mask', () => {
+  api.command('hidden_outputs', () => {
     const state = load();
     const breaks = api.host.tryCall('store.get', { key: 'breaks', scope });
     const other = breaks.ok && breaks.value ? breaks.value.value as { count: number; last: string } : null;

@@ -140,8 +140,15 @@ test('the budget counts spend that left the rolling window or settled late, warn
   assert.deepEqual([settled.state.hud.owed, settled.state.hud.shed], [[], 9]);
   assert.equal(notices(settled.calls).length, 1);
   assert.equal(call(usageMod, { event: 'model_response', payload: { ...pending, cost: { microusd: 9_000_000, basis: 'settled' } }, state: settled.state, settings }).state.hud.shed, 9);
-  const budget = value => call(usageMod, { event: 'command', name: 'budget', payload: value, state: null, settings: {} }).calls.map(item => item.operation);
+  const budget = value => call(usageMod, { event: 'command', name: 'usage', payload: `budget ${value}`, state: null, settings: {} }).calls.map(item => item.operation);
   assert.deepEqual([budget('Infinity'), budget('5')], [[], ['settings.write']]);
+});
+
+test('/usage codex closes the dialog and opens Codex\'s own usage menu', () => {
+  const out = call(usageMod, { event: 'command', name: 'usage', payload: 'codex', state: null, settings: {} }, ({ operation }) => operation === 'commands.invoke' ? { command: 'usage', result: { invoked: true } } : null);
+  assert.deepEqual(out.calls.find(item => item.operation === 'commands.invoke').arguments, { command: 'usage' });
+  assert.equal(out.value, null);
+  assert.equal(out.state.open, false);
 });
 
 test('the budget notice says how many requests had no price', () => {

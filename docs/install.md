@@ -77,9 +77,8 @@ The line names the installed version, the install profile, the release channel a
 to. A pinned install adds `, pinned to VERSION`. If the installed
 release was withdrawn, it adds `VERSION was withdrawn` and, when one helps, the command to run: `omd update` or `omd update rollback`.
 
-Then open a new terminal, `cd` into a project and run `codex`, and type `/mods`. The `/mods` screen lists your
-installed mods and which ones are on. Esc closes it; if you typed a search, the first Esc clears the search. Mods stay
-off when `codex` starts in your home folder or in `/`, so start it in a project folder.
+Then open a new terminal, run `codex` in any folder and type `/mods`. The `/mods` screen lists your installed mods and
+which ones are on. Esc closes it; if you typed a search, the first Esc clears the search.
 
 ## Update
 

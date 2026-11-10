@@ -710,8 +710,10 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     let path = Path::new(name);
     if path.is_absolute() {
         let canonical = path.canonicalize().ok()?;
-        return (canonical == path && canonical.is_file() && !canonical.starts_with(repository))
-            .then_some(canonical);
+        return (canonical == path
+            && canonical.is_file()
+            && !crate::agent_writable(&canonical, repository))
+        .then_some(canonical);
     }
     if name.is_empty()
         || name.len() > 64
@@ -723,7 +725,7 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     }
     std::env::split_paths(&std::env::var_os("PATH")?).find_map(|directory| {
         let candidate = directory.join(name).canonicalize().ok()?;
-        (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
+        (candidate.is_file() && !crate::agent_writable(&candidate, repository)).then_some(candidate)
     })
 }
 
@@ -747,7 +749,8 @@ pub fn unrestricted_program(
     } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
         std::env::var_os("PATH").and_then(|paths| {
             std::env::split_paths(&paths).find_map(|directory| {
-                link(&directory.join(name)).filter(|(_, target)| !target.starts_with(repository))
+                link(&directory.join(name))
+                    .filter(|(_, target)| !crate::agent_writable(target, repository))
             })
         })
     } else {
@@ -759,12 +762,12 @@ pub fn unrestricted_program(
         .programs
         .iter()
         .any(|allowed| Path::new(allowed) == resolved || Path::new(allowed) == path);
-    if resolved.starts_with(repository) && !listed
+    if crate::agent_writable(&resolved, repository) && !listed
         || !access.allows(name, &resolved) && !access.allows(name, path)
     {
         return Err(format!("os_access_denied: {name}"));
     }
-    Ok(if launch.starts_with(repository) {
+    Ok(if crate::agent_writable(&launch, repository) {
         resolved
     } else {
         launch
@@ -832,7 +835,7 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
     let metadata = fs::symlink_metadata(&path).ok()?;
     (path.is_absolute()
         && path.canonicalize().ok()? == path
-        && !path.starts_with(repository)
+        && !crate::agent_writable(&path, repository)
         && metadata.file_type().is_socket()
         && metadata.uid() == rustix::process::geteuid().as_raw())
     .then_some(path)
@@ -1007,7 +1010,7 @@ impl Host<'_> {
                 .canonicalize()
                 .map_err(|error| error.to_string())?
                 != self.data_root
-            || self.data_root.starts_with(self.repository())
+            || crate::inside_repository(self.data_root, self.repository())
         {
             return Err("exec_output_binding_invalid".into());
         }
@@ -1236,6 +1239,9 @@ impl Host<'_> {
             )
         {
             return self.external(caller, operation, arguments);
+        }
+        if crate::workspace_refused(operation, &arguments, self.repository()) {
+            return Err("workspace_unavailable".into());
         }
         let source = match operation {
             "workspace.transaction" | "workspace.restore" => Some("transaction"),
@@ -2094,6 +2100,26 @@ impl Host<'_> {
 #[cfg(test)]
 mod installation_tests {
     use super::*;
+
+    #[test]
+    fn resolve_program_refuses_programs_the_agent_can_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        if crate::git_work_tree(&root).is_some() {
+            return;
+        }
+        let launch = root.join("launch");
+        fs::create_dir(&launch).unwrap();
+        let [outside, planted] = [root.join("tool"), launch.join("tool")];
+        for program in [&outside, &planted] {
+            fs::write(program, "").unwrap();
+        }
+        let resolve = |program: &Path| resolve_program(program.to_str().unwrap(), &launch);
+        assert_eq!(resolve(&planted), None);
+        assert_eq!(resolve(&outside), Some(outside.clone()));
+        fs::create_dir(root.join(".git")).unwrap();
+        assert_eq!(resolve(&outside), None);
+    }
 
     #[test]
     fn unrestricted_commands_pass_the_ssh_agent_and_declared_names_only() {

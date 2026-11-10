@@ -45,19 +45,16 @@ const tick = (state, key, ms, overrides) => call({ event: 'timer', payload: { ke
 const KEY = `fxe5hx-0-0-0-120-44`;
 const BEHIND_KEY = `fxe5hx-1-0-0-120-44`;
 
-test('resizing wakes a still scene and retires its old timer without changing its raster', () => {
+test('resizing leaves the running chain in charge, which repaints the whole new size on its next tick', () => {
   const state = ready({ speed: 'off' });
   const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
   const old = first.of('events.schedule')[0].key;
   const resized = call({ event: 'terminal', state: first.state, virtual_time_ms: NOW + 32,
     payload: { event: 'idle', presentation: { phase: 'fresh', surface: 'fullscreen' }, client: client({ columns: 140 }), clients: [] } });
-  assert.equal(resized.state.view.raster, state.view.raster);
-  assert.deepEqual(resized.of('events.publish'), [{ channel: 'wake', data: NOW + 32 }]);
-  assert.deepEqual(tick(resized.state, old, NOW + 40).calls, []);
-  const wake = call({ event: 'channel', state: resized.state, payload: { channel: 'omd_theme/wake', data: NOW + 32 } });
-  const frame = tick(wake.state, wake.of('events.schedule')[0].key, NOW + 48);
-  assert.deepEqual(frame.of('terminal.blit')[0].rect, { x: 0, y: 0, width: 140, height: 44 });
-  assert.deepEqual(draw(resized.state, { columns: 140 }).of('events.publish'), []);
+  assert.deepEqual([resized.state.view.raster, resized.state.run, resized.calls], [state.view.raster, NOW, []]);
+  const frame = tick(resized.state, old, NOW + 1516);
+  assert.equal(frame.of('terminal.blit').reduce((cells, blit) => cells + blit.rect.width * blit.rect.height, 0), 140 * 44);
+  assert.match(frame.of('events.schedule')[0].key, /\.140\.44\./);
 });
 
 test('rapid resizing preserves animation time and the frozen frame during a turn', () => {
@@ -66,15 +63,15 @@ test('rapid resizing preserves animation time and the frozen frame during a turn
   const busy = call({ event: 'turn_start', state: first.state, payload: null, virtual_time_ms: NOW + 266 }).state;
   let resized = busy;
   for (const columns of [140, 80, 160]) resized = draw(resized, { columns }).state;
-  assert.equal(resized.run, NOW + 3);
+  assert.equal(resized.run, NOW);
   assert.equal(resized.origin, NOW);
   const frame = tick(resized, `f.${resized.run}.-1.0.0.0.0`, NOW + 10_000);
   assert.equal(frame.of('events.schedule')[0].key.split('.')[2], '2');
-  const chosen = call({ event: 'command', name: 'scenes', payload: 'lagoon', state: resized });
-  assert.equal(chosen.state.run, NOW + 4);
+  const chosen = call({ event: 'command', name: 'theme', payload: 'lagoon', state: resized });
+  assert.equal(chosen.state.run, NOW + 1);
   assert.deepEqual(tick(chosen.state, `f.${resized.run}.-1.0.0.0.0`, NOW + 10_000).calls, []);
   const resumed = call({ event: 'resume', payload: null, state: resized });
-  assert.equal(resumed.state.run, NOW + 4);
+  assert.equal(resumed.state.run, NOW + 1);
   assert.deepEqual(tick(resumed.state, `f.${resized.run}.-1.0.0.0.0`, NOW + 10_000).calls, []);
 });
 
@@ -194,8 +191,9 @@ test('a wake that beats its state write waits, a narrow fresh session keeps poll
   assert.deepEqual(tick(state, `f.${NOW + 5}.-1.0.0.0.0`, NOW + 20).of('events.schedule'), [{ key: `f.${NOW + 5}.-1.0.0.0.1`, delay_ms: 50 }]);
   const narrow = draw(state, { columns: 50 }).state;
   assert.deepEqual(tick(narrow, `f.${NOW}.-1.0.0.0.0`, NOW + 5000).of('events.schedule'), [{ key: `f.${NOW}.-1.0.0.0.0`, delay_ms: 1000 }]);
-  assert.deepEqual(tick(draw(state, { surface: 'inline' }).state, `f.${NOW}.-1.0.0.0.0`, NOW + 5000).calls, []);
-  assert.deepEqual(tick(draw(state, { colors: '16' }).state, `f.${NOW}.-1.0.0.0.0`, NOW + 5000).calls, []);
+  for (const extra of [{ surface: 'inline' }, { colors: '16' }]) {
+    assert.deepEqual(tick(draw(state, extra).state, `f.${NOW}.-1.0.0.0.0`, NOW + 5000).calls, [{ operation: 'events.schedule', arguments: { key: `f.${NOW}.-1.0.0.0.0`, delay_ms: 2000 } }]);
+  }
   const prefs = started({ scene: 'gone', speed: 'warp', density: 7, image: { label: 'x', width: 2, height: 2, rgb: 'ff' } }).state.prefs;
   assert.deepEqual([prefs.scene, prefs.speed, prefs.density, prefs.image], ['ember', 'normal', 'normal', null]);
 });
@@ -208,7 +206,7 @@ test('no scene starts no frame chain, stops pending ticks, and choosing a scene 
   assert.deepEqual(tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16).calls, []);
   const staleWake = call({ event: 'channel', payload: { channel: 'omd_theme/wake', data: NOW }, state });
   assert.deepEqual(staleWake.of('events.schedule'), []);
-  const chosen = call({ event: 'command', name: 'scenes', payload: 'lagoon', state, virtual_time_ms: NOW + 100 }, { store });
+  const chosen = call({ event: 'command', name: 'theme', payload: 'lagoon', state, virtual_time_ms: NOW + 100 }, { store });
   const wake = chosen.of('events.publish')[0];
   const woken = call({ event: 'channel', payload: { channel: `omd_theme/${wake.channel}`, data: wake.data }, state: chosen.state });
   const [first] = woken.of('events.schedule');
@@ -231,7 +229,7 @@ test('every scene animates in single-width glyphs at narrow and wide sizes', asy
 test('the panel applies choices at once and keeps Codex\'s picker and the terminal steps one item away', () => {
   const store = { value: null };
   let state = ready();
-  const run = (args, overrides = {}) => call({ event: 'command', name: 'scenes', payload: args, state }, { store, ...overrides });
+  const run = (args, overrides = {}) => call({ event: 'command', name: 'theme', payload: args, state }, { store, ...overrides });
   const opened = run('');
   const panel = opened.of('terminal.panel')[0];
   assert.equal(opened.of('events.publish').length, 0);
@@ -249,17 +247,17 @@ test('the panel applies choices at once and keeps Codex\'s picker and the termin
   let invoked;
   run('panel syntax', { 'commands.invoke': args => { invoked = args; return { command: 'theme', result: { invoked: true } }; } });
   assert.deepEqual(invoked, { command: 'theme' });
-  const shader = call({ event: 'command', name: 'scenes', payload: 'panel steps:Ghostty:shader', state }, { store }).of('terminal.panel')[0];
+  const shader = call({ event: 'command', name: 'theme', payload: 'panel steps:Ghostty:shader', state }, { store }).of('terminal.panel')[0];
   assert.match(shader.subtitle, /custom-shader-animation = true/);
   let copied;
-  call({ event: 'command', name: 'scenes', payload: 'steps Ghostty shader copy', state }, { store, 'terminal.copy': args => { copied = args.text; return { status: 'confirmed' }; } });
+  call({ event: 'command', name: 'theme', payload: 'steps Ghostty shader copy', state }, { store, 'terminal.copy': args => { copied = args.text; return { status: 'confirmed' }; } });
   assert.match(copied, /void mainImage/);
-  call({ event: 'command', name: 'scenes', payload: 'terminal ghostty', state }, { store });
+  call({ event: 'command', name: 'theme', payload: 'terminal ghostty', state }, { store });
   assert.equal(store.value.family, '');
-  const typed = call({ event: 'command', name: 'scenes', payload: 'font Iosevka Term', state }, { store });
+  const typed = call({ event: 'command', name: 'theme', payload: 'font Iosevka Term', state }, { store });
   assert.match(typed.value.display, /Font family: Iosevka Term/);
   let imported;
-  const image = call({ event: 'command', name: 'scenes', payload: 'image /tmp/sky  one.png', state }, { store, 'terminal.import_file': args => { imported = args.path; return { status: 'declined' }; } });
+  const image = call({ event: 'command', name: 'theme', payload: 'image /tmp/sky  one.png', state }, { store, 'terminal.import_file': args => { imported = args.path; return { status: 'declined' }; } });
   assert.deepEqual([imported, image.value.display], ['/tmp/sky  one.png','Image import declined; the scene is unchanged']);
 });
 
@@ -313,12 +311,12 @@ test('Aurora flares when a turn ends and stirs while one runs with calm off, in 
   assert.equal(frame({ ...ember, ended: NOW + 1000 }), frame(ember));
 });
 
-test('background and idle scenes stop timers and resume without resetting active work', () => {
+test('background and idle scenes stop drawing and resume without resetting active work', () => {
   for (const payload of [{ focused: false }, { focused: true, idle: true }]) {
     const state = call({ event: 'turn_start', state: ready(), payload: null }).state;
     const hidden = call({ event: 'focus', state, payload });
     assert.equal(hidden.state.busy, true);
-    assert.deepEqual(tick(hidden.state, `f.${NOW}.-1.0.0.0.0`, NOW + 1000).calls, []);
+    assert.deepEqual(tick(hidden.state, `f.${NOW}.-1.0.0.0.0`, NOW + 1000).calls.map(item => [item.operation, item.arguments.delay_ms]), [['events.schedule', 2000]]);
     const resumed = call({ event: 'focus', state: hidden.state, payload: { focused: true, idle: false }, virtual_time_ms: NOW + 2000 });
     assert.equal(resumed.state.busy, true);
     assert.equal(resumed.state.origin, state.origin);
@@ -336,5 +334,63 @@ test('a newly displayed thread recovers a previous inactive state from its termi
   assert.equal(shown.of('events.publish').length, 1);
   const background = draw(shown.state, { active: false });
   assert.equal(background.state.inactive, true);
-  assert.deepEqual(tick(background.state, `f.${background.state.run}.-1.0.0.0.0`, NOW + 1000).calls, []);
+  assert.deepEqual(tick(background.state, `f.${background.state.run}.-1.0.0.0.0`, NOW + 1000).of('terminal.blit'), []);
+});
+
+test('a frame larger than the host call budget is drawn across ticks instead of failing the callback', () => {
+  let state = ready({ scene: 'aurora' }, { columns: 512, rows: 256 });
+  let key = `f.${NOW}.-1.0.0.0.0`;
+  const rows = new Set();
+  for (let at = NOW + 16; key.split('.')[2].includes('r') || at === NOW + 16; at += 50) {
+    const step = tick(state, key, at);
+    const blits = step.of('terminal.blit');
+    assert.ok(blits.length > 0 && blits.reduce((bytes, blit) => bytes + blit.packed.length, 0) <= 768 * 1024);
+    blits.forEach(blit => { for (let y = blit.rect.y; y < blit.rect.y + blit.rect.height; y++) rows.add(y); });
+    [state, key] = [step.state, step.of('events.schedule')[0].key];
+  }
+  assert.equal(rows.size, 256);
+  assert.equal(key.split('.')[2], '1');
+});
+
+test('the chain survives a wake that beats its state write and a failed reschedule', () => {
+  const state = ready();
+  const idle = call({ event: 'focus', state, payload: { focused: true, idle: true } }).state;
+  const back = call({ event: 'focus', state: idle, payload: { focused: true, idle: false }, virtual_time_ms: NOW + 2000 });
+  const early = call({ event: 'channel', state: idle, payload: { channel: 'omd_theme/wake', data: back.state.run } });
+  const [retry] = early.of('events.schedule');
+  assert.equal(retry.key, `f.${back.state.run}.-1.0.0.0.0`);
+  assert.equal(tick(idle, retry.key, NOW + 2016).of('events.schedule')[0].key, `f.${back.state.run}.-1.0.0.0.1`);
+  assert.ok(tick(back.state, retry.key, NOW + 2016).of('terminal.blit').length > 0);
+  assert.equal(tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16, { 'events.schedule': () => { throw new Error('timer_limit'); } }).error, undefined);
+});
+
+test('the chain keeps drawing when terminal-thread callbacks can make no host calls', () => {
+  const refuse = () => { throw new Error('host_operation_unavailable: requires a native task'); };
+  const off = { 'events.publish': refuse, 'events.schedule': refuse, 'store.get': refuse };
+  const tui = (state, extra, ms) => call({ event: 'terminal', state, virtual_time_ms: ms, payload: { event: 'resize', ledger: null,
+    presentation: { thread_id: 't1', phase: 'started', surface: 'fullscreen' }, client: client(extra), clients: [] } }, off).state;
+  const first = tick(ready(), `f.${NOW}.-1.0.0.0.0`, NOW + 16);
+  let [state, key] = [first.state, first.of('events.schedule')[0].key];
+  for (const [columns, rows, surface] of [[200, 60], [120, 36, 'inline'], [180, 50]]) {
+    state = tui(state, { columns, rows, ...surface ? { surface } : {} }, NOW + 4000 * columns);
+    state = call({ event: 'focus', state, payload: { focused: false }, virtual_time_ms: NOW + 4000 * columns + 1 }, off).state;
+    const waiting = tick(state, key, NOW + 4000 * columns + 2);
+    assert.deepEqual(waiting.of('terminal.blit'), []);
+    state = call({ event: 'focus', state: waiting.state, payload: { focused: true, idle: false }, virtual_time_ms: NOW + 4000 * columns + 3 }, off).state;
+    key = waiting.of('events.schedule')[0].key;
+  }
+  assert.equal(state.run, NOW);
+  const frame = tick(state, key, NOW + 800_000);
+  assert.equal(frame.of('terminal.blit').reduce((cells, blit) => cells + blit.rect.width * blit.rect.height, 0), 180 * 50);
+  assert.match(frame.of('events.schedule')[0].key, new RegExp(`^f\\.${NOW}\\.\\d+\\.180\\.50\\.`));
+});
+
+test('a turn ending after display idle resumes the scene, but not in a background terminal', () => {
+  const state = ready();
+  const idle = call({ event: 'focus', state, payload: { focused: true, idle: true } }).state;
+  const ended = call({ event: 'turn_end', state: idle, payload: { turn_id: 'a', outcome: 'completed' }, virtual_time_ms: NOW + 600_000 });
+  assert.equal(ended.state.inactive, false);
+  assert.deepEqual(ended.of('events.schedule'), [{ key: `f.${NOW + 600_000}.-1.0.0.0.0`, delay_ms: 16 }]);
+  const hidden = call({ event: 'focus', state, payload: { focused: false } }).state;
+  assert.deepEqual(call({ event: 'turn_end', state: hidden, payload: { turn_id: 'a', outcome: 'completed' } }).of('events.schedule'), []);
 });

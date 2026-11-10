@@ -503,7 +503,7 @@ export interface HostOperations {
   /** `fields` keeps only those keys of each package. */
   'packages.list': { arguments: { fields: (keyof PackageState)[] } | null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.index': { arguments: { index?: string; query?: string; cursor?: string; limit?: number }; result: { index: string; packages: PackageCatalogEntry[]; total: number; cursor: string | null } };
-  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; /** `ConfigurationChanges` for this terminal's `enable`, `disable`, `reset` and `save-defaults`. */ changes: Json; grants_added: string[]; identity_warning?: string | null } };
+  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; /** `ConfigurationChanges` for this terminal's `enable`, `disable`, `reset` and `save-defaults`. */ changes: Json; grants_added: string[]; /** `grants_added` in plain words, `risky` ones (authority capabilities) first. */ phrases?: { capability: string; phrase: string; risky: boolean }[]; identity_warning?: string | null } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number; enabled?: boolean; reason?: string } | Declined };
   /** Requires plugin_components_v1: the mod components of the Codex plugins installed for this user. */
   'plugins.components': { arguments: null; result: { components: PluginComponent[] } };

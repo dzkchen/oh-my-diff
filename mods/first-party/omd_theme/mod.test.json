@@ -15,6 +15,6 @@
     {"type": "terminal_mount", "mod": "omd_theme", "thread_id": "t1", "payload": {"event": "startup", "ledger": null, "presentation": {"thread_id": "t1", "phase": "fresh", "surface": "fullscreen"},
       "client": {"kind": "terminal", "graphics": "kitty", "pointer": "cell", "reduced_motion": false, "cell_px": null, "columns": 120, "rows": 44}, "clients": []}},
     {"type": "event", "event": "timer", "payload": {"key": "f.1000.-1.0.0.0.0"}, "thread_id": "t1"},
-    {"type": "invoke", "mod": "omd_theme", "event": "command", "name": "scenes", "payload": "panel scene:lagoon", "thread_id": "t1"}
+    {"type": "invoke", "mod": "omd_theme", "event": "command", "name": "theme", "payload": "panel scene:lagoon", "thread_id": "t1"}
   ]
 }

@@ -441,12 +441,15 @@ pub struct ClientEntry {
     pub operations: Vec<String>,
     pub attached_ms: u64,
     pub focused: bool,
+    #[serde(skip)]
+    pub terminal: Value,
 }
 
 #[derive(Clone, Debug)]
 pub enum Observed {
     Redraw,
     Roster,
+    Client,
     Mirrored {
         terminal_owner: Option<String>,
         caller: String,
@@ -562,7 +565,13 @@ pub fn attach(entry: ClientEntry) -> Registration {
     registration
 }
 
-pub fn update(id: &str, renderer: Option<Value>, viewport: Option<Value>, focused: Option<bool>) {
+pub fn update(
+    id: &str,
+    renderer: Option<Value>,
+    viewport: Option<Value>,
+    focused: Option<bool>,
+    terminal: Option<Value>,
+) {
     {
         let mut hub = hub();
         let Some((_, entry)) = hub.clients.iter_mut().find(|(_, entry)| entry.id == id) else {
@@ -576,6 +585,9 @@ pub fn update(id: &str, renderer: Option<Value>, viewport: Option<Value>, focuse
         }
         if let Some(focused) = focused {
             entry.focused = focused;
+        }
+        if let Some(terminal) = terminal {
+            entry.terminal = terminal;
         }
     }
     roster_changed();
@@ -647,9 +659,26 @@ pub fn redraw() {
     notify(Observed::Redraw);
 }
 
+pub fn client_changed() {
+    notify(Observed::Client);
+}
+
 pub fn client() -> Value {
     let surface = hub().surface.as_ref().map(|(_, surface)| surface.clone());
     surface.map_or(Value::Null, |surface| surface.client())
+}
+
+pub fn client_of(attached: impl Fn(&str) -> bool) -> Value {
+    let own = client();
+    if !own.is_null() {
+        return own;
+    }
+    hub()
+        .clients
+        .iter()
+        .filter(|(_, entry)| !entry.terminal.is_null() && attached(&entry.id))
+        .max_by_key(|(slot, entry)| (entry.focused, *slot))
+        .map_or(Value::Null, |(_, entry)| entry.terminal.clone())
 }
 
 pub fn submit(

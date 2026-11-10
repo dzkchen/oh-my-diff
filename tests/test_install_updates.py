@@ -369,7 +369,7 @@ class UpdateSelection(unittest.TestCase):
         self.assertIn("can't start until the authority broker is pinned", broken)
         self.assertIn("Fix      omd-package broker pin", broken)
         self.assertNotIn("Start", broken)
-        start = "Start    open a new terminal, cd into a project, then run codex"
+        start = "Start    open a new terminal, then run codex"
         for extra in ({"path_added_to": str(self.home / ".zshrc")}, {"path_in": str(self.home / ".zshrc")}):
             opened = summary(**extra)
             self.assertIn(start, opened)

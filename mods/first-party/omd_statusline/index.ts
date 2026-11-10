@@ -12,7 +12,7 @@ const PREVIEW_COLUMNS = 64;
 export default function activate(api: ModAPI) {
   const config = settings(api.settings);
   const configured = scripts(config.scripts);
-  api.builtins({ surfaces: { disable: ['status_line'] }, commands: { replace: { statusline: 'edit' } } });
+  api.builtins({ surfaces: { disable: ['status_line'] }, commands: { replace: { statusline: 'statusline' } } });
 
   const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
   const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -353,7 +353,7 @@ export default function activate(api: ModAPI) {
       return { id: `segment:${id}`, tab: 'segments', label: id, kind: 'choice', value: at >= 0 ? String(at + 1) : 'off', options: [{ value: 'off', label: 'Hidden' }, ...slots] };
     };
     return {
-      title: 'Status line', search: true, action: { command: 'edit', args: 'panel' },
+      title: 'Status line', search: true, action: { command: 'statusline', args: 'panel' },
       subtitle: [problem && visible(problem, 200), `Preview (${state.draft.placement} the composer):`, ...preview.length ? preview : ['Nothing to show yet: segments appear once their data arrives']].filter(Boolean).join('\n'),
       tabs: [{ id: 'settings', title: 'Settings' }, { id: 'segments', title: 'Segments' }],
       items: [
@@ -371,7 +371,7 @@ export default function activate(api: ModAPI) {
   };
 
   const HELP = 'usage: /statusline [github|refresh]';
-  api.command('edit', input => {
+  api.command('statusline', input => {
     const [verb = '', ...rest] = String(input ?? '').trim().split(/\s+/).filter(Boolean);
     if (verb === 'github') {
       const listed = api.host.tryCall('credentials.list', null);

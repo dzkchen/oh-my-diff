@@ -19,10 +19,11 @@ omd mods enable omd_usage
 
 | Command or key | What it does |
 | --- | --- |
-| `Alt+a` or `/omd_usage:hud toggle` | Open or close the Usage dialog. Its expanded view lists recent requests. |
-| `/omd_usage:hud` | Open the dialog, or refresh it when it's open. `close` closes it. |
-| `/omd_usage:budget 5` | Warn when spend reaches 80% and 100% of 5 USD. `0` removes the budget. |
-| `/omd_usage:categories on` | Split each request by role (system, context, user, tool output). `off` turns it back off. |
+| `Alt+a` or `/usage toggle` | Open or close the Usage dialog. Its expanded view lists recent requests. |
+| `/usage` | Open the dialog, or refresh it when it's open. `close` closes it. |
+| `/usage budget 5` | Warn when spend reaches 80% and 100% of 5 USD. `0` removes the budget. |
+| `/usage roles on` | Split each request by role (system, context, user, tool output). `off` turns it back off. |
+| `/usage codex` | Open Codex's own usage menu (account usage, usage limit reset). The dialog's Codex usage button does the same. |
 
 With a budget set, a notice appears once at 80% and once at 100%, and the dialog shows spend against the budget. Requests with no price yet (unsettled or unknown cost) are not in the figure; the notice and the dialog say how many.
 
@@ -52,6 +53,7 @@ Change settings in `/mods`.
 - Cache expiry shows only when the provider reports how long its cache lasts.
 - Running tools list the calls started while the dialog is open, so the mod doesn't rewrite its state on every tool
   call when nothing shows them.
+- While it's on, it takes over Codex's `/usage`; `/usage codex` opens Codex's own menu.
 - The budget only warns. OMD's own spending limits, such as a paid profile's allowance, still decide what runs.
 - Claude and OpenRouter usage need `omd_claude_cli` or `omd_profiles`. See
   [Use other providers](../../../docs/use-other-providers.md).
