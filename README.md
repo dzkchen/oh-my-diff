@@ -59,7 +59,7 @@ Experimental mods add other providers, a workspace dock, `/undo` and language-se
   <a href="docs/use-other-providers.md#use-claude"><kbd>Claude (experimental)</kbd></a> &nbsp;
   <a href="docs/use-other-providers.md#use-cursor"><kbd>Cursor (experimental)</kbd></a> &nbsp;
   <a href="docs/use-other-providers.md#use-an-api-key-or-another-provider"><kbd>OpenAI and Anthropic API keys (experimental)</kbd></a> &nbsp;
-  <a href="docs/use-with-t3-code.md"><kbd>T3 Code</kbd></a> &nbsp;
+  <a href="docs/use-with-t3-code.md"><kbd>T3 Code (experimental)</kbd></a> &nbsp;
   <kbd>+ any app that runs <code>codex app-server</code></kbd>
 </p>
 
