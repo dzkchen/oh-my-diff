@@ -6,6 +6,9 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "Scrollback-first presentation for sessions started with `omd mini`: a bare prompt, one status line (model, context, limits) and switching to the full UI",
+  "contributes": {
+    "commands": [{ "name": "switch", "description": "Switch this session between the mini and the full interface at the next quit" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_mini"},
   "capabilities": ["terminal", "commands", "lifecycle", "store", "exec", "threads", "sessions", "inventory"],

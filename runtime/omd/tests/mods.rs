@@ -2822,6 +2822,14 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
             .to_string()
             .contains("service_provider_missing: missing needs the absent.service service")
     );
+    let consumer = service_package(
+        &root,
+        "consumer",
+        "export default api => {}",
+        json!({"imports":[{"name":"shared.service","version":"1.0.0"}]}),
+        &["services"],
+    );
+    trust(&store, &consumer, &["services"]);
     trust(&store, &optional, &["commands", "services"]);
     trust(&store, &versioned, &["services"]);
     trust(&store, &incompatible, &["services"]);
@@ -2842,6 +2850,13 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
         errors["second"]
             .unwrap()
             .contains("service_provider_collision")
+    );
+    assert!(
+        errors["consumer"].unwrap().contains(
+            "requires shared.service; first provides it but failed: service_provider_collision"
+        ),
+        "{:?}",
+        errors["consumer"]
     );
     assert_eq!(errors["optional"], None);
     assert!(
@@ -4546,6 +4561,32 @@ fn outcomes(chain: &codex_omd::ModChain) -> Vec<(String, String)> {
             )
         })
         .collect()
+}
+
+#[test]
+fn required_interceptors_and_request_policies_make_a_mod_protective() {
+    let (_temp, runtime) = interceptors(&[
+        (
+            "guard",
+            "export default api => api.intercept('tool', {required: true}, (e, next) => next(e))",
+            &["interception"],
+        ),
+        (
+            "plain",
+            "export default api => api.intercept('tool', (e, next) => next(e))",
+            &["interception"],
+        ),
+        (
+            "sender",
+            "export default () => {}",
+            &["middleware", "request_policy"],
+        ),
+    ]);
+    let runtime = runtime.lock().unwrap();
+    assert_eq!(
+        ["guard", "plain", "sender", "missing"].map(|id| runtime.protective(id)),
+        [true, false, true, true]
+    );
 }
 
 #[test]

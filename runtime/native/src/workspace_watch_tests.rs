@@ -317,11 +317,7 @@ async fn a_worktree_git_watch_reports_its_own_head_and_shared_refs_only() {
     })
     .await
     .unwrap();
-    assert_eq!(
-        seen,
-        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-        "{seen:?}"
-    );
+    assert_linked_git_events(&seen);
 
     std::fs::write(
         tree.join(".git"),

@@ -5,7 +5,10 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Hides older large tool outputs from model requests in cache-friendly batches, keeping each call and a recall tool for the full text",
+  "description": "Keeps long sessions workable: hides older large tool outputs from requests; /mask lists them, recall restores them",
+  "contributes": {
+    "commands": [{ "name": "mask", "description": "See which tool outputs are hidden from requests and how many prompt-cache breaks that cost" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_observation_mask"},
   "capabilities": ["history", "interception", "middleware", "tools", "store", "commands", "model", "lifecycle", "inventory"],
@@ -13,7 +16,7 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "mode": {"type": "string", "enum": ["batch", "continue"], "default": "batch", "title": "When to hide outputs", "description": "Automatic batches, or only a successful /continue after estimated cache expiry (/continue --compact forces it)"},
+      "mode": {"type": "string", "enum": ["batch", "continue"], "default": "batch", "title": "When to hide outputs", "description": "Automatic batches, or only a successful /continue after estimated cache expiry (/continue --compact forces it). Continue mode needs the omd_continue mod and has no estimate on ChatGPT plans, so only --compact hides there"},
       "cache_ttl_minutes": {"type": "string", "enum": ["auto", "5", "10", "30", "60", "120"], "default": "auto", "title": "Estimated cache lifetime", "description": "Used in continue mode; auto skips OpenAI subscriptions and unpriced responses, and uses provider-reported lifetimes or a 30-minute OpenAI API estimate"},
       "keep_recent": {"type": "number", "default": 10, "title": "Recent outputs kept", "description": "Newest tool outputs always sent in full (at least 1)"},
       "min_bytes": {"type": "number", "default": 1024, "title": "Minimum size", "description": "Outputs smaller than this many bytes are never hidden"},

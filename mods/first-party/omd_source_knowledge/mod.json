@@ -5,6 +5,9 @@
   "api": "1.0.0",
   "state_version": 1,
   "description": "Keeps source-backed facts and task evidence with exact file hashes for reuse in later tasks",
+  "contributes": {
+    "commands": [{ "name": "approve_lesson", "description": "Approve a retained lesson so later tasks can reuse it" }, { "name": "forget", "description": "Remove one retained fact or evidence record" }, { "name": "discard", "description": "Reset everything retained for this repository" }]
+  },
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_source_knowledge" },
   "capabilities": ["tools", "commands", "fs.read", "store"],

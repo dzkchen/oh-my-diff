@@ -31,7 +31,8 @@ The model reads a hidden output with `mod_omd_observation_mask_recall {call_id}`
 
 ### Hide outputs only when continuing
 
-Set `mode` to `continue` in `/mods` and enable `omd_continue`. Ordinary requests then keep new outputs in full.
+Set `mode` to `continue` in `/mods` and enable `omd_continue`; OMD+ doesn't enable it, and without it continue mode hides
+nothing. `/mask` says so until a `/continue` has run in the thread. Ordinary requests then keep new outputs in full.
 A successful `/continue [note]` hides an eligible batch only after the estimated cache lifetime has elapsed.
 `/continue --compact [note]` requests the same masking without a cache estimate. It still obeys `keep_recent`,
 `min_bytes` and `batch_bytes`; it does not call a summarizing model or native `/compact`.
@@ -44,7 +45,8 @@ current files and processes before repeating actions. User messages, instruction
 The placeholders stay identical on later requests; another continuation is needed to hide another batch. Resume
 keeps installed placeholders but drops a continuation that had not reached its first model request.
 
-Cache lifetime is an estimate, not a cache probe. `auto` uses a provider-reported lifetime, retaining it on reads
+Cache lifetime is an estimate, not a cache probe. On a ChatGPT plan, with local providers and when the lifetime is
+unknown there is no estimate, so only `/continue --compact` hides outputs, and `/mask` says so. `auto` uses a provider-reported lifetime, retaining it on reads
 for the same provider, route, credential and model. For OpenAI API responses with cache activity it otherwise uses
 30 minutes. OpenAI subscription and unpriced responses, local providers, and unknown lifetimes are skipped.
 An explicit `cache_ttl_minutes` overrides the estimate except for local providers. Model/provider/route changes
@@ -57,6 +59,8 @@ still compact the conversation. This mode does not prepare a summary in the back
 
 - Only tool outputs, and only outputs older than the newest `keep_recent`. The calls themselves stay, so the model
   still sees what it ran.
+- Never an output whose saved original it can't restore (one from before the mod was enabled, or whose original
+  couldn't be saved), in either mode.
 - Never an output under `min_bytes`, a failed edit (`apply_patch`, a mod edit tool, or a shell command that edits files
   in place with `sed -i` or `perl -i`, or copies or moves them), a pinned output, the current input, or anything in a
   subagent's requests.
@@ -89,7 +93,7 @@ that doesn't cache prompts.
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - The full text of each output of at least `min_bytes` is kept as the mod's evidence when the call finishes. The host
   keeps the newest 1,024 of these per repository (256 MB at most), so recalling a very old output can fail. The
-  model receives a recall error. Recover needed facts from current state; do not blindly repeat a command with side
+  model receives a `recall_unavailable` error saying the text is gone. Recover needed facts from current state; do not blindly repeat a command with side
   effects. It remembers the newest 400 kept outputs of a thread and those of every hidden output.
 - At most 400 outputs of a thread are hidden; later ones are sent in full.
 - Code-mode calls inside a cell aren't kept on their own: the whole cell's output is hidden and recalled as one.

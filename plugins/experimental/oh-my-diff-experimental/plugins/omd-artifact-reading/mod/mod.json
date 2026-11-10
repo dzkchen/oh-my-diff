@@ -5,6 +5,7 @@
   "api": "1.0.0",
   "state_version": 1,
   "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "plugins/experimental/oh-my-diff-experimental/plugins/omd-artifact-reading/mod"},
   "capabilities": ["virtual_reads", "exec"],
   "compatibility": {"required_features": ["virtual_reads_v1", "service_requests_v1", "plugin_dispatch_v1"]}
 }

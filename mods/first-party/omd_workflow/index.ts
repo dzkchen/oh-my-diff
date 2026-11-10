@@ -263,7 +263,7 @@ export default function activate(api: ModAPI) {
     } else {
       found = available.find(value => value.name === name && value.roles.includes('worker') && value.available);
     }
-    if (!found) throw new Error(`authorized_route_unavailable: ${name}`);
+    if (!found) throw new Error(`authorized_route_unavailable: ${name === 'opposite_lead' ? 'no other available lead route with a different model and the same billing' : `no available worker route named "${name}"`}. Run /omd_workflow:routes to add models for the worker, reviewer and verifier, or in /mods open omd_workflow and set ${setting} to a worker route from host.json${name === 'opposite_lead' ? '' : ', or to opposite_lead'}.`);
     return found;
   };
   const receipt = (contract: ContractStatus, kind: string, candidate: string, checkpoint: Checkpoint, evidence: ResourceRef, verdict: Review | AdversarialReview, agent?: string) => {
@@ -636,6 +636,27 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     if (!chosen.ok) return { display: `Contract not selected: ${chosen.error}` };
     return { display: 'status' in chosen.value ? 'Contract selection declined' : `Selected ${key}; it applies from the next session` };
   }, { description: 'List the workflow contracts or select one for this repository' });
+  api.command('routes', value => {
+    const listed = api.host.tryCall('routes.models', {});
+    if (!listed.ok) return { display: `Routes not set up: ${listed.error}` };
+    const lead = observedLead()?.model;
+    if (typeof lead !== 'string') return { display: 'Routes not set up: send the agent a message first, so the workflow can see which model you chat with.' };
+    const worker = listed.value.find(item => item.model === lead) ?? listed.value[0];
+    const reviewers = listed.value.filter(item => item.model !== lead && item.model !== worker?.model);
+    if (!worker || !reviewers.length) return { display: `Routes not set up: the independent reviewer must use a different model from the one you chat with${worker ? ` and from the worker (${worker.model})` : ''}, but your ChatGPT plan lists only ${listed.value.map(item => item.model).join(', ') || 'no models'}. Sign in with a plan that offers a second model, or add routes to host.json.` };
+    const wanted = String(value ?? '').trim();
+    const reviewer = wanted ? reviewers.find(item => item.model === wanted) : reviewers.length === 1 ? reviewers[0] : undefined;
+    if (!reviewer) return { display: `${wanted ? `${wanted} can't be the reviewer. ` : ''}Choose the reviewer and verifier model: /omd_workflow:routes MODEL, where MODEL is one of ${reviewers.map(item => item.model).join(', ')}.` };
+    const routes: string[] = [];
+    for (const [model, arguments_] of [[worker.model, worker.model === lead ? {} : { model: worker.model }], [reviewer.model, { model: reviewer.model }]] as const) {
+      const added = api.host.tryCall('routes.add', arguments_);
+      if (!added.ok) return { display: `Routes not set up: ${added.error}` };
+      if ('status' in added.value) return { display: `Routes not set up: the ${model} route was declined. Run /omd_workflow:routes again to allow it.` };
+      routes.push(added.value.route);
+    }
+    const saved = api.host.tryCall('settings.write', { values: { worker_route: routes[0], review_route: routes[1], verify_route: routes[1] } });
+    return { display: saved.ok ? `Workflow routes set: ${worker.model} does the work, ${reviewer.model} reviews and verifies.` : `Routes were added but not saved (${saved.error}); in /mods set worker_route to ${routes[0]}, and review_route and verify_route to ${routes[1]}.` };
+  }, { description: 'Add the worker, reviewer and verifier models from your ChatGPT plan', args_hint: '[REVIEWER_MODEL]' });
   api.command('progress', () => {
     const task = parseCheckpoint(api.host.call('store.get', TASK)?.value);
     return { display: task ? [`Workflow task: ${task.status} (revision ${task.revision})`, `Objective: ${task.objective}`, 'Remaining:', ...task.remaining_work.map(item => `  - ${item}`),

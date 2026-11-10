@@ -31,10 +31,11 @@ Say which model subagents should use, in any prompt you type (queued prompts fro
 | `use the lead model as subagents for review` | review subagents go back to the lead's model |
 
 A directive lasts for the rest of the conversation, and a later one for the same role replaces it. Words match model
-names loosely: `sonnet 5.5` finds `claude-sonnet-5-5`.
+names loosely: `sonnet 5.5` finds `claude-sonnet-5-5`. A directive right after a negation (`don't use opus as subagents`,
+`never`, `do not`, `no`, `without`, `avoid`, `not`) is ignored.
 
 A subagent's role comes from its definition (`explorer` is research, `worker` is worker) or from words in its task,
-matched by prefix and checked in this order:
+matched as whole words (with their common endings, so `workspace` is not `work`) and checked in this order:
 
 1. review: review, audit, critique, verif
 2. research: research, investigat, explor, look up, look into, find out, survey

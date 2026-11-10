@@ -1,4 +1,4 @@
-import type { Json, ModAPI, PackageCatalogEntry, PackageRequest, PackageState, TerminalComponent, TerminalIdentity, TerminalPanel, TerminalPanelItem, TerminalPatch } from '../../api.d.ts';
+import type { Json, ModAPI, PackageCatalogEntry, PackageContributes, PackageRequest, PackageState, TerminalComponent, TerminalIdentity, TerminalPanel, TerminalPanelItem, TerminalPatch } from '../../api.d.ts';
 
 type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; warning?: string; from: string; generation: number; lines?: string[] };
 type Scope = 'user' | 'project';
@@ -22,6 +22,8 @@ const shown = (value: Json | undefined) => value === null || value === undefined
 const PLAIN: Record<string, string> = { configuration_override_forbidden: 'your administrator manages this mod', grant_expired: 'its permission expired; choose Trust again', settings_file_invalid: 'its settings file has a mistake; fix or delete the file, then try again' };
 const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
 const word = (value: string) => /^\S{1,128}$/.test(value);
+const strings = (value: Json | undefined) => Array.isArray(value) && value.every(entry => typeof entry === 'string') ? value as string[] : null;
+const SUPPORT: Record<string, string> = { experimental: 'Experimental', reviewed_candidate: 'Reviewed candidate' };
 const compare = (a: string, b: string) => {
   const [x, y] = [a.toLowerCase(), b.toLowerCase()];
   return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
@@ -77,8 +79,8 @@ export default function activate(api: ModAPI) {
   };
   const ordered = (packages: Listed[]) => packages.sort((a, b) => Number(!a.failed) - Number(!b.failed) || compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
   const search = (state: Saved): Saved => {
-    const trimmed = ({ id, latest, description, versions, installed }: PackageCatalogEntry): PackageCatalogEntry =>
-      ({ id, latest, description: clip(description, 120), support: null, versions: versions.filter(item => !item.blocked).slice(0, 1), installed });
+    const trimmed = ({ id, latest, description, support, versions, installed }: PackageCatalogEntry): PackageCatalogEntry =>
+      ({ id, latest, description: clip(description, 120), support: support && clip(support, 32), versions: versions.filter(item => !item.blocked).slice(0, 1), installed });
     const catalog: PackageCatalogEntry[] = [];
     let cursor: string | undefined, received = 0;
     do {
@@ -94,9 +96,10 @@ export default function activate(api: ModAPI) {
     const result = api.host.tryCall('packages.apply', { ...request, expected_generation: generation });
     if (!result.ok || result.value.status === 'declined') return refresh({ ...state, review: null }, result.ok ? `${label} was declined` : `${label} failed: ${plain(result.error)}`);
     const name = friendly(request.id ?? '');
+    if (result.value.enabled === false) return refresh({ ...state, review: null }, `${label}: installed but still off (${plain(result.value.reason ?? 'unknown')})`);
     store({ ...state, review: null, notice: request.action === 'enable' || request.action === 'disable' ? `${name} is ${request.action === 'enable' ? 'on' : 'off'}${request.target === 'terminal' ? ' in this terminal until you close it' : ''}.`
       : request.action === 'reset' ? `${name} uses your saved settings again.` : request.action === 'save-defaults' ? `${name} keeps these choices in every terminal.`
-        : `${label} ${request.action === 'install' ? 'installed and off; turn it on to use it' : 'done; it applies from your next message'}` });
+        : `${label} ${request.action === 'install' ? request.enable ? 'done; it is on from your next message' : 'installed and off; turn it on to use it' : 'done; it applies from your next message'}` });
     return null;
   };
   const differences = (changes: Json, item?: PackageState) => {
@@ -117,14 +120,27 @@ export default function activate(api: ModAPI) {
   const scoped = (state: Saved, item: Pick<PackageState, 'id' | 'scope'> & ({ own: boolean } | Pick<PackageState, 'overrides'>)) => state.only[key(item)] ?? ('own' in item ? item.own : owns(item)) ? { target: 'terminal' as const } : {};
   const newest = (entry: PackageCatalogEntry | undefined) => entry?.versions.find(item => !item.blocked)?.version ?? '';
   const find = (state: Saved, argument: string) => state.packages.find(matches(argument));
+  const parse = (property: Property, text: string, current: Json | undefined): Json | undefined => {
+    if (property.type === 'boolean') return text === 'true';
+    if (property.type === 'number') return text.trim() && Number.isFinite(Number(text)) ? Number(text) : undefined;
+    if (property.type === 'array' && !/^[[{]/.test(text.trim())) return text.split(',').map(part => part.trim()).filter(Boolean);
+    if (property.type !== 'array' && property.type !== 'object') return text;
+    try {
+      const value = JSON.parse(text.trim() || (property.type === 'array' ? '[]' : '{}')) as Json;
+      return typeof value === 'object' && value !== null && Array.isArray(value) === (property.type === 'array') ? value : undefined;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return undefined;
+    }
+  };
   const write = (state: Saved, item: PackageState | undefined, argument: string): Saved | null => {
     const [name = '', ...rest] = argument.split(' ');
     const property = item && properties(item).find(([entry]) => entry === name)?.[1];
     if (!item || !property) return { ...state, notice: 'That setting is unavailable' };
     const text = property.choices === 'routes' && rest.join(' ') === UNSET ? '' : rest.join(' ');
-    const value: Json = property.type === 'boolean' ? text === 'true' : property.type === 'number' ? Number(text) : text;
+    const value = parse(property, text, item.settings?.[name]);
     const label = labelOf(name, property);
-    if (property.type === 'number' && (!text.trim() || !Number.isFinite(value))) return { ...state, notice: `Enter a number for ${label}, like 5` };
+    if (value === undefined) return { ...state, notice: property.type === 'number' ? `Enter a number for ${label}, like 5` : `Enter JSON for ${label}, like ${property.type === 'array' ? '[]' : '{}'}` };
     const target = scoped(state, item);
     const written = api.host.tryCall('settings.write', { id: item.id, ...copy(item), values: { [name]: value }, ...target });
     if (!written.ok) return refresh(state, `${label} was not saved (${plain(written.error)})`);
@@ -171,11 +187,17 @@ export default function activate(api: ModAPI) {
     if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument }
       : { ...state, notice: 'Enter /mods scope user or /mods scope project' };
     if (verb === 'directory') return search(state);
+    if (verb === 'plugin') {
+      const at = argument.indexOf('/');
+      const [marketplace, plugin] = [argument.slice(0, at), argument.slice(at + 1)];
+      return at > 0 && plugin ? review(state, { action: 'install', source: { kind: 'plugin', plugin, marketplace }, scope: state.scope, enable: true }, `Turn on the ${plugin} plugin's mod (${state.scope})`, from)
+        : { ...state, notice: 'Enter /mods plugin MARKETPLACE/PLUGIN' };
+    }
     if (verb === 'get') {
       const entry = state.catalog.find(item => item.id === argument);
       const version = newest(entry);
-      if (entry?.installed) return { ...state, notice: `${friendly(entry.id)} is already installed; update it from its own panel` };
-      return entry && version ? review(state, { action: 'install', reference: `${entry.id}@${version}`, scope: state.scope }, `Install ${friendly(entry.id)} ${version} (${state.scope})`, from)
+      if (entry?.installed || state.packages.some(item => item.id === argument && item.installed)) return { ...state, notice: `${friendly(argument)} is already installed; update it from its own panel` };
+      return entry && version ? review(state, { action: 'install', reference: `${entry.id}@${version}`, scope: state.scope }, `Install ${friendly(entry.id)} ${version} (${state.scope})${entry.support && SUPPORT[entry.support] ? ` · ${SUPPORT[entry.support].toLowerCase()}` : ''}`, from)
         : { ...state, notice: 'That directory mod has no available version' };
     }
     if (verb === 'install') return argument ? review(state, { action: 'install', reference: argument, scope: state.scope }, `Install ${argument} (${state.scope})`, from)
@@ -225,6 +247,16 @@ export default function activate(api: ModAPI) {
     for (const row of listed.ok ? listed.value.commands : []) if (row.owner && !row.hidden) owned.set(row.owner, [...owned.get(row.owner) ?? [], `/${row.command}`]);
     return owned;
   };
+  const extras = (): Map<string, Pick<PackageState, 'maintainer' | 'contributes'>> => {
+    const listed = api.host.tryCall('packages.list', { fields: ['id', 'scope', 'maintainer', 'contributes'] });
+    return new Map(listed.ok ? listed.value.packages.map(item => [key(item), item]) : []);
+  };
+  const usage = (names: string[], contributes?: PackageContributes) => {
+    const commands = names.length ? names : (contributes?.commands ?? []).map(command => `/${command.name}`);
+    const keys = (contributes?.keys ?? []).map(binding => binding.key);
+    return [commands.length > 0 && `Commands: ${commands.join(' ')}`, keys.length > 0 && `Keys: ${keys.join(' ')}`];
+  };
+  const supportOf = (state: Saved, id: string) => SUPPORT[state.catalog.find(entry => entry.id === id)?.support ?? ''];
   const status = (item: Omit<Listed, 'own'>) =>
     !item.installed ? 'removed' : item.blocked ? 'quarantined' : item.needs_approval ? 'needs approval' : item.failed ? 'failed' : item.pending ? item.effective ? 'stopping' : 'starting'
       : item.effective ? 'on' : item.enabled ? 'shadowed' : 'off';
@@ -240,15 +272,18 @@ export default function activate(api: ModAPI) {
     const on = installed.filter(item => item.effective).length;
     const shown = installed.slice(0, SHOWN);
     const owned = commands();
+    const more = extras();
     const toggles = [...shown].sort((a, b) => GROUPS.indexOf(group(a)) - GROUPS.indexOf(group(b))).map(item => {
       const word = status(item);
       const extra = word === 'on' || word === 'off' ? null : word;
       const fixed = kept(item) && item.enabled;
       const names = owned.get(item.id) ?? [];
+      const declared = more.get(key(item));
+      const flag = supportOf(state, item.id);
       return entry({ id: key(item), tab: 'installed', group: group(item), label: friendly(item.id), ...fixed ? { kind: 'action' } : { kind: 'toggle', value: item.enabled },
-        description: [fixed ? 'always on' : extra, item.scope === 'project' ? 'this project' : null, item.own ? 'only this terminal' : null, item.description].filter(Boolean).join(' · '),
-        keywords: clip([item.id, ...names].join(' '), 256),
-        detail: clip([`${word} · ${item.scope === 'project' ? 'this project' : 'every project'}`, names.length ? `Commands: ${names.join(' ')}` : 'No commands',
+        description: [fixed ? 'always on' : extra, flag?.toLowerCase(), item.scope === 'project' ? 'this project' : null, item.own ? 'only this terminal' : null, item.description].filter(Boolean).join(' · '),
+        keywords: clip([item.id, ...names, ...(declared?.contributes.commands ?? []).map(command => `/${command.name}`)].join(' '), 256),
+        detail: clip([`${word} · ${item.scope === 'project' ? 'this project' : 'every project'}`, ...usage(names, declared?.contributes), declared?.maintainer && `By ${declared.maintainer}`,
           item.needs_approval ? approval(item) : item.failed && `Why it failed: ${brief(item.failed)}`, item.blocked && `Quarantined: ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
           ...item.conflicts.map(conflict => `Conflict: ${conflict}`)].filter(Boolean).join(' · '), 512) });
     });
@@ -259,14 +294,21 @@ export default function activate(api: ModAPI) {
       ...state.catalogError ? [entry({ id: 'directory', tab: 'directory', label: 'Directory unavailable, try again', kind: 'action', description: brief(state.catalogError) })] : [],
     ];
     const offered = state.catalog.flatMap(item => {
-      const local = item.installed ? state.packages.find(other => other.id === item.id) : undefined;
-      if (item.installed && (!local || !newer(newest(item), item.installed))) return [];
+      const local = state.packages.find(other => other.id === item.id && other.installed);
+      if (local && !(item.installed && newer(newest(item), item.installed))) return [];
+      const flag = item.support ? SUPPORT[item.support] : undefined;
       return [entry(local ? { id: `update:${key(local)}`, tab: 'directory', kind: 'action', label: `${friendly(item.id)} ${item.installed} → ${newest(item)}`,
         description: `Update available · ${item.description}` }
-        : { id: `get:${item.id}`, tab: 'installed', group: 'Available', kind: 'action', label: `${friendly(item.id)} ${item.latest}`, description: item.description,
-          keywords: item.id, detail: `Not installed · Enter reviews installing it for ${state.scope === 'project' ? 'this project' : 'you'}` })];
+        : { id: `get:${item.id}`, tab: 'installed', group: 'Available', kind: 'action', label: `${friendly(item.id)} ${item.latest}`, description: [flag, item.description].filter(Boolean).join(' · '),
+          keywords: item.id, detail: `Not installed${flag ? ` · ${flag.toLowerCase()}` : ''} · Enter reviews installing it for ${state.scope === 'project' ? 'this project' : 'you'}` })];
     });
-    const catalog = offered.slice(0, Math.max(0, 200 - toggles.length - settings.length - sources.length));
+    const components = api.host.tryCall('plugins.components', null);
+    const plugins = (components.ok ? components.value.components : []).filter(item => !item.installed).map(item => entry({
+      id: `plugin:${item.marketplace}/${item.plugin}`, tab: 'installed', group: 'Available', kind: 'action', label: `${friendly(item.id ?? item.plugin)} (plugin)`,
+      description: item.error ? `Can't be turned on: ${brief(item.error)}` : item.description ?? `The mod in the ${item.plugin} plugin`, keywords: `${item.plugin} ${item.id ?? ''}`,
+      detail: item.error ? `Plugin ${item.plugin} ${item.version}` : `Plugin ${item.plugin} ${item.version} · Enter reviews turning its mod on` }))
+      .filter(item => encoder.encode(item.id).length <= 128);
+    const catalog = [...plugins, ...offered].slice(0, Math.max(0, 200 - toggles.length - settings.length - sources.length));
     const { selected, query } = remembered();
     return {
       title: 'Mods', subtitle: subtitle([`${on} of ${installed.length} on`, installed.length > SHOWN && `Showing ${SHOWN}; open another with /mods MOD`, state.reloadError && `The last change was rejected; your mods keep running as before. ${brief(state.reloadError)}`, state.notice]),
@@ -289,6 +331,13 @@ export default function activate(api: ModAPI) {
         options: [{ value: UNSET, label: 'Not set' }, ...missing ? [{ value: chosen, label: `${chosen} (unavailable in this project)` }] : [], ...options.slice(0, 30).map(value => ({ value, label: value }))] });
     }
     if (options.length) return entry({ ...base, kind: 'choice', value: options.includes(String(current)) ? String(current) : options[0], options: options.map(value => ({ value, label: value })) });
+    if (property.type === 'array' || property.type === 'object') {
+      const value = current ?? property.default ?? (property.type === 'array' ? [] : {});
+      const list = property.type === 'array' ? strings(value) : null;
+      const text = list ? list.join(', ') : JSON.stringify(value);
+      return encoder.encode(text).length > 2000 ? entry({ ...base, kind: 'action', description: 'Too long to edit here' })
+        : entry({ ...base, kind: 'text', value: text, description: [property.description, list ? 'Separate entries with commas, or enter a JSON list' : 'Enter JSON'].filter(Boolean).join('. ') });
+    }
     if (property.type === 'string' || property.type === 'number') return entry({ ...base, kind: 'text', value: current === undefined || current === null ? '' : clip(String(current), 2000), description: property.description ?? (property.type === 'number' ? 'a number' : undefined) });
     return null;
   };
@@ -320,17 +369,17 @@ export default function activate(api: ModAPI) {
     const editable = !locked(item, state);
     const schema = properties(item);
     const own = owns(item);
+    const flag = supportOf(state, item.id);
     const actions = [...item.source !== 'selection' ? [['update', 'Update'], ['rollback', 'Roll back'], ...fixed ? [] : [['remove', 'Remove']]] : item.failed?.startsWith('source_changed') ? [['trust', 'Trust the edited source']] : [],
       ...item.failed?.startsWith('grant_expired') ? [['trust', 'Trust again']] : []];
     return {
       title: title(item, state), action: { command: 'mods', args },
-      subtitle: subtitle([`${status(item)} · ${item.version} · ${item.source === 'selection' ? 'local folder' : item.source}${item.compatible ? '' : ' · needs a newer Oh My Diff'}`, item.description,
+      subtitle: subtitle([[status(item), item.version, item.source === 'selection' ? 'local folder' : item.source, flag?.toLowerCase(), item.maintainer && `by ${item.maintainer}`, !item.compatible && 'needs a newer Oh My Diff'].filter(Boolean).join(' · '), item.description,
+        item.effective ? null : usage([], item.contributes).filter(Boolean).join(' · '),
         own && 'This terminal has its own choices',
         item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}${scopeFlag(item)}.`,
         item.needs_approval ? `${approval(item)}.` : item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), schema.length ? locked(item, state) : null, state.notice]),
       items: [
-        ...managed(item) || (fixed && !(editable && schema.length)) ? [] : [entry({ id: 'target', label: 'Changes apply to', kind: 'choice', value: scoped(state, item).target ?? 'shared',
-          options: [{ value: 'shared', label: 'Every terminal' }, { value: 'terminal', label: 'Only this terminal' }] })],
         ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
         ...!editable && !managed(item) ? [] : schema.slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
         ...!editable ? [] : schema.filter(([, property]) => property.choices === 'routes').slice(0, 8).flatMap(([name, property]) => [
@@ -338,6 +387,8 @@ export default function activate(api: ModAPI) {
             description: 'Pick a ChatGPT model and effort on your plan; asks before changing anything' }),
           entry({ id: `route:${name}`, kind: 'action', label: `Add a helper model for ${labelOf(name, property)}`,
             description: `Uses the model you are chatting with on your ChatGPT plan; asks before changing anything${skips(item) ? `. ${friendly(item.id)} skips it while skip_same_model is on` : ''}` })]),
+        ...managed(item) || (fixed && !(editable && schema.length)) ? [] : [entry({ id: 'target', label: 'Changes apply to', kind: 'choice', value: scoped(state, item).target ?? 'shared',
+          options: [{ value: 'shared', label: 'Every terminal' }, { value: 'terminal', label: 'Only this terminal' }] })],
         ...!own ? [] : [entry({ id: 'do:reset', label: 'Use saved settings', kind: 'action', description: 'Drop the choices made only for this terminal' }), entry({ id: 'do:save-defaults', label: 'Keep these for every terminal', kind: 'action', description: 'Every terminal and future launches use them' })],
         ...actions.map(([verb, label]) => entry({ id: `do:${verb}`, label, kind: 'action' })),
       ],
@@ -382,6 +433,7 @@ export default function activate(api: ModAPI) {
         : item === 'apply' || item === 'cancel' || item === 'scope' || item === 'directory' ? act(scoped, item, text)
           : item === 'source' ? act(scoped, 'install', text)
             : item.startsWith('get:') ? act(scoped, 'get', item.slice(4))
+              : item.startsWith('plugin:') ? act(scoped, 'plugin', item.slice(7))
               : act(scoped, text === 'true' ? 'enable' : 'disable', item);
       return next && show(listing(store(next)));
     }
@@ -419,11 +471,9 @@ export default function activate(api: ModAPI) {
     return rows;
   }, []).slice(0, 2).join('\n');
   const welcome = (identity: TerminalIdentity | undefined): TerminalComponent[] => {
-    const mods = identity?.mods;
-    const counts = mods ? `${mods.active} of ${mods.installed} mods on${mods.failed ? `, ${mods.failed} failed` : ''}` : 'Mods are loading';
     const lines = identity?.install_profile === 'platform_only'
-      ? ['Oh My Diff Core: the mod host without built-in task features', `${counts}. /mods turns mods on, /omd fixes a broken one.`, 'Write your own with omd-mod-author create DIR ID.']
-      : ['Oh My Diff', `${counts}. /mods turns more on, /omd fixes a broken one.`, 'Auto-continue (off) answers unattended prompts: omd mods enable omd_auto_continue'];
+      ? ['Oh My Diff Core: the mod host without built-in task features', '/mods turns mods on, /omd fixes a broken one.', 'Write your own with omd-mod-author create DIR ID.']
+      : ['Oh My Diff', '/mods turns more on, /omd fixes a broken one.', 'Auto-continue (off) answers unattended prompts: omd mods enable omd_auto_continue'];
     return lines.map((text, index) => ({ type: 'text', id: `omd_mods_welcome_${index}`, label: 'Getting started', text: wrap(text), tone: index ? 'muted' : 'normal' }));
   };
   api.on('terminal', (input): TerminalPatch | null => {

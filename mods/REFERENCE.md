@@ -276,7 +276,9 @@ user contexts. A user context can call only:
 Slash command callbacks can also call `process.status` and `process.exchange` on their own existing managed
 processes. Starting, finding or stopping a process still requires a session callback.
 
-A service call from a user context works only when its provider needs no other host operation.
+A service call from a user context runs the provider in that same context with the provider's own grants, so it works
+when every host operation the provider makes is also allowed there (for example a provider that uses `store.*`,
+`exec.run` and `workspace.stat` answers from a key or command callback).
 
 Component input callbacks also run in the terminal, but not as user actions. They can't call `terminal.selection`,
 `terminal.copy`, `terminal.panel`, `credentials.request`, `terminal.import_file`, `builtins.invoke`,
@@ -653,7 +655,7 @@ The registry marks these entries experimental in Mod API `1.0.0`:
 | Capabilities | `approve.override`, `autonomous`, `fs.external`, `history_write`, `mcp`, `peers`, `power`, `unix_sockets` |
 | Events | `config_change`, `contract`, `elicitation_result`, `focus`, `host_operation`, `instructions_loaded`, `migrate`, `mods_changed`, `peer_message`, `peer_receipt`, `prompt`, `prompt_expanded`, `session`, `tool_batch_end`, `tool_exposure`, `turn_queue`, `view`, `worktree` |
 | Interceptors | `agent_offers`, `agent_spawn`, `compaction`, `component_change`, `composer_key`, `elicitation`, `mention`, `peer_receive`, `peer_send`, `turn_stop` |
-| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access` |
+| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `plugins.components`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access` |
 | Components | `raster` |
 | Render sites | `composer_hint`, `notice`, `session_mode`, `tool_result`, `turn_duration`, `user_message` |
 | View fields | `background`, `footer`, `foreground`, `header`, `key_contexts`, `panels`, `placeholder`, `surface_styles`, `underlay` |
@@ -677,6 +679,8 @@ These experimental features have no registry entry of their own:
 | `settings_file_v1` | `api.settingsFile` and the settings file |
 | `terminal_focus_v1` | Focus regions, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus` |
 | `terminal_pty_v2` | The terminal pane extension: keys, mouse, cursor, OSC signals, session directories, binary pins and `autofocus` |
+| Plugin components | [The `.codex-plugin/omd.json` mod component descriptor and `omd COMMAND` shell dispatch](reference/plugin-components.md) |
+| `package_contributes_v1` | The manifest's [`contributes`](reference/packaging.md#contributes) declaration |
 
 #### Frozen entries with experimental fields
 
@@ -694,7 +698,9 @@ These frozen entries have experimental fields:
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
 | `operations:events.schedule` | `data` | `timer_data_v1` |
-| `operations:packages.list` | `needs_approval` | `package_needs_approval_v1` |
+| `operations:packages.apply` | `enable` | `plugin_components_v1` |
+| `operations:packages.list` | `needs_approval`, `maintainer`, `contributes` | `package_needs_approval_v1`, `package_contributes_v1` |
+| `operations:packages.preview` | `enable` | `plugin_components_v1` |
 | `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |
@@ -1078,6 +1084,8 @@ While a mod is written, `omd-mod-author watch DIR STORE` (or `pnpm watch STORE`)
 1. Inspects the directory.
 2. Approves its current digest in `STORE` as the user would with `omd-mod trust`.
 3. Queues a reload of that store's host and refreshes `.omd/`.
+4. Loads the mod in a fresh host and reports `activation_failed` with the mod's error if `activate` throws or the
+   mod is refused. With `--once` that exits non-zero; while watching it is printed and watching continues.
 
 Saving an entry point, asset or lifecycle file reloads again after 100 ms, and reports a half-written file instead of
 stopping. Files named in `mod.json` are watched as soon as it is saved, so a new asset that doesn't exist yet reloads
@@ -1103,10 +1111,11 @@ its scope, settings, grants and enabled or disabled choice.
 #### Noninteractive watch and CI
 
 - `omd-mod-author watch DIR STORE --once` does one inspect, approve and reload and exits, which suits a build step
-  against a scratch store.
+  against a scratch store. It exits non-zero when the mod fails to activate.
 - `omd-mod-author test DIR` (or `pnpm test`) is the CI check. It needs no store, since it builds a throwaway store for
   every run. It fails (`no_tests`) when the project has neither `mod.test.json` nor a `*.test.ts` or `*.test.mjs`
-  file.
+  file. It also fails (`unsupported_scenario_files`) when the directory has a `*.test.json` other than `mod.test.json`
+  and `debug.test.json`, since those would never run.
 
 Neither starts a provider request.
 
@@ -1194,6 +1203,14 @@ The engine strips TypeScript types in place, so callback stacks report the autho
 
 `omd-mod status` keeps a bounded log per mod of each callback's event, handler, generation, outcome and elapsed
 microseconds, plus aggregate timing. The log never adds mod-side filesystem or process access.
+
+#### Logging from a mod
+
+`console.log` and the other `console` methods run without error, but a mod's output goes nowhere: it appears in no
+trace, store or terminal. To see a value, return it from a command as `display` (`pnpm run run` prints the trace),
+or show it with [`terminal.notice`](reference/terminal-operations.md#terminalnotice) (`terminal` capability). A thrown `Error`
+reaches the trace and `omd-mod status` with its authored `file:line`. `omd-mod-author report`, `events` and
+`diagnostics` describe registrations, source use and errors, not what a mod printed.
 
 #### Source-use report
 
@@ -1320,7 +1337,7 @@ Apply the identical request with the preview's `confirmation` string.
 The higher-level `packages.preview`/`packages.apply` operations and `omd` CLI use:
 
 ```text
-{action, id?, source?, reference?, version?, index?, scope?, target?, expected_generation?}
+{action, id?, source?, reference?, version?, index?, scope?, target?, enable?, expected_generation?}
 ```
 
 `action` is one of `install`, `update`, `remove`, `rollback`, `enable`, `disable`, `trust`, `reset` or `save-defaults`.
@@ -1331,6 +1348,8 @@ saves them for every terminal. Their preview's `changes` is
 and empty `settings` mean nothing differs. Install, update, remove, rollback and trust are always shared, and the
 shell CLI, which has no terminal, changes what every terminal uses. A request names a package
 with `source` or with a `reference` (and optional `version`), never both. `scope` is `user` or `project`.
+Experimental `enable: true` (`plugin_components_v1`) is for `install` only: the same preview and confirmation also
+turn the package on, and the preview's `changes` include `enabled: true`.
 `expected_generation` is described under
 [`packages.apply`, `packages.preview` and `packages.reload`](#packagesapply-packagespreview-and-packagesreload).
 
@@ -1344,6 +1363,7 @@ A `source` is one of:
 | `repository` | `repository`, `revision`, `subdirectory?`; `revision` is a 40-hex commit or a branch or tag name, resolved when the plan is made and locked as the commit (an offline install needs a commit) |
 | `package` | `index`, `id`, `version`; `version` is empty (newest unblocked release), exact or `^x.y.z` |
 | `npm` | `package`, `version?`, `registry?` (default from the user's npmrc, else `https://registry.npmjs.org`; `https` or loopback `http` only), `integrity?` (a sha512 SRI pin) |
+| `plugin` | `plugin`, `marketplace?` (`plugin_components_v1`): the verified mod component of an installed Codex plugin, installed like a `local` source; see [Plugin components](reference/plugin-components.md#installing-from-mods) |
 
 #### Package references
 
@@ -1486,6 +1506,22 @@ scaffold emits both with placeholders to change.
 An optional `description` of 1–160 printable characters says what the mod adds; `packages.list` and the `/mods`
 screen show it.
 
+#### `contributes`
+
+An optional `contributes` (`package_contributes_v1`) declares what the mod adds before it runs, so `packages.list`
+can show it while the mod is off:
+
+```json
+{"contributes": {"commands": [{"name": "review", "description": "Review the diff"}],
+  "keys": [{"key": "ctrl+r", "description": "Open the review"}]}}
+```
+
+- Up to 16 `commands`: `name` is a slash command name without `/` (1–64 bytes of `a-z`, `0-9`, `-` and `_`).
+- Up to 16 `keys`: `key` is 1–32 printable bytes.
+- Every `description` is 1–200 printable bytes. Unknown fields fail inspection with `invalid_contributes` or a
+  manifest parse error.
+- It is a declaration only: the host registers nothing from it.
+
 ### Codex configuration (`codex_config_v1`)
 
 A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
@@ -1533,6 +1569,8 @@ update it.
 - `blocked` is the quarantine reason or `null`.
 - `needs_approval` (`package_needs_approval_v1`) is `true` for a disabled mod whose grants were revoked or whose
   manifest asks for a capability it wasn't granted. `omd mods update ID` reviews it again.
+- `maintainer` (`package_contributes_v1`) is the manifest's `provenance.maintainer` or `null`, and `contributes` is
+  its [`contributes`](#contributes) with empty `commands` and `keys` when absent, for every package, on or off.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
 - `packages.list` reports effective `enabled` and `settings`, plus `settings_schema`. Experimental
@@ -1566,7 +1604,7 @@ These `packages.list` fields say whether a package change has taken effect.
 
 ```text
 packages.preview {...request, expected_generation?} → {action, id, changes, grants_added}
-packages.apply {...request, expected_generation} → {status: 'applied', generation} | {status: 'declined'}
+packages.apply {...request, expected_generation} → {status: 'applied', generation, enabled?, reason?} | {status: 'declined'}
 packages.reload → {generation, failed, applies: 'next_boundary'}
 ```
 
@@ -1577,7 +1615,11 @@ The request is the one under
 | --- | --- |
 | `expected_generation` | The `generation` from `packages.list`; required on `apply`, optional on `preview` |
 
-- `apply` returns the new generation, or `declined` when the user declines the confirmation.
+- `apply` returns the new generation, or `declined` when the user declines the confirmation. In the terminal a
+  `disable` from the mod's own slash command or panel action applies without asking, unless the target mod
+  registers a required interceptor or holds `request_policy`.
+- An `install` with `enable: true` that installs but can't turn the mod on returns `enabled: false` and the
+  `reason`; the mod stays installed and off.
 - `reload` returns the generation, the ids of mods that failed, and `next_boundary`, when the revalidation applies.
 
 | Error | When |
@@ -1597,7 +1639,8 @@ an edited selection's current source and capabilities and keeps it enabled.
 
 - `apply` shows a native confirmation naming every new grant, dependencies as `id:capability`, and applies exactly
   the confirmed plan or refuses if the package, lock or selection changed.
-- Installing never enables a package; see [Enablement on install and update](#enablement-on-install-and-update).
+- Installing never enables a package unless the request sets `enable: true`; see
+  [Enablement on install and update](#enablement-on-install-and-update).
 - The preview lists per package `authority {from, to}`, `grant {from, to}` and `renewed_approval`.
 - Once a confirmed package mutation starts, it returns its definitive result even if its writes reload or disable
   the calling mod. A queued call is still rejected when it's cancelled or when the mod's source, the originating
@@ -1611,7 +1654,8 @@ Installing and updating decide whether a package is on, and rollback returns it 
 
 #### Enablement on install and update
 
-**Installing never enables a package.** An update keeps a package on only if it was on and its grant, authority
+**Installing never enables a package**, except a `packages.apply` install with `enable: true`, which turns it on
+under the same confirmation. An update keeps a package on only if it was on and its grant, authority
 scopes and origin are unchanged; otherwise it is off until enabled.
 
 `package-plan` shows per package:
@@ -6062,6 +6106,7 @@ timing}` from the worker's `model_response` records:
 | Error | When |
 | --- | --- |
 | `model_route_required` | `model.complete` without `route` |
+| `agent_prompt_or_role_limit` | `prompt` is empty or over 8 KiB, or `route` is empty |
 | `model_call_option_invalid` | `system`, `context`, `output.schema`, `effort`, `max_output_tokens` or `cache` is out of range |
 | `model_tools_require_fork` | `tools` on `model.complete` |
 | `capability_denied: sessions`, `capability_denied: sessions_tools` | `model.fork` without those capabilities |
@@ -6743,12 +6788,13 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 | `patch` | `files` (`path`, `change`, `added`, `removed`), `error` |
 | `web_search` | `action`, `query` |
 | `agent` | `tool`, `agents`, `prompt` |
-| `mcp` | `server`, `tool`, `arguments`, `output_lines` |
-| `dynamic` | `tool`, `arguments`, `output_lines` |
+| `mcp` | `server`, `tool`, `arguments`, `output_lines`, `error` |
+| `dynamic` | `tool`, `arguments`, `output_lines`, `error` |
 | `image` | `tool`, `path`, `prompt` |
 
 Patch rows are inserted on completion. Declined patches show an informational notice, matching restored
-history; they do not produce a `tool_call` render target. Patch `duration_ms` is a number when timing is recorded,
+history; they do not produce a `tool_call` render target. MCP and dynamic `error` is the first non-empty line of a
+failed call's error or output (null otherwise), cut like other render text. Patch `duration_ms` is a number when timing is recorded,
 otherwise null.
 
 Group and file limits:
@@ -7112,7 +7158,14 @@ The host checks every view and patch against these limits.
 Keybindings:
 
 - Each mod's view or patch has at most 24 keybindings.
-- The view composed from every mod has at most 128, and a key bound by two mods rejects the later mod's patch.
+- The view composed from every mod has at most 128. When two mods bind the same key, the first in composition order
+  keeps it and the later binding is dropped and reported under `terminal.conflicts`.
+- A binding for a key the native keymap uses in the current context is ignored with a warning: the native action runs,
+  or, while a mod dialog shows, nothing.
+- Mod keys come before the transcript and composer only while a mod component or region has focus, help is open or a
+  mod dialog shows. Mod input is off while a native popup, overlay or expanded question is open.
+- Ctrl+] leaves a focused mod panel or workspace region. It doesn't clash with upstream's `chat.skip_question`: that
+  acts only on an expanded question, and mod input is off then.
 
 Components:
 
@@ -7776,7 +7829,9 @@ It opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file a
 native confirmation.
 
 `{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file in the argv the user sets as `editor`
-in `host.json`, with `{path}` and `{line}` substituted.
+in `host.json`, with `{path}` and `{line}` substituted. Without one it runs `$VISUAL`, else `$EDITOR`, in the terminal
+while Codex waits, with the path appended unless the value contains `{path}`; neither set fails with
+`terminal_open_editor_unconfigured`, and an `editor` that isn't 1 to 16 strings with `terminal_open_editor_invalid`.
 
 ### `terminal.prompt`
 
@@ -8406,7 +8461,9 @@ Use it when a plugin contains a mod component or when you run a mod's exported s
 To bundle a mod in a plugin step by step, see
 [Bundle a mod in a plugin](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/bundle-in-a-plugin.md).
 
-The descriptor and `omd COMMAND` run on Apple Silicon macOS.
+Mod API `1.0.0`: the descriptor and `omd COMMAND` are experimental (see
+[Stability and migration](reference/stability-and-migration.md#experimental-features-without-a-registry-entry)). Platform:
+Apple Silicon macOS.
 
 ### Plugin component descriptor
 
@@ -8424,6 +8481,31 @@ A plugin names its [mod component](reference/glossary.md#mods-and-the-host) in `
   changes.
 - Trust and enable the inspected component the same way as any other package ([Packaging](reference/packaging.md)). The
   descriptor does not activate it.
+
+### Installing from `/mods`
+
+Experimental (`plugin_components_v1`). `plugins.components` (capability `packages`, user contexts only) lists the
+mod components of the Codex plugins installed for this user:
+
+```text
+plugins.components → {components: [{plugin, marketplace, version, id, description, sha256, error, installed, enabled}]}
+```
+
+- It reads `CODEX_HOME/config.toml` `[plugins."PLUGIN@MARKETPLACE"]` entries and each plugin's active version under
+  `CODEX_HOME/plugins/cache/MARKETPLACE/PLUGIN/VERSION`, the way Codex picks it, and lists the plugins that have
+  `.codex-plugin/omd.json`.
+- `sha256` is the verified descriptor digest. `error` says why the component can't be installed (for example
+  `plugin_component_hash_mismatch`), and then `id`, `description` and `sha256` are `null`.
+- `installed` and `enabled` say whether a mod with the component's id is installed and turned on in the store.
+
+The `plugin` package source `{kind: 'plugin', plugin, marketplace?}` installs that component through
+`packages.preview` and `packages.apply` like a `local` source, after the same checks as `omd-mod plugin-component`.
+`marketplace` is needed only when two installed marketplaces have the plugin. Add `enable: true` to turn it on under
+the same confirmation:
+
+```ts
+api.host.tryCall('packages.apply', { action: 'install', source: { kind: 'plugin', plugin: 'omd-anchored-edit' }, enable: true, expected_generation: generation });
+```
 
 ### `omd COMMAND` shell dispatch
 
@@ -8505,12 +8587,13 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 
 - The object `connect` returns has `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`,
   `resource`, `recovery` and `request(method, params)`. Together they cover every `omd/*` and app-server method.
-- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches,
-  retains the in-memory `attachment.terminalToken`, replays the last update, resumes the threads it resumed
-  through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`. Explicit detach clears
-  terminal ownership. If a restarted host rejects the retained token, it attaches once without it and inherits
-  shared defaults. Keep terminal tokens private and in memory. Clients with separate terminal owners share a mod's
-  saved state, not its settings, enablement or session UI state.
+- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches
+  with the last accepted or interrupted attach (a reattach the host refused is not carried over), retains the
+  in-memory `attachment.terminalToken`, replays the viewport and focus updated since that attach, resumes the
+  threads it resumed through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`.
+  Explicit detach clears terminal ownership. If a restarted host rejects the retained token, it attaches once
+  without it and inherits shared defaults. Keep terminal tokens private and in memory. Clients with separate
+  terminal owners share a mod's saved state, not its settings, enablement or session UI state.
 - `unsupported(component, renderer, drawable)` returns null when the renderer can draw the component. Otherwise it
   returns an error with `fallback` set to the component's alt text, text or label. A renderer can't draw a type
   outside `drawable`, a `raster` without `cells` or an `image` without an image format. The error message has the

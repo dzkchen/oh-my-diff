@@ -75,11 +75,17 @@ test('persistent subscription caching disarms auto compaction while explicit int
   const subscription = response({ credential: 'chatgpt', cost: { microusd: null, basis: 'included_subscription' } });
   const skipped = run('model_response', subscription, apiState);
   assert.equal(skipped.state.ttl, 0);
-  assert.deepEqual(skipped.calls, [['events.cancel', { key: 'idle' }]]);
+  assert.deepEqual(skipped.calls.map(([operation, args]) => [operation, args.placement]), [['terminal.notice', 'transcript'], ['events.cancel', undefined]]);
+  assert.match(skipped.calls[0][1].text, /inactive here: ChatGPT plans/);
+  assert.deepEqual(run('model_response', subscription, skipped.state).calls, [['events.cancel', { key: 'idle' }]]);
   assert.deepEqual(run('timer', { key: 'idle' }, skipped.state, { now: NOW + 27 * MINUTE }).calls, []);
-  assert.equal(run('model_response', subscription, null, { settings: { cache_ttl_minutes: '10' } }).state.ttl, 10 * MINUTE);
+  const explicit = run('model_response', subscription, null, { settings: { cache_ttl_minutes: '10' } });
+  assert.equal(explicit.state.ttl, 10 * MINUTE);
+  assert.ok(!explicit.calls.some(([operation]) => operation === 'terminal.notice'));
   const plain = response({ route: 'session', credential: null, cost: { microusd: null, basis: 'unpriced' } });
-  assert.equal(run('model_response', plain, apiState).state.ttl, 0, 'plain signed-in sessions do not carry an included-subscription cost label');
+  const unpriced = run('model_response', plain, apiState);
+  assert.equal(unpriced.state.ttl, 0, 'plain signed-in sessions do not carry an included-subscription cost label');
+  assert.match(unpriced.calls.find(([operation]) => operation === 'terminal.notice')[1].text, /no price is known/);
   assert.equal(run('model_response', plain, null, { settings: { cache_ttl_minutes: '30' } }).state.ttl, 30 * MINUTE);
 });
 

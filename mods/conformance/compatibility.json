@@ -169,7 +169,9 @@
       "terminal_welcome_hidden_v1",
       "routes_add_self_v1",
       "routes_add_model_v1",
-      "package_needs_approval_v1"
+      "package_needs_approval_v1",
+      "package_contributes_v1",
+      "plugin_components_v1"
     ]
   },
   "apis": [

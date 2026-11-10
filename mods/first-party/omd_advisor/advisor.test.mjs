@@ -220,8 +220,15 @@ test('the observer skips turns that did not complete and, by default, an advisor
   const first = invoke({ ...completed, evidence: { ...reference, sha256: digest(JSON.stringify(long)) } }, fresh.host, options).state.observer;
   assert.equal(first.status, 'observing', first.reason);
   const same = advisorHost({ ...spawn, 'routes.list': () => [{ name: 'astra', model: 'lead-model' }] }, long);
-  invoke(completed, same.host, { ...options, settings: { ...options.settings, every_turn: true } });
+  const told = invoke(completed, same.host, { ...options, settings: { ...options.settings, every_turn: true } });
   assert.equal(spawned(same), false);
+  const notices = fixture => fixture.calls.filter(call => call.operation === 'terminal.notice');
+  assert.equal(notices(same).length, 1);
+  assert.match(notices(same)[0].arguments.text, /same model as the lead \(lead-model\).*\/mods/);
+  assert.equal(told.state.sameModel, 'lead-model');
+  const again = advisorHost({ ...spawn, 'routes.list': () => [{ name: 'astra', model: 'lead-model' }] }, long);
+  invoke(completed, again.host, { ...options, state: told.state });
+  assert.equal(notices(again).length, 0);
   assert.equal(same.calls.filter(call => call.operation === 'app.request').length, 1);
   const running = { observer: { status: 'observing', handle: 'observer-0', sha256: digest('older'), turn: 'turn-0' } };
   const stale = advisorHost(routes, long);
