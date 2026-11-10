@@ -138,7 +138,7 @@ export default function activate(api: ModAPI) {
     button('skip', 'Skip this version'),
   ];
   const modUpdates = (info: Info, mods: Mods): TerminalComponent[] => [
-    line('mods', 'Mod updates', `Updates to first-party mods are out: ${names(mods.changed)}. Your Oh My Diff version stays the same.`, 'accent', 3),
+    line('mods_out', 'Mod updates', `Updates to first-party mods are out: ${names(mods.changed)}. Your Oh My Diff version stays the same.`, 'accent', 3),
     ...(same(mods, info.pending_mods) ? [line('mods_pending', 'Downloaded', 'Downloaded and verified; they install the next time OMD starts with no other session open.', 'success', 2)] : []),
     ...(same(mods, info.held_mods) ? [line('mods_held', 'Rolled back', 'You rolled these back; automatic updates skip them. Choose Update mods to install them again.', 'muted', 2)] : []),
     ...(mods.notes ? [line('mods_notes', 'Notes', mods.notes, 'normal', 8)] : []),
