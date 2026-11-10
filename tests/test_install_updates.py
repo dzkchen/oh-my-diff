@@ -876,6 +876,29 @@ class UpdateSelection(unittest.TestCase):
             self.assertEqual(len(attempts), 1)
         self.assertFalse(target.exists())
 
+    def test_release_metadata_retries_transient_errors_but_not_missing_files(self):
+        module, attempts = installer(), []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *arguments): return False
+            def read(self, size): return b'{"ok": true}'
+
+        def opened(url, timeout):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise ssl.SSLError("record layer failure")
+            if len(attempts) == 2:
+                raise module.http.client.IncompleteRead(b"")
+            return Response()
+        with patch.object(module, "opened", opened), patch.object(module.time, "sleep"):
+            self.assertEqual(module.fetch_json("https://example.test/m", 100), {"ok": True})
+            self.assertEqual(len(attempts), 3)
+            missing = urllib.error.HTTPError("https://example.test/m", 404, "Not Found", {}, None)
+            with patch.object(module, "opened", side_effect=missing) as refused, self.assertRaises(urllib.error.HTTPError):
+                module.fetch_json("https://example.test/m", 100)
+            self.assertEqual(refused.call_count, 1)
+
     def test_http_errors_name_the_requested_url_not_the_signed_redirect(self):
         signed = "https://objects.githubusercontent.com/asset?X-Amz-Signature=secret"
         forbidden = urllib.error.HTTPError(signed, 403, "Forbidden", {}, None)
