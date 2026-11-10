@@ -138,11 +138,7 @@ export default function activate(api: ModAPI) {
     }
   };
   const pin = (r: Repo, commits: string[]) => {
-    try {
-      git(r.top, ['update-ref', '--stdin'], { stdin: commits.map(commit => `update ${space(r)}${commit} ${commit}\n`).join('') });
-    } catch {
-      return;
-    }
+    git(r.top, ['update-ref', '--stdin'], { stdin: commits.map(commit => `update ${space(r)}${commit} ${commit}\n`).join('') });
   };
   const keepRefs = (r: Repo, state: State) => {
     try {
@@ -159,8 +155,9 @@ export default function activate(api: ModAPI) {
         ...[...wanted].filter(commit => !present.includes(refs + commit)).map(commit => `update ${refs}${commit} ${commit}`),
       ];
       for (const part of chunks(lines, 500)) git(r.top, ['update-ref', '--stdin'], { stdin: `${part.join('\n')}\n` });
-    } catch {
-      return;
+    } catch (error) {
+      state.error = `could not keep checkpoint refs, so git gc may remove undo history: ${message(error)}`;
+      save(state);
     }
   };
 
