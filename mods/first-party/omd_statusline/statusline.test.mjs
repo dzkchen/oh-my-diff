@@ -75,13 +75,13 @@ test('child tool results do not schedule refreshes without a session', () => {
   assert.ok(lead.calls.some(item => item.operation === 'events.schedule' && item.arguments.key === 'time:git_soon'));
 });
 
-test('cost follows the ledger basis: included on the ChatGPT plan, unknown when unpriced', () => {
+test('cost follows the ledger basis: included on the ChatGPT plan, hidden when unpriced', () => {
   const settings = { preset: 'custom', layout: 'provider cost' };
   const plan = host({ 'app.request': args => args.method === 'config/read' ? { config: {} } : { rateLimits: { planType: 'plus' } } });
   const included = [['model_response', response('r1', { cost: { microusd: 0, basis: 'included_subscription' } })]];
   const unpriced = [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]];
   assert.match(lines(view(feed(started(), included), settings))[0], /included/);
-  assert.match(lines(view(feed(settled(plan), unpriced), settings))[0], /unknown/, 'a plan type does not make an unpriced request included');
+  assert.doesNotMatch(lines(view(feed(settled(plan), unpriced), settings))[0], /included|cost unknown/, 'a plan type does not make an unpriced request included');
 });
 
 test('user scripts get session JSON on stdin and only safe styled text reaches the view', () => {

@@ -71,7 +71,9 @@ The default `sensitive_paths`: `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.p
   assigned values whose name has a `test`, `fake`, `mock`, `dummy`, `sample`, `demo`, `csrf` or `xsrf` word (such as
   `TEST_PASSWORD`) or that start with one of those words. UUIDs and other real-looking values are still redacted.
 - It finds only what its rules match. It can miss secrets with no known prefix, split or encoded values and unquoted
-  word-only passwords. It can also redact harmless text, such as `1.2.3.4` with `ipv4` on.
+  word-only passwords. Passwords passed as command flags, such as `curl -u user:pass` or `mysql -pPASS`, and quoted
+  passphrases with spaces aren't matched. Values that are file paths, such as `GOOGLE_APPLICATION_CREDENTIALS=/path/key.json`,
+  are kept so the model can use the path. It can also redact harmless text, such as `1.2.3.4` with `ipv4` on.
 - Images, audio and files aren't scanned unless `unscanned` is `deny`. Provider-side tools, other mods' network calls
   and processes you already allowed are out of reach.
 - The path check reads command text only. It misses paths built at run time. Globs and brace lists that could name a
