@@ -28,9 +28,9 @@ omd mods enable omd_workspace
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to install and turn on a mod.
 
-Without it nothing changes. `/workspace off` asks where to hide the workspace: in this conversation (the default;
-`/workspace on` brings it back), in this terminal until it closes, or in every terminal (both turn the mod off, and
-`/mods` turns it back on).
+`/workspace off` asks where to hide the workspace. **This conversation** is the default; `/workspace on` brings it
+back. **This terminal** turns the mod off until the terminal closes. **Every terminal** turns it off for all
+terminals. Use `/mods` to turn it back on in either of the latter cases.
 
 ## Use it
 
@@ -261,11 +261,13 @@ reason.
 - `replaces`: a built-in panel (`changes` or `terminal`) it stands in for. That panel is hidden unless the `panels`
   setting lists it.
 
-A registration persists in its conversation until `unregister` or until its owner (the `<mod>` of its site) is turned off, so a mod you
-turned off leaves no tab behind. Registering again on every `start` is harmless. At most 16 panels can be
-registered. Titles are at most 30 bytes (tab titles 32) without control characters. The workspace only places
-panels, and the registering mod draws them. Panels missing from an arrangement join it by their placement, else the
-first tab group, else beside the last panel. Panels that are gone are left out.
+A registration stays in its conversation until `unregister` or until the mod named in its `site` is turned off.
+Turning that mod off removes its tab. Registering again on every `start` is harmless. At most 16 panels can be
+registered. Titles are at most 30 bytes (tab titles 32) without control characters.
+
+The workspace places panels; each registering mod draws its own. A panel missing from the arrangement uses its
+`placement`, otherwise joins the first tab group, otherwise goes beside the last panel. The workspace leaves out
+panels that no longer exist.
 
 [`omd_git`](../omd_git/README.md) registers its tab like this, with the `services` capability and an
 `{"name": "omd.workspace", "version": "^1.0.0"}` entry under `services.imports` in its `mod.json`:

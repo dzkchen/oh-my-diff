@@ -20,10 +20,11 @@ select Choose a model for Advisor model to pick any ChatGPT model on your plan a
 providers first in `/profile` or their provider mod, such as Claude CLI; the advisor uses that connection's model
 access. Paid routes still need their configured allowance.
 
-Choose a different model from the lead: `skip_same_model` is on by default, so the advisor skips while its route uses
-the lead's model and says so once in the transcript. Add a helper model uses the model you're chatting with, and Choose a model marks the lead's model. To
-consult the same model deliberately, turn that setting off. Until a model is selected, the advisor reports `unavailable`
-with the routes it can use, and the status line reads `Advisor: no route set`.
+Choose a model different from the lead's. With `skip_same_model` on (the default), the advisor skips reviews when
+its route uses the lead's model and says so once in the transcript. **Add a helper model** selects the model you're
+chatting with; **Choose a model** marks that model in the list. Turn `skip_same_model` off if you want to consult it.
+Until you select a model, the advisor reports `unavailable` with the routes it can use, and the status line reads
+`Advisor: no route set`.
 
 ## Use it
 

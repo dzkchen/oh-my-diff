@@ -111,7 +111,7 @@ whole, and check every leaf of a table value as its own key.
 - every line that looks like a credential (bearer tokens, key prefixes, private keys, user information in URLs; the
   other lines of multi-line text stay).
 
-They also reduce an MCP server `url` or provider `base_url` to scheme, host and port: user information becomes
+`config/read` also reduces an MCP server `url` or provider `base_url` to scheme, host and port: user information becomes
 `<redacted>@`, and anything after the host becomes `/<redacted>`. This applies in the effective config and in each
 layer. `hooks/list` applies the same line rule to hook `command` strings.
 

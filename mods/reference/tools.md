@@ -72,7 +72,7 @@ call, so they never overlap a tool that is not parallel-safe. Failures and denia
 ### `tools.check`
 
 `tools.check {tool, arguments}` returns `{decision: 'allow' | 'ask' | 'deny', reason, authority}` without running
-anything. The tool's own runtime computes the host requirement the call would meet:
+anything. The host asks the tool's own runtime which approval requirement applies:
 
 | Tool | Requirement computed |
 | --- | --- |

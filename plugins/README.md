@@ -1,8 +1,7 @@
 # Plugins
 
-OMD+ comes with one Codex plugin, `omd-anchored-edit`, which edits files by line anchor. OMD+ puts it on disk but
-doesn't install it, so you add it yourself. This page shows how to add, use and remove a plugin and how to turn on a
-plugin's mod component. OMD Core includes none.
+OMD+ puts the `omd-anchored-edit` Codex plugin on disk. It edits files by line anchor, but you must add it to Codex
+and turn on its mod component before using it. Follow the steps below. OMD Core includes no plugins.
 
 | Plugin | What it does |
 | --- | --- |
@@ -10,7 +9,7 @@ plugin's mod component. OMD Core includes none.
 
 ## Experimental plugins
 
-These haven't been tested fully yet, so no install profile stages them. They're in
+These need more testing, and neither install profile puts them on disk. They're in
 [`plugins/experimental`](experimental) of the OMD repository. To add one, register that folder from a checkout as a
 marketplace with `codex plugin marketplace add PATH/plugins/experimental/oh-my-diff-experimental`, then
 `codex plugin add PLUGIN@oh-my-diff-experimental`. In the component and removal commands on this page, use
@@ -54,10 +53,10 @@ enables it under one confirmation. From a shell, run instead:
 omd-package plugin-mod enable omd-anchored-edit
 ```
 
-The command finds the added plugin's installed folder, checks its component against the digest (a SHA-256 hash of
-the component's package) that the plugin declares, and runs `omd install` and `omd mods enable` on it. Each shows the
-component's source, digest and capabilities and asks before it changes anything; nothing is trusted if you answer
-no, and it refuses without a terminal. For an experimental plugin, name its marketplace:
+The command finds the plugin's installed folder and checks the component against the package hash (SHA-256) declared
+by the plugin. It then runs `omd install` and `omd mods enable`. Each command shows the component's source, hash
+and capabilities and asks before making changes. If you answer no, nothing is trusted. Without a terminal, the
+command refuses to proceed. For an experimental plugin, name its marketplace:
 `omd-package plugin-mod enable omd-artifact-reading@oh-my-diff-experimental`. A changed component, for example after
 a plugin update, must be reviewed again with the same command. The component runs from your next message.
 

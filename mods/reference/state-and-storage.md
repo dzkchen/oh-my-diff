@@ -146,8 +146,8 @@ is one per mod store, per thread or per checkout.
 
 ### `api.state` compare-and-swap
 
-`api.state` is re-read before every callback and written back with a compare-and-swap. If another process wrote it
-meanwhile, the host runs the callback again against the fresh state, within the callback's 5 s budget.
+Before each callback, the host reads `api.state`. It writes the state back with a compare-and-swap: if another process
+changed it meanwhile, the host reruns the callback against the fresh state, within the callback's 5 s budget.
 
 - The rerun's host calls get the results already recorded, so no operation runs twice.
 - The clock stays at the first attempt's start, so `Date.now()` in arguments replays.
@@ -194,9 +194,9 @@ These rules apply in every scope:
 A mod raises the manifest's `state_version` when its saved state changes shape. Thread and checkout state migrate
 inside a session. Mod store state migrates with `omd-mod migrate`.
 
-- Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that thread or
-  checkout: the host runs the mod's `migrate` handler (an experimental event that needs `store`) on it and keeps the
-  previous file beside it as `<file>-backup-<sha256>`; until then registration and render reads see `null`.
+- Before the mod's next callback in a thread or checkout, the host converts state saved at another `state_version` by
+  running the mod's `migrate` handler (an experimental event that needs `store`). It keeps the previous file beside
+  the new one as `<file>-backup-<sha256>`. Until migration runs, registration and render reads see `null`.
 - A package update that changes the `state_version` of a thread- or checkout-scoped mod with `store` is refused
   (`migration_handler_required`) unless the new version registers `migrate`; an adapter-wrapped package is not
   checked.

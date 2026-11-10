@@ -1,8 +1,8 @@
 # omd_files
 
-Adds a file manager to the workspace dock, modeled on yazi. It has parent, current and preview columns, tabs, find, a
-jump list of the files you use most often and most recently (`z`), previews, rename, move, Trash and delete, and a key
-that adds a file to the prompt. It's experimental, and no install profile includes it.
+Adds a file manager to the workspace dock, modeled on yazi, with parent-folder, current-folder and preview columns.
+Use tabs and search to browse, or `z` to jump to files you use often or recently. You can rename, move, Trash or
+delete entries and add a file to the prompt. It's experimental, and no install profile includes it.
 
 ```text
 ╭ / ──╮┏ /src ━━━━━━━━━━━┓╭ lib ───────────────╮

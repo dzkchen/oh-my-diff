@@ -60,7 +60,7 @@ it.
 | Provenance | Three meanings. Package-source provenance is the broker's record of a verified install's origin ([Administrator policy](administrator-policy.md#package-source-provenance)). Manifest `provenance.source` is the repository a package says it comes from ([Packaging](packaging.md#provenancesource-for-git-installs)). A store record's `provenance` is the host-attested writer of that record. |
 | Receipt | Two meanings. A contract receipt is evidence a mod submits with `receipts.submit` ([Contracts and receipts](contracts.md#receiptssubmit)). An access receipt is the host's record of an HTTP, MCP, external file or environment call ([Authority grants](authority-grants.md#access-receipts)). |
 | Producer | Who made a contract receipt: `any`, `lead`, `host`, `integration` or `separate_agent`. See [Contracts and receipts](contracts.md#registering-a-contract). For rasters, a producer is the process that publishes frames ([Graphics](graphics.md#raster-processes-process_raster_v1)). |
-| Contract | A versioned document that gates task completion and workspace integration on receipts. See [Contracts and receipts](contracts.md). |
+| Contract | A versioned document specifying which receipts the host must accept before completing a task or integrating workspace changes. See [Contracts and receipts](contracts.md). |
 | Snapshot | A frozen copy of the workspace or of an agent's workspace, made with `workspace.snapshot`. See [Workspace files](workspace-files.md#snapshots-workspacesnapshot). |
 | Candidate | The workspace change a receipt or `workspace.integrate` is about, identified by `candidate_sha256`. See [Workspace files](workspace-files.md#snapshots-workspacesnapshot). |
 

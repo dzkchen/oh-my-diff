@@ -157,7 +157,8 @@ test('the frame chain blits the screen in bands, then only the changed rows, mer
   assert.ok(after.delay_ms > 0 && after.delay_ms <= 125);
   assert.deepEqual(tick(state, `f.${NOW - 1}.2.120.44.${KEY}.0`, NOW + 300).calls, []);
   const restarted = tick(state, next.key, NOW + 266, { 'terminal.blit': () => ({ frame: 1, queued: 1, frame_ms: 16 }) });
-  assert.equal(restarted.of('events.schedule')[0].key, `f.${NOW}.-1.120.44.${KEY}.0`);
+  assert.equal(restarted.of('events.schedule')[0].key, `f.${NOW}.2.120.44.${KEY}.0`);
+  assert.deepEqual(restarted.of('terminal.blit').at(-1).rect, { x: 0, y: 0, width: 120, height: 44 });
   const hidden = tick(state, next.key, NOW + 266, { 'terminal.blit': () => ({ status: 'backpressure', retry_after_ms: 250 }) });
   assert.deepEqual(hidden.of('events.schedule'), [{ key: `f.${NOW}.-1.120.44.${KEY}.1`, delay_ms: 1000 }]);
 });
@@ -171,7 +172,8 @@ test('a turn darkens and pauses the scene, a still scene draws once, and both on
   const held = tick(behind, `f.${NOW}.1.120.44.${BEHIND_KEY}.0`, NOW + 6500, { 'terminal.blit': () => ({ frame: 1, queued: 0, frame_ms: 16 }) });
   assert.deepEqual([held.of('terminal.blit').map(blit => blit.rect), held.of('events.schedule')[0].key], [[{ x: 0, y: 0, width: 1, height: 1 }], `f.${NOW}.1.120.44.${BEHIND_KEY}.0`]);
   const lost = tick(behind, `f.${NOW}.1.120.44.${BEHIND_KEY}.0`, NOW + 6500, { 'terminal.blit': () => ({ frame: 1, queued: 1, frame_ms: 16 }) });
-  assert.equal(lost.of('events.schedule')[0].key, `f.${NOW}.-1.120.44.${BEHIND_KEY}.0`);
+  assert.equal(lost.of('events.schedule')[0].key, `f.${NOW}.1.120.44.${BEHIND_KEY}.0`);
+  assert.deepEqual(lost.of('terminal.blit').at(-1).rect, { x: 0, y: 0, width: 120, height: 44 });
   const restless = { ...behind, prefs: { ...behind.prefs, calm: false } };
   assert.equal(tick(restless, `f.${NOW}.1.120.44.${BEHIND_KEY}.0`, NOW + 6500).of('events.schedule')[0].key, `f.${NOW}.52.120.44.${BEHIND_KEY}.0`);
 
@@ -184,6 +186,36 @@ test('a turn darkens and pauses the scene, a still scene draws once, and both on
   assert.deepEqual(kept.calls.map(item => item.operation), ['terminal.blit', 'events.schedule']);
   const corner = decode(still.of('terminal.blit')[0].packed).subarray(0, 12);
   for (const probe of [kept, tick(kept.state, poll.key, NOW + 3200)]) assert.deepEqual(decode(probe.of('terminal.blit')[0].packed), corner);
+});
+
+test('a missing cached scene is repainted in the same tick while still or paused', () => {
+  for (const prefs of [{ scene: 'moonlit', speed: 'off' }, { scene: 'moonlit' }]) {
+    let state = ready(prefs, { phase: 'started' });
+    if (prefs.speed !== 'off') state = call({ event: 'turn_start', state, payload: null }).state;
+    const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
+    let calls = 0;
+    const recovered = tick(first.state, first.of('events.schedule')[0].key, NOW + 1600, {
+      'terminal.blit': () => ({ frame: ++calls === 1 ? 1 : 2, queued: 1, frame_ms: 16 }),
+    });
+    assert.deepEqual(recovered.of('terminal.blit').map(blit => blit.rect), [
+      { x: 0, y: 0, width: 1, height: 1 },
+      { x: 0, y: 0, width: 120, height: 44 },
+    ]);
+    assert.equal(recovered.of('terminal.blit').at(-1).packed, first.of('terminal.blit')[0].packed);
+    assert.equal(recovered.of('events.schedule')[0].key.split('.')[2], first.of('events.schedule')[0].key.split('.')[2]);
+  }
+});
+
+test('an animated scene repaints the whole canvas as soon as a partial update finds it missing', () => {
+  const state = ready({ scene: 'moonlit' }, { phase: 'started' });
+  const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
+  let calls = 0;
+  const recovered = tick(first.state, first.of('events.schedule')[0].key, NOW + 266, {
+    'terminal.blit': () => ({ frame: ++calls === 1 ? 1 : 2, queued: 1, frame_ms: 16 }),
+  });
+  assert.ok(recovered.of('terminal.blit').length > 1);
+  assert.deepEqual(recovered.of('terminal.blit').at(-1).rect, { x: 0, y: 0, width: 120, height: 44 });
+  assert.equal(recovered.of('events.schedule')[0].key.split('.')[2], '2');
 });
 
 test('a wake that beats its state write waits, a narrow fresh session keeps polling, and stale stored choices fall back', () => {
@@ -350,6 +382,26 @@ test('a frame larger than the host call budget is drawn across ticks instead of 
   }
   assert.equal(rows.size, 256);
   assert.equal(key.split('.')[2], '1');
+});
+
+test('losing the canvas during a large repaint restores every row within the host call budget', () => {
+  let state = ready({ scene: 'moonlit', speed: 'off' }, { columns: 512, rows: 256, phase: 'started' });
+  const first = tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16);
+  let key = first.of('events.schedule')[0].key;
+  const rows = new Set();
+  let calls = 0;
+  for (let at = NOW + 66; at < NOW + 1000; at += 50) {
+    const step = tick(state, key, at, {
+      'terminal.blit': () => ({ frame: ++calls === 1 ? 1 : 2, queued: 1, frame_ms: 16 }),
+    });
+    const blits = step.of('terminal.blit');
+    assert.ok(blits.reduce((bytes, blit) => bytes + blit.packed.length, 0) <= 768 * 1024);
+    for (const { rect } of blits) for (let y = rect.y; y < rect.y + rect.height; y++) rows.add(y);
+    [state, key] = [step.state, step.of('events.schedule')[0].key];
+    if (!key.split('.')[2].includes('r')) break;
+  }
+  assert.equal(rows.size, 256);
+  assert.equal(key.split('.')[2], '0');
 });
 
 test('the chain survives a wake that beats its state write and a failed reschedule', () => {

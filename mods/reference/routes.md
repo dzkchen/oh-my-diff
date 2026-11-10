@@ -116,9 +116,14 @@ Without `model` the route uses the conversation's model and effort. With `model`
 model from the ChatGPT catalog of the Codex ChatGPT sign-in, the list `routes.models` returns, and `effort`, which
 defaults to the model's own default. This works while the conversation, or Codex itself, uses another provider. The
 host reads that catalog from the Codex model cache and refreshes it from the ChatGPT models endpoint only when the
-cache is stale; it never sends a model request. The route's input limit is the chosen model's usable context window,
-taken from the first of: a window set with `models.context_window`, the Codex `model_context_window` setting when the
-chosen model is the configured model, the ChatGPT catalog, the host's bundled model metadata, or 272,000 tokens.
+cache is stale; it never sends a model request. For the route's input limit, the host uses the first available
+context window in this order:
+
+1. A window set with `models.context_window`.
+2. Codex's `model_context_window` setting, when the chosen model is the configured model.
+3. The ChatGPT catalog.
+4. The host's bundled model metadata.
+5. 272,000 tokens.
 
 It returns `{route}`, or `{status: 'declined'}`. It refuses with `routes_add_needs_chatgpt` without a ChatGPT sign-in
 (an API key doesn't count), or without `model` when the conversation's provider doesn't use it. A model outside the
