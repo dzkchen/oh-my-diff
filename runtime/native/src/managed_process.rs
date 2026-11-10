@@ -633,7 +633,8 @@ fn program(name: &str, repository: &Path) -> Option<PathBuf> {
     }
     std::env::split_paths(&std::env::var_os("PATH")?).find_map(|directory| {
         let candidate = directory.join(name).canonicalize().ok()?;
-        (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
+        (candidate.is_file() && !codex_omd::agent_writable(&candidate, repository))
+            .then_some(candidate)
     })
 }
 

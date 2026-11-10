@@ -529,7 +529,7 @@ impl Services {
                     .into_owned();
             }
         }
-        if grant.program.starts_with(&host.repository)
+        if codex_omd::agent_writable(&grant.program, &host.repository)
             || grant.program.canonicalize().map_err(|e| e.to_string())? != grant.program
         {
             return Err("service_executable_must_be_canonical_and_outside_repository".into());
@@ -640,7 +640,7 @@ impl Services {
                 .secret_refs
                 .get(reference)
                 .ok_or("unknown_secret_reference")?;
-            if path.starts_with(&host.repository)
+            if codex_omd::inside_repository(path, &host.repository)
                 || !path.is_absolute()
                 || std::fs::symlink_metadata(path)
                     .map_err(|_| "secret_reference_unavailable")?

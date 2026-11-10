@@ -554,11 +554,46 @@ pub fn observe_workspace_changes(repository: &Path, observed: bool) {
     }
 }
 
+pub fn git_work_tree(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|directory| directory.join(".git").exists())
+        .map(Path::to_path_buf)
+}
+
+pub fn agent_writable(path: &Path, launch: &Path) -> bool {
+    path.starts_with(git_work_tree(launch).as_deref().unwrap_or(launch))
+}
+
+pub fn workspace_scoped(launch: &Path) -> bool {
+    let home = std::env::var_os("HOME").and_then(|home| Path::new(&home).canonicalize().ok());
+    scoped_under(launch, home.as_deref())
+}
+
+fn scoped_under(launch: &Path, home: Option<&Path>) -> bool {
+    git_work_tree(launch).is_some()
+        || (launch.parent().is_some() && !home.is_some_and(|home| home.starts_with(launch)))
+}
+
+pub fn workspace_refused(operation: &str, arguments: &serde_json::Value, launch: &Path) -> bool {
+    operation.starts_with("workspace.")
+        && !(arguments.get("root").is_some()
+            && matches!(
+                operation,
+                "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.transaction"
+            ))
+        && !workspace_scoped(launch)
+}
+
+pub fn inside_repository(path: &Path, launch: &Path) -> bool {
+    path.starts_with(launch) && git_work_tree(launch).is_some()
+}
+
 pub fn change_baseline(repository: &Path) -> Option<io::Result<WorkspaceIndex>> {
-    OBSERVED
+    (OBSERVED
         .lock()
         .is_ok_and(|repositories| repositories.contains(repository))
-        .then(|| WorkspaceIndex::capture(repository, INDEX_FILES, INDEX_BYTES))
+        && workspace_scoped(repository))
+    .then(|| WorkspaceIndex::capture(repository, INDEX_FILES, INDEX_BYTES))
 }
 
 pub fn record_workspace_change(
@@ -1253,6 +1288,18 @@ pub fn cleanup_owned_directory(parent: &Path, directory: &Path) -> io::Result<()
 mod transaction_tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn workspaces_outside_git_are_scoped_unless_they_hold_home() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        assert!(!scoped_under(Path::new("/"), None));
+        assert!(!scoped_under(&root, Some(&root)));
+        assert!(!scoped_under(&root, Some(&root.join("me"))));
+        assert!(scoped_under(&root.join("project"), Some(&root.join("me"))));
+        fs::create_dir(root.join(".git")).unwrap();
+        assert!(scoped_under(&root, Some(&root.join("me"))));
+    }
 
     #[test]
     fn workspace_index_rehashes_same_size_edits() {

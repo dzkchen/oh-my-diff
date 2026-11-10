@@ -286,8 +286,8 @@ test('the real continue command keeps interruption checks and notes through the 
   assert.match(invoke('--compact').display, /Enable omd_observation_mask/);
 });
 
-test('/mask says why continue mode cannot hide anything', () => {
-  const mask = (state, mode = 'continue') => run('command', 'mask', '', { state, settings: { mode } }).value.display.split('\n');
+test('/hidden_outputs says why continue mode cannot hide anything', () => {
+  const mask = (state, mode = 'continue') => run('command', 'hidden_outputs', '', { state, settings: { mode } }).value.display.split('\n');
   assert.match(mask(null)[1], /nothing until \/continue \(from the omd_continue mod.*enable omd_continue/);
   assert.doesNotMatch(mask(null, 'batch').join('\n'), /omd_continue/);
   assert.match(mask({ continues: 1, cache: { ttl: 0, expires: 0 } })[1], /ChatGPT subscriptions.*only \/continue --compact/);

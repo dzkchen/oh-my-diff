@@ -642,11 +642,6 @@ def doctor_checks(prefix, bin_dir):
             add("store", "fail", "; ".join(problems), "turn the mod off in /mods, or omd mods disable ID")
         else:
             add("store", "ok", f"{store} · {len(host['mods'])} mods on")
-    cwd = Path.cwd().resolve()
-    if cwd in (Path.home().resolve(), Path("/")):
-        add("folder", "warn", f"mods are off in {cwd}", "cd into a project, then run codex")
-    else:
-        add("folder", "ok", f"mods run in {cwd}")
     try:
         runner = subprocess.run([record["runner"]["installed_path"]], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
         problem = None if runner.returncode == 0 else f"the mod runner exits {runner.returncode}: {(runner.stderr or runner.stdout).strip()[:200]}"

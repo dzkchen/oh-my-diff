@@ -29,12 +29,12 @@ All of these come with OMD+ only.
 | [`omd_auto_continue`](../mods/first-party/omd_auto_continue/README.md) | When an approval or a question gets no answer within the wait you set (two minutes by default), declines the approval or answers the question so the turn continues; `omd mods enable omd_auto_continue` | |
 | [`omd_frecency`](../mods/first-party/omd_frecency/README.md) | Ranks `@` file mentions by fuzzy match and how often you use them; keeps that usage per repository ([reset it](../mods/first-party/omd_frecency/README.md#its-data)) | |
 | [`omd_privacy`](../mods/first-party/omd_privacy/README.md) | Redacts text matching its secret and personal-data rules in requests to the model, not web search, transcripts or logs; `/privacy` | |
-| [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
-| [`omd_tool_absorb`](../mods/first-party/omd_tool_absorb/README.md) | When the model repeats a read in one response, runs it once. In [code mode](../mods/reference/glossary.md#sessions-and-models), also reuses unchanged file reads; `/absorb` | |
-| [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
+| [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a or `/usage`) | |
+| [`omd_tool_absorb`](../mods/first-party/omd_tool_absorb/README.md) | When the model repeats a read in one response, runs it once. In [code mode](../mods/reference/glossary.md#sessions-and-models), also reuses unchanged file reads; `/merged_reads` | |
+| [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/tool_fixes` | |
 | [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the conversation, with opaque prompts and menus; `/theme` picks a scene and prints terminal background steps | |
 | [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Lets the agent watch a background command, file change or GitHub pull request, run or deployment and sends it one message when that finishes, fails or times out, so the agent doesn't poll; `/monitor` lists and cancels monitors | The `autonomous` and `os` grants; GitHub monitors need `gh`, logged in |
-| [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs in automatic batches or on `/continue` after estimated cache expiry; `/continue --compact` forces a batch; paged recall and `/mask`. Never hides an output it can't restore | Can't be on with `omd_programmable_context`; continue mode needs `omd_continue` |
+| [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs in automatic batches or on `/continue` after estimated cache expiry; `/continue --compact` forces a batch; paged recall and `/hidden_outputs`. Never hides an output it can't restore | Can't be on with `omd_programmable_context`; continue mode needs `omd_continue` |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 

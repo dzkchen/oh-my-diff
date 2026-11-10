@@ -372,7 +372,8 @@ rows, sites?}` and, with external clients attached, `clients` (see
   to the conversation with it.
 - A change in `welcome` or `chat` renders the view again.
 
-`client` is null without a terminal client. When any of these change (the window or font is resized, animations are
+`client` is null without a terminal client. Behind a remote app-server it is the facts the terminal frontend
+reports with [`omd/client/update`](omd-client-protocol.md#omdclientupdate) `client`. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`. If several changes arrive while a render is in progress,
 the host renders once more after it. A change in a drawn site's area also renders the view again. The exception is
 when the area returns within a second to the size it had before the last change. A view that sizes its own layout

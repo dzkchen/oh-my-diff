@@ -58,7 +58,7 @@ impl ScopedDataHost {
         let root = store.root().to_path_buf();
         if repository.canonicalize()? != repository
             || root.canonicalize()? != root
-            || root.starts_with(&repository)
+            || crate::inside_repository(&root, &repository)
         {
             return Err(io::Error::other("data_scope_invalid"));
         }

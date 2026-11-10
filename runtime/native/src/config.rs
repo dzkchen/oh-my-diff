@@ -174,7 +174,7 @@ impl HostConfig {
         let external = |path: &Path| {
             path.is_absolute()
                 && path.canonicalize().ok().as_deref() == Some(path)
-                && !path.starts_with(repository)
+                && !codex_omd::inside_repository(path, repository)
         };
         let mut names = std::collections::BTreeSet::new();
         if self.schema != 1

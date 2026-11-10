@@ -83,7 +83,6 @@ omd-mod package-enable STORE ID        # turn a mod you installed back on; its d
 | `capability_denied: NAME` | The mod called something it wasn't granted | Ask its author; `omd-mod-author explain 'capability_denied: NAME'` shows what the message means. |
 | `omd update` says enabled mods don't support the new mod API | Those mods will stop loading after the update | Update or remove them first, or pass `--yes` to update anyway. |
 | An update didn't apply | Other OMD sessions are open | It applies at your next `codex` start with no other session open. |
-| No mod loads, and `/omd` says the host is off | `codex` started in your home folder or in `/` | `cd` into a project folder and run `codex` again. |
 | Alt shortcuts (Alt+a, Alt+s) do nothing in Kitty or Ghostty | The terminal sends Option as a character | Turn on Option-as-Alt: `macos_option_as_alt` in Kitty, `macos-option-as-alt` in Ghostty. |
 
 ## Report a problem

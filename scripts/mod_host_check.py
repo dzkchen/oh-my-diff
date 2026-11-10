@@ -231,7 +231,7 @@ def static_problems(path):
     if "description" in package and not 1 <= len(package["description"]) <= 160:
         found.append("description must be 1 to 160 characters")
     needed = {"package_text_assets_v1"} if package.get("assets") else set()
-    commands, tools = [], 0
+    commands, replaced, tools = [], set(), 0
     if any(str(source.resolve()) not in SOURCE_REPORTS for source in source_files(path)):
         inspect_sources([path])
     for source in source_files(path):
@@ -242,6 +242,7 @@ def static_problems(path):
         if (size := len(text.encode())) > 524_288:
             found.append(f"{source.name}: {size} bytes exceeds the 524288-byte package file limit")
         commands += report["commands"]
+        replaced.update(report["replaced"])
         tools += report["tools"]
         if report["imports"]:
             needed.add("package_imports_v1")
@@ -256,7 +257,7 @@ def static_problems(path):
     required = set(lists["required"])
     found += [f"assets, relative imports and api.component need required feature {feature}" for feature in sorted(needed - required)]
     if path.parent.name == "first-party":
-        found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH)]
+        found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH - replaced)]
     found += [f"{count} {kind} exceed the limit of 32" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 32]
     return found
 
@@ -265,8 +266,11 @@ def collisions(status, ids):
     owners = {}
     for item in status.get("mods", []):
         if item["id"] in ids:
+            replaced = {name for controls in item.get("registrations", {}).get("builtins", [])
+                        for name, target in controls.get("commands", {}).get("replace", {}).items() if name == target}
             for command in item.get("registrations", {}).get("commands", []):
-                owners.setdefault(command["name"], []).append(item["id"])
+                if command["name"] not in replaced:
+                    owners.setdefault(command["name"], []).append(item["id"])
     found = [f"{','.join(mods)}: /{name} conflicts with a built-in command"
              for name, mods in owners.items() if name in BUILTIN_SLASH]
     found += [f"{','.join(mods)}: /{name} is defined by more than one mod"
