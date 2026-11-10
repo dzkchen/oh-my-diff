@@ -199,39 +199,47 @@ export default function activate(api: ModAPI) {
       const canvas = place(art, width, height, chat.x, chat.y);
       return behind(s) ? shade(canvas, BEHIND, BEHIND_CAP) : shade(canvas, 0, WELCOME_CAP);
     };
+    let reset = false;
+    let bytes = 0;
     if ((quiet || paused(s)) && same && tick.drawn === k && rest === undefined) {
       const cell = { x: 0, y: 0, width: 1, height: 1 };
       const id = [tick.run, k, width, height, look].join('.');
       const keep = s.keep?.id === id ? s.keep : { id, cell: pack(frame(k), cell) };
       if (keep !== s.keep) write({ keep });
       const kept = api.host.tryCall('terminal.blit', { key: view.raster, rect: cell, packed: keep.cell });
-      again(poll, { ...shown, drawn: restarted(kept) ? -1 : k });
-      return;
+      reset = restarted(kept);
+      if (!reset) {
+        again(poll, { ...shown, drawn: k });
+        return;
+      }
+      bytes += keep.cell.length;
     }
     const next = frame(k);
-    const partial = rest !== undefined || !quiet && same && tick.drawn > 0;
-    const rects = rest !== undefined ? bands({ x: 0, y: rest, width, height: height - rest })
+    let partial = !reset && (rest !== undefined || !quiet && same && tick.drawn > 0);
+    let rects = rest !== undefined ? bands({ x: 0, y: rest, width, height: height - rest })
       : partial ? changed(frame(tick.drawn), next, BAND_CELLS) : bands({ x: 0, y: 0, width, height });
-    let lost = false;
-    let bytes = 0;
-    for (const band of rects) {
+    while (rects.length) {
+      const band = rects.shift()!;
       const packed = pack(next, band);
       bytes += packed.length;
       if (bytes > BLIT_BYTES) {
-        again(RETRY_MS, { ...shown, drawn: lost ? -1 : k, ...lost ? {} : { rest: band.y } });
+        again(RETRY_MS, { ...shown, drawn: k, rest: band.y });
         return;
       }
       const reply = api.host.tryCall('terminal.blit', { key: view.raster, rect: band, packed });
       if (reply.ok && !('status' in reply.value)) {
-        lost ||= partial && restarted(reply);
+        if (partial && restarted(reply)) {
+          rects = bands({ x: 0, y: 0, width, height });
+          partial = false;
+        }
         continue;
       }
       const misses = tick.misses + 1;
       again(reply.ok && 'status' in reply.value ? Math.max(HIDDEN_MS, reply.value.retry_after_ms) : misses > UNKNOWN_RETRIES ? HIDDEN_MS : RETRY_MS, { ...shown, misses });
       return;
     }
-    if (!lost && paused(s) && s.frame !== k) write({ frame: k });
-    again(quiet || paused(s) ? poll : origin + (k + 1) * period - now, { ...shown, drawn: lost ? -1 : k });
+    if (paused(s) && s.frame !== k) write({ frame: k });
+    again(quiet || paused(s) ? poll : origin + (k + 1) * period - now, { ...shown, drawn: k });
   };
 
   api.on('terminal', (input): TerminalPatch | null => {
