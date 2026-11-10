@@ -12,7 +12,7 @@ const SAMPLES = new Set([['sk', '_test_4eC39HqLyjWDarjtT1zdp7dc'].join(''),
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c']);
 const SAMPLE_WORDS = new Set(['test', 'fake', 'mock', 'dummy', 'sample', 'demo', 'csrf', 'xsrf']);
 const SAMPLE_VALUE = /^(?:test|fake|mock|dummy|sample|demo)(?:[^a-z]|$|pass|pw|key|secret|token)/i;
-const PLAIN = /example|placeholder|changeme|dummy|redacted|your[_-]|xxxx|\*\*\*/i;
+const PLAIN = /example|placeholder|changeme|dummy|redacted|your[_-]|xxxx|\*\*\*/gi;
 const RESERVED_DOMAINS = ['example.com', 'example.net', 'example.org', 'example', 'test', 'invalid', 'localhost'];
 const TEST_CARDS = new Set(['4242424242424242', '4111111111111111', '5555555555554444', '378282246310005', '6011111111111117']);
 const PEM_BEGIN = /-----BEGIN[ A-Z0-9]*PRIVATE KEY(?: BLOCK)?-----/g;
@@ -22,7 +22,8 @@ const JWT_OPEN_RIGHT = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]
 const JWT_OPEN_LEFT = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){1,2}(?![A-Za-z0-9_.-])/;
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
-const varied = (value: string, distinct = 8) => new Set(value).size >= distinct && !PLAIN.test(value);
+const plain = (value: string) => value.replace(PLAIN, '') !== value && !/\d.*\d/.test(value.replace(PLAIN, ''));
+const varied = (value: string, distinct = 8) => new Set(value).size >= distinct && !plain(value);
 const mixed = (value: string) => /\d/.test(value) && /[A-Za-z]/.test(value) && varied(value);
 const opaque = (value: string) => /[A-Z]/.test(value) || /^[0-9a-f._~+/-]+$/.test(value) || value.split(/[._~+/-]/).some(part => part.length >= 16);
 
@@ -39,6 +40,7 @@ function assigned(value: string, groups: Record<string, string | undefined>) {
   const name = (groups.name ?? '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z]+/);
   if (name.some(word => SAMPLE_WORDS.has(word)) || SAMPLE_VALUE.test(value)) return false;
   if (/^(?:\$|%|process\.env|os\.environ|env\.)/i.test(value) || !varied(value, 4)) return false;
+  if (/^(?:~|\.{1,2})?\/[\w.@~+-]+(?:\/[\w.@~+-]+)+$/.test(value)) return false;
   if (/^(?:true|false|null|none|nil|undefined|string|number|boolean|bool|str|int|bytes|required|optional|secret|password|token|test|empty|unset|hidden)$/i.test(value)) return false;
   if (groups.quoted !== undefined) return !/\s/.test(value) || /[^A-Za-z\s.,!?'"-]/.test(value);
   return /[^A-Za-z_]/.test(value) && !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(value);
