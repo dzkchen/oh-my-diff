@@ -2,10 +2,6 @@
 trap 'echo "omd installer: incomplete download" >&2; exit 1' 0
 install_main() {
 trap - 0
-if [ "$(uname -s)" != Darwin ] || [ "$(uname -m)" != arm64 ]; then
-  echo "omd installer: Oh My Diff supports Apple Silicon macOS only" >&2
-  exit 1
-fi
 usable() {
   [ -n "$1" ] && command -v "$1" >/dev/null 2>&1 \
     && "$1" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' 2>/dev/null
@@ -21,6 +17,10 @@ done
 if [ -z "$OMD_PYTHON" ] && command -v mise >/dev/null 2>&1; then
   candidate=$(mise which python3 2>/dev/null)
   usable "$candidate" && OMD_PYTHON=$candidate
+fi
+if [ -z "$OMD_PYTHON" ] && { [ "$(uname -s)" != Darwin ] || [ "$(uname -m)" != arm64 ]; }; then
+  echo "omd installer: Oh My Diff supports Apple Silicon macOS only" >&2
+  exit 1
 fi
 if [ -z "$OMD_PYTHON" ]; then
   echo "omd installer: Python 3.12 or newer is required (macOS ships 3.9); install one, for example with 'brew install python@3.12' or mise, and retry" >&2
