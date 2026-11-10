@@ -1,7 +1,7 @@
 # omd_env_bootstrap
 
-Gives the model a short snapshot of the workspace before its first request, so it doesn't spend its first turns
-exploring. Built for headless runs such as `codex exec`. It's experimental, and no install profile includes it.
+Adds a short workspace snapshot to the first model request: OS, files, languages, toolchains and test commands.
+Built for headless runs such as `codex exec`. It's experimental, and no install profile includes it.
 
 ## Turn it on
 

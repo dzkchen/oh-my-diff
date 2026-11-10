@@ -1,7 +1,7 @@
 # Contracts and receipts
 
-A contract is a versioned document that gates task completion and workspace integration on receipts. Mods register
-documents; users select one.
+A contract specifies which receipts the host must accept before completing a task or integrating workspace
+changes. Mods register versioned contract documents; users select one.
 
 Use it when a mod registers a workflow contract, submits receipts, checks the completion or integration gate, or
 narrows operations for the rest of a session. The agents that produce receipts are in [Agents](agents.md).
@@ -49,8 +49,8 @@ current contract, then writes the same user selection that the commands above wr
 - Selections pin the document digest. A mod that changes a registered document makes the selection unavailable
   instead of silently weakening it.
 - A weaker selection needs the confirmation printed by `omd-contract plan`.
-- With no selection nothing is gated.
-- An unavailable selection fails closed.
+- Without a selected contract, the host requires no contract receipts for completion or integration.
+- If the selected contract is unavailable, the host refuses completion and integration.
 
 ## `receipts.submit`
 

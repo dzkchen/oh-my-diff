@@ -1,9 +1,8 @@
 # Write terminal components in JSX
 
-How to write a mod's terminal components as JSX in `.tsx` files instead of plain objects. JSX is optional and
-exists only on the author side: `omd-mod-author` compiles it to plain TypeScript, so the host sees the same component
-objects either way. For every rule and error, see [JSX/TSX](../../mods/reference/authoring.md#jsxtsx) in the
-authoring reference.
+You can write terminal components as JSX in `.tsx` files. `omd-mod-author` compiles them to TypeScript that returns
+the same component objects you'd write by hand. The host needs no JSX support. For syntax rules and errors, see
+[JSX/TSX](../../mods/reference/authoring.md#jsxtsx).
 
 ## Before you begin
 

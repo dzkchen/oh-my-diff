@@ -262,8 +262,9 @@ is closing`).
 - `revision` grows within an `epoch`.
 - A new `epoch` means the host restarted and invalidates everything the client stored.
 
-Reconnecting is `initialize`, attach with the retained `terminalToken` (a full snapshot, never deltas), then `thread/resume` per thread, which
-replays pending approvals. `thread/resume` also joins a loaded thread before its first turn.
+To reconnect, send `initialize`, attach with the retained `terminalToken` to receive a full snapshot rather than
+deltas, then send `thread/resume` for each thread. Resuming replays pending approvals and also joins a loaded thread
+before its first turn.
 
 - Approvals stay upstream server requests broadcast to subscribed connections (first answer wins,
   `serverRequest/resolved` tells the rest).

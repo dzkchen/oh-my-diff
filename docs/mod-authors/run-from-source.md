@@ -1,7 +1,7 @@
 # Run the author tools from a source checkout
 
-How to run `omd-mod-author` from a checkout of this repository instead of an OMD install, for example to test a
-change to the SDK or to work on a machine without OMD.
+Run `omd-mod-author` from this checkout to test SDK changes or work without installing OMD. You'll still need the
+binaries listed below.
 
 ## Before you begin
 

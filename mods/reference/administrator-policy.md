@@ -159,8 +159,8 @@ can't grant install scripts.
 `omd-mod package-sync STORE` deploys the policy unattended for the account that owns the store, typically from the
 organization's own launch agent or configuration tool after it installs the policy; it takes no confirmation.
 
-Every applicable entry, across projects, comes from the content-addressed package cache, otherwise from its
-`source` and then each mirror in order, through the normal package resolver:
+For every applicable entry across projects, `package-sync` first looks in the content-addressed package cache.
+If the package is absent, the normal package resolver tries its `source`, then each mirror in order:
 
 - `ID@VERSION` uses the first `index` location whose bytes match its sha256.
 - `npm:` sources without a registry use `registry` and the user's own `.npmrc` tokens (the policy contains no
@@ -185,10 +185,10 @@ only, and `--rollback` makes the previous generation active again.
   doesn't target the account or project.
 - Content the policy no longer lists never runs, so removing an entry or changing its pin revokes it at once and an
   administrator's `policy rollback` with an unchanged cache restores the previous generation offline.
-- A target can have nothing running: not deployed yet, a reset or unreadable `managed.json`, stale content, or a
-  package that never inspected. Then every interception surface its policy `capabilities` reach fails closed with
-  `intercept_required_failed: ID: REASON` until `package-sync` deploys it. Tool calls stay blocked between installing
-  a policy and its first sync.
+- A target has no running package if it has not been deployed, `managed.json` was reset or cannot be read, its
+  content is stale, or the host never successfully inspected it. The host then refuses every operation on an
+  interception surface covered by that target's policy `capabilities`, with `intercept_required_failed: ID: REASON`,
+  until `package-sync` deploys it. Tool calls stay blocked between installing a policy and its first sync.
 - In that state, a broken `mods.json` drops only user and project mods.
 - Managed reloads reject broken selections individually so a user mod cannot prevent policy updates.
 - If authority cannot be read or authenticated, interception fails closed until authority recovers.

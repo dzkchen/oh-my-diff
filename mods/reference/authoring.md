@@ -145,8 +145,8 @@ operation error.
 - Every normal mock validates request and result shapes. Shared pure validators also check store keys,
   values and revision syntax, environment inputs and timer inputs.
 - Malformed result fixtures fail before the scenario runs unless explicitly marked unsafe.
-- Authority, declarations, persistence, revision conflicts, quotas, filesystem resolution and process/network state
-  require real-host boundary tests; a valid mock cannot prove those behaviors.
+- Test authority, declarations, persistence, revision conflicts, quotas, filesystem resolution and process/network
+  state against the real host; a valid mock cannot prove those behaviors.
 
 ### Negative tests
 
@@ -224,8 +224,8 @@ file.
   result includes `trace[].location` (`index.ts:75:7`), so an exact expectation breaks when lines move. Test
   interceptors in a `*.test.ts` file instead ([TypeScript tests](#typescript-tests)).
 - A store-level `omd-mod test STORE SCENARIO` uses the store's own settings instead of `settings`.
-- A mod that fails to activate reports its retained cause, so a missing service provider, denied capability or source
-  error names itself instead of only asking for a reload.
+- When activation fails, the report keeps the original cause, such as a missing service provider, denied capability
+  or source error, instead of only asking for a reload.
 
 ### Step types
 

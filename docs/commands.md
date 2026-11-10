@@ -10,10 +10,12 @@ The shell commands OMD installs in `~/.local/bin`, what each is for, and which o
 | `omd-mod` | Repair and administration | You need to change the mod store without running mods |
 | `omd-mod-author` | Mod authors | You create, test, run or package your own mod |
 
-Use `omd mods enable` and `omd mods disable` to turn any mod on or off, including the ones that came with your
-install profile. `omd-package mod` does the same for profile mods without showing the review prompt.
+Use `omd mods enable` and `omd mods disable` to turn installed mods on or off, including those from your install
+profile. Administrator-managed mods are controlled by policy. `omd-package mod` does the same for profile mods
+without showing the review prompt.
 
-The installer also adds `omd-contract`, which selects workflow contracts, the completion checks `omd_workflow` runs.
+The installer also adds `omd-contract` to select workflow contracts, which specify the checks `omd_workflow` requires
+before a task can finish.
 `omd-package contract` covers the same steps for most people.
 
 ## `omd`
@@ -90,7 +92,8 @@ without `--repo`, fails with `unknown command: COMMAND` and points to `omd help`
 
 ## `omd-package`
 
-Manages the install profile. It prints JSON, except `plugin-mod`, which prints what `omd` prints, and `status`, `activate`, `mod` and `doctor`, which print text unless you pass `--json`.
+Manages the install profile. Most commands print JSON. `status`, `activate`, `mod` and `doctor` print text unless
+you pass `--json`; `plugin-mod` uses the same output format as `omd`.
 
 | Command | What it does |
 | --- | --- |

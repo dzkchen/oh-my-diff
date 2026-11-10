@@ -89,10 +89,14 @@ terminal.open {url} | {path} | {path, line?, editor: true} → {opened: true} | 
 It opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file after a
 native confirmation.
 
-`{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file in the argv the user sets as `editor`
-in `host.json`, with `{path}` and `{line}` substituted. Without one it runs `$VISUAL`, else `$EDITOR`, in the terminal
-while Codex waits, with the path appended unless the value contains `{path}`; neither set fails with
-`terminal_open_editor_unconfigured`, and an `editor` that isn't 1 to 16 strings with `terminal_open_editor_invalid`.
+`{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file using the `editor` argument list in
+`host.json`, substituting `{path}` and `{line}`. That setting must contain 1 to 16 strings; otherwise the call fails
+with `terminal_open_editor_invalid`.
+
+Without that setting, the host uses `$VISUAL`, falling back to `$EDITOR`, and runs the editor in the terminal while
+Codex waits.
+It appends the path unless the value contains `{path}`. If neither variable is set, the call fails with
+`terminal_open_editor_unconfigured`.
 
 ## `terminal.prompt`
 

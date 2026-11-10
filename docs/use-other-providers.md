@@ -1,8 +1,8 @@
 # Use other providers
 
-How to use Claude, Cursor, an API key or another compatible provider in `codex`, and how to switch between
-accounts. These provider mods are experimental and are installed separately. Run `omd install ID` in your shell,
-then turn the mod on as [Manage mods](manage-mods.md) describes.
+Provider mods add Claude, Cursor, API keys and other compatible providers to `codex`. They also let you switch
+accounts. These mods are experimental: install each with `omd install ID`, then turn it on in `/mods`
+([Manage mods](manage-mods.md)).
 
 | You want | Turn on | Needs |
 | --- | --- | --- |
@@ -48,7 +48,8 @@ covers billing, several accounts and limits.
    /profile add
    ```
 
-   Pick a ChatGPT account, a Claude or Cursor account, an OpenAI or Anthropic API key, a local Ollama (no key, no allowance; `http://localhost:11434` or another local address), or another provider by URL.
+   Pick a ChatGPT, Claude or Cursor account; an OpenAI or Anthropic API key; local Ollama; or another provider by URL.
+   Ollama uses `http://localhost:11434` or another local address and needs no key or spending allowance.
    Sign-in and key entry happen in the session. The first time you add a paid key, the session asks for a spending
    allowance in USD. When the account is added, the session prints `Added NAME.` and how to switch to it.
 3. Select an account with `/profile`, `/profile use NAME`, or Alt+s, then run `/new`. Existing and resumed threads keep their account.

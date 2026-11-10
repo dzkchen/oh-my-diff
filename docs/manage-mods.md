@@ -1,16 +1,14 @@
 # Manage mods
 
-How to find, install, turn on and off, update and remove mods. For what ships with OMD+, see the
-[included mods](collection.md). For what a mod is allowed to do, see [trust and permissions](trust-and-permissions.md).
-
-## Before you begin
-
-- OMD installed with either install profile ([Install Oh My Diff](install.md)).
+Open `/mods` in `codex` to find, install and manage mods, or use the shell commands below.
+See [included mods](collection.md) for the OMD+ selection and [trust and permissions](trust-and-permissions.md)
+for the access you grant when turning one on.
 
 ## Find a mod
 
-In `codex`, type `/mods`. The All tab lists installed mods and, under Available, mods you can install from the curated
-directory. Experimental entries have not been fully tested; check their support status before trusting them. The Directory tab has Add from source, for npm, Git and folder sources.
+In `codex`, type `/mods`. The All tab lists installed mods and, under Available, mods from the curated directory.
+Experimental entries have not been fully tested; check their support status before trusting them.
+Use Add from source in the Directory tab for npm, Git and folder sources.
 
 From a shell:
 
@@ -19,8 +17,8 @@ omd mods catalog QUERY       # search the curated directory
 omd mods inspect REFERENCE   # preview a mod without installing it
 ```
 
-The curated directory has the OMD+ mods, the experimental mods and three ports, mods adapted from Claude Code mods (`burn_meter`,
-`token_weather` and `blast_radius`). The [included mods](collection.md) page describes each one.
+The curated directory lists OMD+ mods, experimental mods and three mods adapted from Claude Code:
+`burn_meter`, `token_weather` and `blast_radius`. [Included mods](collection.md) describes each one.
 
 ## Install a mod
 
@@ -42,10 +40,10 @@ To install for the current project instead of for you, add `--scope project` (th
 
 ## Turn a mod on or off
 
-In `codex`, use `/mods`. If `/mods` is broken, `/omd` has an on/off switch for each mod.
+In `codex`, use `/mods`. If `/mods` is broken, use the controls in `/omd`.
 
-From a shell, use `omd mods enable ID` or `omd mods disable ID`. It finds the mod by id, shows its permissions and
-asks before turning it on. For example, to turn on `omd_usage`, which comes with OMD+:
+From a shell, use `omd mods enable ID` or `omd mods disable ID`. Enabling a mod shows its permissions and asks for
+approval. For example, to turn on `omd_usage`, which comes with OMD+:
 
 ```sh
 omd mods enable omd_usage
@@ -73,21 +71,23 @@ Git tag or a package instead.
 
 ## Terminal choices and saved settings
 
-Changes in `/mods` and `/omd` save for every terminal and for future launches. To change a mod in one terminal
-only, open it in `/mods` and set **Changes apply to** to **Only this terminal**, or pick its **Changes apply to** row
-under **All mods…** in `/omd`. Those choices last until you close
-that terminal, and forks and subagents started from it follow them. A mod that already has choices in this terminal
-opens on **Only this terminal**; pick **Every terminal** to save the next change for all.
+By default, `/mods` and `/omd` save changes for every terminal, including future launches.
+To change a mod in the current terminal only, set **Changes apply to** to **Only this terminal** in `/mods`,
+or use the same row under **All mods…** in `/omd`. Forks and subagents started from that terminal inherit its
+choices. The choices last until you close it.
 
-When a terminal has its own choices, the mod says **This terminal has its own choices** and offers two actions, each
-showing what changes before it asks you:
+If a mod already has settings for this terminal, its settings screen opens on **Only this terminal**.
+Pick **Every terminal** to save the next change for all terminals.
+
+When a terminal has its own choices, the mod shows **This terminal has its own choices** and offers two actions.
+Each previews the changes and asks for approval:
 
 - **Use saved settings** drops this terminal's choices.
 - **Keep these for every terminal** saves them for every terminal.
 
-`/omd` offers the same two actions. If a mod has a settings file, saving a setting the
-file sets updates that line in the file and keeps its comments. A mod the installer keeps on can't be turned off,
-but you can change its settings. Your administrator's mods can't be changed.
+`/omd` offers the same two actions. If you change a setting defined in a mod's settings file, OMD updates that line
+and preserves the file's comments. In `/mods` and `/omd`, you can change the settings of a mod the installer keeps
+on, but you can't turn it off. You can't change administrator-managed mods.
 
 ## Next steps
 

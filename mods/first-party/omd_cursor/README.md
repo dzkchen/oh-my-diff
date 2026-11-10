@@ -15,7 +15,7 @@ omd mods enable omd_cursor
 
 Turning it on asks permission to run `node` outside the sandbox (the `os` grant), because setup installs the SDK,
 reaches the network and writes the mod store. Then run `/cursor setup` in a session.
-[Use Claude or another provider](../../../docs/use-other-providers.md) walks through enrollment, the API key and several
+[Use Claude or another provider](../../../docs/use-other-providers.md) walks through sign-in, API keys and adding
 accounts. [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it

@@ -265,11 +265,11 @@ stop the compaction.
 
 ### Evidence across compaction
 
-With the `sessions` capability, `turn_end` delivers `evidence`, a completed-turn packet of the turn's visible records.
-Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each
-segment's records with its history revision. Compaction summaries do not replace those records. An unobserved
-history reset or interrupted compaction still rejects evidence explicitly. The mod chooses how to select and
-summarize a truncated packet.
+With the `sessions` capability, a mod receives `evidence` on `turn_end`: a completed-turn packet of visible records.
+The host keeps bounded original records even when it observes compaction during the turn, and tags each segment
+with its history revision. Compaction summaries do not replace those records. The host rejects evidence after an
+unobserved history reset or interrupted compaction. If the packet is truncated, the mod chooses which records to
+select and summarize.
 
 Evidence is delivered only to mods that subscribed at the turn's start and still subscribe with the same source
 hash when it finishes. Reloading unchanged mods preserves their evidence; newly added or changed subscribers

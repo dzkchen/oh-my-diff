@@ -88,7 +88,8 @@ Pushing:
 - A branch without an upstream is pushed to `origin` and tracked. A detached HEAD isn't pushed.
 - When the remote rejects the push and the branch has diverged from its upstream, as after an amend or reword, `P`
   offers `push --force-with-lease`.
-- A branch that is only behind, or that's new here while `origin` already has its name, is told to pull first.
+- If your branch is only behind its upstream, or is new locally while `origin` already has a branch with that name,
+  the panel tells you to pull first.
 
 Amending or rewording an older commit rebases onto it with `--autostash`, and is refused while a rebase, merge,
 cherry-pick or revert is in progress. If the rebase stops, it is aborted and the error shows in the panel. A failed

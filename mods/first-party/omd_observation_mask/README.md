@@ -42,8 +42,9 @@ in this mode. At most 16 unmasked originals from the latest history view are che
 still applies the history eligibility rules. An original that fails the read check stays visible and is skipped on later continuations.
 The model receives guidance to recall a specific missing fact in small pages and verify
 current files and processes before repeating actions. User messages, instructions and tool calls stay in context.
-The placeholders stay identical on later requests; another continuation is needed to hide another batch. Resume
-keeps installed placeholders but drops a continuation that had not reached its first model request.
+The mod sends the same placeholders on later requests; another continuation is needed to hide another batch.
+Resuming a thread preserves stored placeholders, but drops a pending continuation that had not
+reached its first model request.
 
 Cache lifetime is an estimate, not a cache probe. On a ChatGPT plan, with local providers and when the lifetime is
 unknown there is no estimate, so only `/continue --compact` hides outputs, and `/hidden_outputs` says so. `auto` uses a provider-reported lifetime, retaining it on reads
@@ -82,7 +83,7 @@ still compact the conversation. This mode does not prepare a summary in the back
 
 Fractional values are rounded down; a negative or non-number value uses the default.
 
-A larger `batch_bytes` breaks the cache less often and makes each break count for more. Use `0` with a provider
+A larger `batch_bytes` changes the cached prefix less often, but removes more output each time it does. Use `0` with a provider
 that doesn't cache prompts.
 
 ## Needs and limits

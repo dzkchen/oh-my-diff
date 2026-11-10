@@ -1,7 +1,7 @@
 # Oh My Diff docs
 
-Every page in the Oh My Diff (OMD) docs, grouped by what you want to do. If you're new to OMD, start with
-the [README](../README.md). These docs describe the `main` branch, which can be ahead of the current release.
+New to Oh My Diff (OMD)? Start with the [README](../README.md) or [install OMD](install.md).
+These docs describe the `main` branch, which can be ahead of the current release.
 
 ## Use OMD
 

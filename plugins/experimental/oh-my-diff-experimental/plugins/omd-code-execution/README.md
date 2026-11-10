@@ -2,7 +2,7 @@
 
 Guides the model to run code cells in Codex code mode, a Codex feature where the model writes small programs that call
 the session's tools. It covers JavaScript cells with session storage, and Python and Bun cells that keep their state
-between calls. Cells call tools through Codex's own tool router, so its permissions and task controls apply. It's experimental: no install profile stages it. [Experimental plugins](../../../../README.md#experimental-plugins)
+between calls. Cells call tools through Codex's own tool router, so its permissions and task controls apply. It's experimental, and neither install profile puts it on disk. [Experimental plugins](../../../../README.md#experimental-plugins)
 has the steps to add it.
 
 The plugin is guidance only. It has no mod component. The Python and Bun drivers ship in its `kernels/` folder, and
@@ -53,7 +53,7 @@ Python, then chart it in Bun".
 
 - Python and Bun cells need `python3` and `bun` on your machine. The plugin doesn't install them or any libraries.
 - If a worker is missing, the model reports it and continues with JavaScript cells or direct tools.
-- A sandbox that denies the worker's loopback connection fails closed.
+- If the sandbox denies the worker's loopback connection, the cell fails instead of running with broader access.
 - Each cell has bounded source, output, duration and nested calls. Output past the limit is dropped and
   `kernel output limit exceeded` is added to the cell's error. Code-mode recursion is refused.
 - Each cell gets a fresh token that expires when the cell ends, so background work from an older cell can't use a
