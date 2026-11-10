@@ -83,3 +83,12 @@ test('an update names retired mods, new default mods left off and new permission
   assert.match(children.find(item => item.id === 'omd_update_last').text.replace(/\n/g, ' '), /^From 1\.0\.0: Retired and turned off: omd_old\. .*omd_git \(exec\)\.$/);
   assert.match(children.find(item => item.id === 'omd_update_last_mods').text, /omd_logo \(network\)/);
 });
+
+test('a waiting first-party mod update opens a dialog whose ids are all unique', () => {
+  const mods = { omd: '1.4.2', serial: 1, changed: ['omd_theme', 'omd_privacy'] };
+  const info = { installed: '1.4.2', checked_at: 1, mods, pending_mods: mods, blocked: { version: '1.5.0', reasons: ['upstream Codex 0.167.x is required'] } };
+  const children = run('terminal', {}, { ...run('start', {}, null, { info }).state, open: true }).value.sites.dialog.components[1].children;
+  const ids = children.map(item => item.id);
+  assert.equal(new Set(ids).size, ids.length, ids.join(' '));
+  assert.ok(ids.includes('omd_update_mods_out') && ids.includes('omd_update_mods'));
+});

@@ -815,3 +815,14 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
   assert.equal(login('login Work').calls.length, 0);
   assert.deepEqual(login('remove work', { accounts }).calls[0].arguments, { channel: 'remove', data: { account: 'work' } });
 });
+
+test('a tool whose schema is a top-level union reaches Claude as one object schema', () => {
+  const parameters = { anyOf: [{ type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] }], description: 'Either' };
+  const translated = translateRequest({ ...prompt, tools: [{ type: 'function', name: 'pick', description: 'Pick', parameters }] }, model);
+  const schema = translated.extra.tools[0].input_schema;
+  assert.deepEqual(schema, { description: 'Either', type: 'object', properties: { path: { type: 'string' }, id: { type: 'number' } } });
+  assert.deepEqual(translated.manifest[0].inputSchema, schema);
+  const plainSchema = prompt.tools[0].parameters;
+  assert.equal(translateRequest(prompt, model).extra.tools[0].input_schema, plainSchema);
+});
