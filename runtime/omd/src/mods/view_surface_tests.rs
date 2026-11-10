@@ -59,7 +59,7 @@ fn box_styles_are_bounded_and_render_hook_trees_refuse_them() {
         json!({"layout": {"split": "vertical", "children": [{"content": "transcript", "style": {}}, {"content": "composer"}]}}),
     ] {
         assert!(view(invalid.clone()).is_err(), "{invalid}");
-        assert!(ModViewPatch::parse(invalid).is_err());
+        assert!(ModViewPatch::parse(&invalid).is_err());
     }
     let tree = |extra: Value| {
         let mut component =
@@ -88,15 +88,15 @@ fn welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose() 
         json!({"welcome":{"unknown":true}}),
     ] {
         assert!(view(invalid.clone()).is_err(), "{invalid}");
-        assert!(ModViewPatch::parse(invalid).is_err());
+        assert!(ModViewPatch::parse(&invalid).is_err());
     }
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();
-    ModViewPatch::parse(welcome)
+    ModViewPatch::parse(&welcome)
         .unwrap()
         .apply(&mut target, &mut claims, "first", "idle")
         .unwrap();
-    ModViewPatch::parse(json!({"greeting":"Ready to work?"}))
+    ModViewPatch::parse(&json!({"greeting":"Ready to work?"}))
         .unwrap()
         .apply(&mut target, &mut claims, "first", "idle")
         .unwrap();
@@ -105,7 +105,7 @@ fn welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose() 
         target.session_title_suffix.as_deref(),
         Some(" | Project tools")
     );
-    let conflicts = ModViewPatch::parse(json!({"sites":{"welcome":{"components":[]}}}))
+    let conflicts = ModViewPatch::parse(&json!({"sites":{"welcome":{"components":[]}}}))
         .unwrap()
         .apply(&mut target, &mut claims, "second", "idle")
         .unwrap();
@@ -143,7 +143,7 @@ fn layout_leaf_titles_are_bounded_visible_text_on_sites_and_the_transcript() {
         ),
     ] {
         assert!(view(valid.clone()).is_ok(), "{valid}");
-        assert!(ModViewPatch::parse(valid).is_ok());
+        assert!(ModViewPatch::parse(&valid).is_ok());
     }
     for invalid in [
         layout(
@@ -169,7 +169,7 @@ fn layout_leaf_titles_are_bounded_visible_text_on_sites_and_the_transcript() {
         layout(site.clone(), transcript.clone(), titled(&composer, "")),
     ] {
         assert!(view(invalid.clone()).is_err(), "{invalid}");
-        assert!(ModViewPatch::parse(invalid).is_err());
+        assert!(ModViewPatch::parse(&invalid).is_err());
     }
 }
 
@@ -196,8 +196,8 @@ fn components_nest_six_deep_and_no_more() {
         }
         json!({"sites": {"a/x": {"components": [node]}}})
     };
-    assert!(ModViewPatch::parse(nested(6)).is_ok());
-    assert!(ModViewPatch::parse(nested(7)).is_err());
+    assert!(ModViewPatch::parse(&nested(6)).is_ok());
+    assert!(ModViewPatch::parse(&nested(7)).is_err());
 }
 
 #[test]
@@ -205,12 +205,12 @@ fn patches_claim_layout_once() {
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();
     let layout = json!({"layout": {"content": "transcript"}});
-    ModViewPatch::parse(layout.clone())
+    ModViewPatch::parse(&layout)
         .unwrap()
         .apply(&mut target, &mut claims, "first", "idle")
         .unwrap();
     assert!(target.layout.is_some());
-    let conflicts = ModViewPatch::parse(json!({"layout": {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}}))
+    let conflicts = ModViewPatch::parse(&json!({"layout": {"split": "vertical", "children": [{"content": "transcript"}, {"content": "composer"}]}}))
         .unwrap()
         .apply(&mut target, &mut claims, "second", "idle")
         .unwrap();
@@ -249,7 +249,7 @@ fn appearance_styles_are_bounded_and_merge_by_surface() {
         json!({"surface_styles":{"approval":{"top":"#abcdef"}}}),
         json!({"surface_styles":{"composer":{"top":"#654321"}}}),
     ] {
-        ModViewPatch::parse(patch)
+        ModViewPatch::parse(&patch)
             .unwrap()
             .apply(&mut target, &mut claims, "first", "idle")
             .unwrap();
@@ -276,7 +276,7 @@ fn a_wrap_encloses_a_replacement_composed_after_it() {
             json!({"sites": {"sidebar": {"components": [{"type": "text", "id": "tree", "label": "Tree", "text": "src"}]}}}),
         ),
     ] {
-        let conflicts = ModViewPatch::parse(patch)
+        let conflicts = ModViewPatch::parse(&patch)
             .unwrap()
             .apply(&mut target, &mut claims, id, "idle")
             .unwrap();
@@ -297,7 +297,7 @@ fn only_a_sites_owner_replaces_or_wraps_it() {
     let wrap = json!({"mode": "wrap", "components": [{"type": "box", "id": "frame", "label": "Frame",
         "children": [{"type": "slot"}]}]});
     let mut compose = |id: &str, site: Value| {
-        ModViewPatch::parse(json!({"sites": {"a/x": site}}))
+        ModViewPatch::parse(&json!({"sites": {"a/x": site}}))
             .unwrap()
             .apply(&mut target, &mut claims, id, "idle")
             .unwrap()
@@ -356,11 +356,11 @@ fn key_contexts_are_bounded_and_compose_with_their_owner() {
                 .collect(),
         )),
     ] {
-        assert!(ModViewPatch::parse(invalid.clone()).is_err(), "{invalid}");
+        assert!(ModViewPatch::parse(&invalid).is_err(), "{invalid}");
     }
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();
-    ModViewPatch::parse(json!({"key_contexts": [site]}))
+    ModViewPatch::parse(&json!({"key_contexts": [site]}))
         .unwrap()
         .apply(&mut target, &mut claims, "first", "idle")
         .unwrap();
@@ -379,7 +379,7 @@ fn the_underlay_names_a_raster_and_goes_to_its_first_claimant() {
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();
     let mut apply = |id: &str, raster: &str| {
-        ModViewPatch::parse(json!({"underlay": {"raster": raster}}))
+        ModViewPatch::parse(&json!({"underlay": {"raster": raster}}))
             .unwrap()
             .apply(&mut target, &mut claims, id, "idle")
             .unwrap()

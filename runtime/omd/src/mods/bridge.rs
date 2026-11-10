@@ -461,7 +461,7 @@ fn fit_history(request: &mut Request) -> Result<()> {
     if serde_json::to_vec(&*request)?.len() <= process::INPUT_LIMIT {
         return Ok(());
     }
-    let Some(items) = request
+    let Some(mut items) = request
         .invocation
         .get_mut("payload")
         .and_then(|payload| payload.get_mut("items"))
@@ -484,7 +484,7 @@ fn fit_history(request: &mut Request) -> Result<()> {
         room -= bytes;
         kept += 1;
     }
-    request.invocation["payload"]["items"] = Value::Array(items[items.len() - kept..].to_vec());
+    request.invocation["payload"]["items"] = Value::Array(items.split_off(items.len() - kept));
     Ok(())
 }
 

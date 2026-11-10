@@ -3,7 +3,7 @@ import type { Json, ModAPI, TerminalComponent } from '../../api.d.ts';
 type Item = { label: string; value: string };
 type View = { title: string; status: 'working' | 'ready' | 'error'; message: string; items: Item[]; action: 'open' | 'apply'; text: string | null;
   excerpt: { path: string; line: number; start: number; lines: string[]; errors?: Item[] } | null; pane: boolean; revision: number; request: number };
-type Server = { adapter: string; server: string | null; status: string; reason: string; documents: number; count?: number; errors: string[] };
+type Server = { adapter: string; server: string | null; status: string; recovery: 'degraded' | 'resynced' | null; reason: string; documents: number; count?: number; errors: string[] };
 type Saved = { view: View | null; servers: Server[]; open: boolean; asked: number };
 
 const object = (value: Json | undefined): Record<string, Json> | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
@@ -26,9 +26,8 @@ const clip = (text: string, limit: number, json = false) => {
 const STATUS_BYTES = 200;
 const TITLE_BYTES = 128;
 const spaced = (reason: string) => reason.replace(/_/g, ' ');
-// The `degraded:` prefix is set by omd_lsp_sync (the `reason` it writes at its INDEX_BOUNDS case); keep both in step. Only that prefix, not `resynced:`, shows as a warning beside a running server.
 const status = (entry: Server): { text: string; tone: 'failure' | 'attention' | 'success' | 'muted' } => {
-  const degraded = !!entry.server && entry.reason.startsWith('degraded:');
+  const degraded = !!entry.server && entry.recovery === 'degraded';
   return {
     text: entry.server ? ` ${entry.server}${degraded ? ` · ${spaced(entry.reason)}` : ''}` : ` ${spaced(entry.reason) || entry.status}`,
     tone: entry.errors.length ? 'failure' : entry.status === 'stale' || degraded ? 'attention' : entry.server ? 'success' : 'muted',
@@ -48,7 +47,6 @@ export default function activate(api: ModAPI) {
     api.state.set({ ...rest, view: patch === null ? null : { title: 'Code intelligence', status: 'ready', message: '', items: [], action: 'open', text: null, excerpt: null, pane: false, request: 0,
       ...current, ...patch, revision: (current?.revision ?? 0) + 1 } } as unknown as Json);
   };
-  // Each request carries a number the view must still be waiting for, so closed or superseded answers are dropped.
   const ask = (patch: Partial<View>, data: Record<string, Json>) => {
     const request = saved().asked + 1;
     api.state.set({ ...saved(), asked: request } as unknown as Json);
@@ -105,7 +103,6 @@ export default function activate(api: ModAPI) {
     try {
       const result = api.services.call('omd.lsp', 'query', data) as unknown as Partial<View>;
       const excerpt = view()?.excerpt;
-      // A diagnostics answer for an open excerpt fills its error list and keeps the earlier results for Back.
       show({ ...data.op === 'diagnostics' && excerpt && data.path === excerpt.path ? { status: result.status, message: result.message, excerpt: { ...excerpt, errors: (result.items ?? []).filter(item => item.value.startsWith(`${excerpt.path}:`)) } } : result, request: 0 });
     } catch (error) {
       if (!(error instanceof Error)) throw error;

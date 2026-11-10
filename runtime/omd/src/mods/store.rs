@@ -807,7 +807,11 @@ impl ModStore {
             })
             .collect();
         let bytes = serde_json::to_vec(&json!({"revision": config["revision"], "epochs": epochs}))?;
-        if read(&self.root.join(CONFIGURATION_EPOCHS), 65_536).ok() != Some(bytes.clone()) {
+        if read(&self.root.join(CONFIGURATION_EPOCHS), 65_536)
+            .ok()
+            .as_deref()
+            != Some(bytes.as_slice())
+        {
             self.write_staged(CONFIGURATION_EPOCHS, &bytes, || Ok(()))?;
         }
         Ok(config)

@@ -29,6 +29,41 @@ fn channel_sink() -> (ChangeSink, mpsc::Receiver<(String, Vec<String>)>) {
     )
 }
 
+#[tokio::test]
+async fn failed_registrations_do_not_consume_watch_slots_or_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let limits = codex_omd::mod_limits::ModLimits {
+        watches_per_mod: 2,
+        ..Default::default()
+    };
+    let watches = WorkspaceWatches::new(
+        Arc::new(FileWatcher::noop()),
+        dir.path().to_path_buf(),
+        Vec::new(),
+        limits,
+    )
+    .unwrap();
+    for attempt in 0..=limits.watches_per_mod {
+        let key = format!("key-{attempt}");
+        let (sink, _rx) = channel_sink();
+        let error = watches
+            .watch(
+                "m",
+                "sha",
+                &[".".to_owned()],
+                false,
+                false,
+                None,
+                Some((&key, "shape")),
+                sink,
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "watch_registration_failed");
+        assert!(!watches.unwatch_key("m", &key));
+    }
+    assert_eq!(watches.unwatch_all("m"), 0);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn external_changes_are_reported_relative_to_the_root() {
     let (dir, watches) = fixture();

@@ -1282,7 +1282,10 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         })
         .await
         .map(|r| r.text);
-    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
+    assert_eq!(
+        serde_json::from_str::<Value>(seen.as_deref().unwrap()).unwrap(),
+        structured
+    );
     let long = "y".repeat(codex_omd::TOOL_OUTPUT_BYTES - 8);
     assert_eq!(
         mods.intercept_tool(start("call-coded-long", &CODED))
