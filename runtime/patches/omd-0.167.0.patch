@@ -41969,9 +41969,18 @@ index 8aa1bca71b37199ea5aa9956871c68de2b0c1dc5..65033292bb5b1a1387977ef88ccf63ff
 
 
 diff --git a/codex-rs/tui/src/app/startup.rs b/codex-rs/tui/src/app/startup.rs
-index fca1ef21b67bb3236dd9ebc3e59801c6a8a62b43..a2727bbbbc892fe8cd233319f54225b2d366f2d3 100644
+index fca1ef21b67bb3236dd9ebc3e59801c6a8a62b43..7d7dbde652203f1cd1fa78eefd15e59f0ab7d881 100644
 --- a/codex-rs/tui/src/app/startup.rs
 +++ b/codex-rs/tui/src/app/startup.rs
+@@ -963,7 +963,7 @@ See the Codex keymap documentation for supported actions and examples."
+             });
+         let runtime_keymap = startup_try!(runtime_keymap);
+         #[cfg(not(debug_assertions))]
+-        let upgrade_version = crate::updates::get_upgrade_version(&config);
++        let upgrade_version: Option<String> = None;
+
+         let agents_overview =
+             agents_overview::AgentsOverviewState::new(local_settings.tui.agents_overview_grouping);
 @@ -1075,6 +1075,8 @@ See the Codex keymap documentation for supported actions and examples."
              pending_managed_worktree_created: None,
              pending_managed_worktree_transition: None,
@@ -189229,10 +189238,10 @@ index 0000000000000000000000000000000000000000..87cc273b98938325957b30f788d18693
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa61541346c02edf20dccebaf4c315a0407c2b5c
+index 0000000000000000000000000000000000000000..dc963f436830ffa60b1bcca275af9f3f355552c2
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,689 @@
+@@ -0,0 +1,691 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SearchMode;
@@ -189651,9 +189660,12 @@ index 0000000000000000000000000000000000000000..fa61541346c02edf20dccebaf4c315a0
 +
 +impl ChatWidget {
 +    pub(crate) fn open_omd_extensions(&mut self) {
-+        let mut lines = vec![Line::from(
-+            "Mods, plugins, skills and hooks. If a mod breaks Codex, turn it off below.",
-+        )];
++        let mut lines = vec![
++            Line::from("Oh My Diff".bold()),
++            Line::from(
++                "Mods, plugins, skills and hooks. If a mod breaks Codex, turn it off below.",
++            ),
++        ];
 +        let mut items = Vec::new();
 +        items.push(SelectionItem {
 +            name: "Plugins".to_string(),
@@ -189763,7 +189775,6 @@ index 0000000000000000000000000000000000000000..fa61541346c02edf20dccebaf4c315a0
 +        }
 +        self.bottom_pane.show_selection_view(SelectionViewParams {
 +            view_id: Some("omd-extensions"),
-+            title: Some("Oh My Diff".to_string()),
 +            header: Box::new(Paragraph::new(lines)),
 +            header_gap: 1,
 +            footer_hint: Some(standard_popup_hint_line()),
