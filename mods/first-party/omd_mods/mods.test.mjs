@@ -457,3 +457,10 @@ test('an install that could not also turn the mod on says why it is still off', 
   const applied = invoke('apply', { ui_state: reviewed.ui, 'packages.apply': () => ({ status: 'applied', generation: 2, enabled: false, reason: 'service_provider_missing: needs lsp' }) });
   assert.match(applied.value.display, /installed but still off \(service_provider_missing: needs lsp\)/);
 });
+
+test('a mod installed twice in one scope shows one row, the one that is on', () => {
+  const opened = invoke('', { packages: [mod('omd_theme', { enabled: false, effective: false, source: 'selection' }), mod('omd_theme', { source: 'package' }), logo] });
+  const ids = opened.panels[0].items.map(item => item.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(opened.panels[0].items.find(item => item.id === 'user:omd_theme').value, true);
+});
