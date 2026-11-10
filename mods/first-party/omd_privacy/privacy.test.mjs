@@ -76,8 +76,10 @@ test('redacts supported secrets in editable text with random opaque placeholders
 test('ordinary test values and well-known documentation samples are not redacted, real secrets still are', () => {
   const sample = ['ey', 'JhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ey', 'JzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'].join('');
   const kept = ['csrf_token: abc123def456ghi', 'TEST_PASSWORD=hunter2hunter', 'password = "testpass123"', 'const fakeApiKey = "a3f9c2d8e1b74f60"',
-    'postgres://app:localdevpw@localhost:5432/db', 'redis://u:s3cretpw@127.0.0.1:6379', `Authorization: ${['sk', '_test_4eC39HqLyjWDarjtT1zdp7dc'].join('')}`, `jwt ${sample}`];
-  const redacted = ['DB_PASSWORD=MyS3cretPass123!', 'DB_PASSWORD=Testament42!', 'api_key=Mockingbird#9x', 'postgres://u:S3cretReal@[2001:db8::1]/x', 'postgres://u:S3cretReal@/x', 'postgres://u:S3cretReal@db.prod.acme.io/x', 'API_TOKEN=a3f9c2d8e1b74f60x', `jwt ${fake.jwt(60)}`, fake.stripe()];
+    'postgres://app:localdevpw@localhost:5432/db', 'redis://u:s3cretpw@127.0.0.1:6379', 'GOOGLE_APPLICATION_CREDENTIALS=/path/key.json',
+    'credentials: ~/.aws/credentials', 'API_KEY=your_api_key_here', `Authorization: ${['sk', '_test_4eC39HqLyjWDarjtT1zdp7dc'].join('')}`, `jwt ${sample}`];
+  const redacted = ['DB_PASSWORD=MyS3cretPass123!', 'DB_PASSWORD=Testament42!', 'api_key=Mockingbird#9x', 'postgres://u:S3cretReal@[2001:db8::1]/x', 'postgres://u:S3cretReal@/x', 'postgres://u:S3cretReal@db.prod.acme.io/x', 'API_TOKEN=a3f9c2d8e1b74f60x', `jwt ${fake.jwt(60)}`, fake.stripe(),
+    'DB_PASSWORD=MyExamplePass123!', 'API_KEY=changeme-8f3k2j4h5g6d7s8a'];
   const segments = [...kept, ...redacted].map((text, index) => segment(`/s${index}`, text));
   const out = applied(segments, send(segments).result.edits);
   kept.forEach((text, index) => assert.equal(out[`/s${index}`], text, text));
