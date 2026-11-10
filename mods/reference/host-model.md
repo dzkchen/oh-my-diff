@@ -22,7 +22,7 @@ Any other `OMD_MODE` value is rejected.
 
 ## What mods can't replace or bypass
 
-A mod runs inside the host, asks for only the capabilities it needs, and composes with other mods by the
+A mod runs under the host, asks for only the capabilities it needs, and combines with other mods by the
 [composition rules](#composition-order). A mod can never replace or bypass:
 
 | Area | Reserved to the host |
@@ -186,9 +186,9 @@ host-operation provenance.
 
 ## Composition order
 
-Dependencies run before consumers, and remaining mods use lexical id order. Managed scope shadows project scope, which
-shadows user scope. A selection doesn't inherit state or grants from the selection it shadows. Observers compose in
-that order. Interceptors follow the [interceptor order](interceptors.md#interceptor-order).
+Dependencies run before the mods that use them; remaining mods run in lexical id order. For copies with the same mod ID,
+the host uses a managed copy instead of a project copy, and a project copy instead of a user copy. The selected copy inherits no state or
+grants from the copy it overrides. Observers run in the same order. Interceptors follow the [interceptor order](interceptors.md#interceptor-order).
 
 Exclusive replacements, contract ids, service providers and namespaced tools fail closed when contested. Native
 permissions, credentials, accounting, cancellation, evidence, workflow enforcement and provider authorization stay

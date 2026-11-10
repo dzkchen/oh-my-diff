@@ -1,7 +1,7 @@
 # omd_source_knowledge
 
-Lets the agent keep notes about a repository for later tasks, each checked against the file it points at before it's
-reused. It's experimental, and no install profile includes it.
+Keeps source facts, test evidence and approved lessons about a repository for later tasks. Before reusing a source
+fact, the mod checks the file it points to. It's experimental, and no install profile includes it.
 
 A fact points at exact lines of a file and is checked against the file each time it's reused. The agent can also keep
 a copy of a small structured result from the current thread, such as a test report, as evidence, and propose lessons

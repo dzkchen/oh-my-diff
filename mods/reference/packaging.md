@@ -17,7 +17,7 @@ These `omd-mod` commands manage a package store.
 
 | Command | Result |
 | --- | --- |
-| `omd-mod package-plan STORE REQUEST_JSON` | Resolve and preview the exact graph, per-package authority and grant changes, settings, and enablement |
+| `omd-mod package-plan STORE REQUEST_JSON` | Resolve packages and dependencies; preview each package's authority, grant changes, settings and on/off state |
 | `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION` | Re-resolve and atomically apply only the unchanged preview |
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
 | `omd-mod package-rollback-plan STORE ID` | Preview the prior integrity-addressed package version |
@@ -397,9 +397,9 @@ an edited selection's current source and capabilities and keeps it enabled.
 - Installing never enables a package unless the request sets `enable: true`; see
   [Enablement on install and update](#enablement-on-install-and-update).
 - The preview lists per package `authority {from, to}`, `grant {from, to}` and `renewed_approval`.
-- Once a confirmed package mutation starts, it returns its definitive result even if its writes reload or disable
-  the calling mod. A queued call is still rejected when it's cancelled or when the mod's source, the originating
-  generation or the client context changed.
+- Once the host starts a confirmed package change, it returns the final result even if that change reloads or
+  disables the calling mod. While a call is still queued, the host rejects it if it is
+  cancelled or if the mod's source, originating generation or client context changes.
 - An update resolves dependencies through the index the package came from and previews the capabilities it adds.
 - `packages.reload` makes every enabled selection revalidate at the next safe boundary, retrying failed mods.
 
@@ -424,8 +424,8 @@ scopes and origin are unchanged; otherwise it is off until enabled.
 
 ### Rollback and cleanup
 
-Package rollback repoints the selection at the immutable store cache, so returning to editable local development is a
-fresh local install of the rolled-back source.
+Rollback selects the previous version from the immutable store cache. To edit that version locally, install its
+source folder again.
 
 Successful local package updates retain eight rollback history entries. After commit, the package manager removes
 local snapshots evicted from that history when no installed package, retained history, selection or managed

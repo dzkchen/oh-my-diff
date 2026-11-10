@@ -109,9 +109,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 - The host captures at most `max_output_bytes` of stdout (at most 1 MiB, which is also the default, or at most
   16 MiB with `output_artifact`) and 1 MiB of stderr, and reports `stdout_truncated`/`stderr_truncated`.
   `stdout_sha256` and `stdout_bytes` cover the captured stdout.
-- The returned `stdout` and `stderr` are previews so the result fits a callback's host-call transport;
-  `stdout_preview_truncated`/`stderr_preview_truncated` report a shortened preview. Use `output_artifact` for
-  complete output.
+- The host returns previews in `stdout` and `stderr` to fit the callback's host-call transport budget.
+  `stdout_preview_truncated`/`stderr_preview_truncated` report a shortened preview. Use `output_artifact` to keep
+  complete stdout.
 - Output draining shares the command's deadline and cancellation, so a descendant that keeps a pipe open cannot
   keep the call running past its timeout.
 

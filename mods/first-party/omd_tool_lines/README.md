@@ -1,8 +1,8 @@
 # omd_tool_lines
 
-Groups adjacent agent shell commands into one transcript line with counts, the latest active, failed or interrupted
-command, and running, failure and interruption totals. Other tools stay on one line with short arguments and their
-result. It's on by default in OMD+. OMD Core doesn't include it.
+Groups adjacent agent shell commands into one transcript line. The row shows the latest active, failed or
+interrupted command and totals for running, failed and interrupted commands. Other tools each get one line with
+short arguments and their result. It's on by default in OMD+. OMD Core doesn't include it.
 
 ```text
 • 8 commands cargo test -p codex-omd · ok · 41.3s

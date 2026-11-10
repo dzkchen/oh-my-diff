@@ -1,8 +1,8 @@
 # Use OMD with T3 Code
 
-How to run Oh My Diff (OMD) under [T3 Code](https://github.com/pingdotgg/t3code), a desktop app for coding agents
-that runs Codex for you. T3 Code stays the app you work in, and OMD adds the mods that change what Codex sends to the
-model and does with its tools. Your T3 Code threads, Codex settings and sign-in stay as they are.
+To use Oh My Diff (OMD) in [T3 Code](https://github.com/pingdotgg/t3code), point the app at OMD's `codex`.
+Mods can then change model requests, tools and turns. You keep your existing threads, Codex settings and sign-in.
+Terminal panels and mod slash commands don't appear in T3 Code.
 
 ## Point T3 Code at OMD's `codex`
 
@@ -40,7 +40,7 @@ A change applies from the next turn in T3 Code.
 
 - OMD+ keeps Codex's plan mode, so T3 Code's Plan mode works. If you turn on `omd_plan_removal`, T3 Code's plan
   turns run in the default mode and show a warning.
-- `omd_auto_continue`, which answers approvals left waiting, runs only in the terminal interface. In T3 Code, an
+- `omd_auto_continue`, which declines approvals left waiting, runs only in the terminal interface. In T3 Code, an
   approval waits for you.
 - Starting `codex app-server`, `codex exec` or `codex --version`, with or without options before them, never
   installs an OMD update, so T3 Code never waits on one. A staged update installs the next time you run `codex` in a

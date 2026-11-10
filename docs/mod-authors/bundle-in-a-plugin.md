@@ -1,8 +1,8 @@
 # Bundle a mod in a plugin
 
-How to ship skills and a mod together as one Codex plugin. Use a plugin when your feature needs both a procedure
-the model follows (a skill) and a change to `codex` itself (a mod). The mod inside a plugin is called a mod
-component. [`omd-anchored-edit`](../../plugins/bundled/oh-my-diff/plugins/omd-anchored-edit) is a complete example.
+A Codex plugin can ship a skill and a mod together: the skill tells the model what to do, and the mod changes how
+`codex` behaves. OMD calls the bundled mod a component.
+[`omd-anchored-edit`](../../plugins/bundled/oh-my-diff/plugins/omd-anchored-edit) is a complete example.
 
 ## Lay out the plugin
 

@@ -1,6 +1,6 @@
 ---
 name: omd-artifact-reading
-description: Read URLs, GitHub issues and pull requests, PDFs, and Jupyter notebooks with bounded retrieval, precise source anchors, version evidence, and figure inspection.
+description: Read URLs, GitHub issues and pull requests, PDFs, and Jupyter notebooks. Limit each read, record the source and version, and inspect figures when a claim depends on them.
 ---
 
 # OMD artifact reading

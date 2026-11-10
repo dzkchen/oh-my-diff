@@ -22,7 +22,7 @@ Each changed key passes through `config_set` before the validated batch is appli
 leaves the batch unchanged; successful writes notify other `config_change` listeners.
 It runs only from [user contexts](host-model.md#callback-contexts). Without `id` it writes the caller's own settings.
 With `id` or `scope` it needs `packages`. Experimental `scope: "user" | "project"` selects that trusted copy explicitly,
-including a copy shadowed by project precedence. Omit `scope` to use the current effective copy. The selected
+including a user copy overridden by a project copy. Omit `scope` to use the currently selected copy. The selected
 copy supplies its own schema, file settings and authority checks. Settings of a mod the installer keeps on can be
 written; an administrator-managed mod's settings can't. `/omd` stays the native recovery path for settings.
 
@@ -37,9 +37,11 @@ declares and drops it at the next shared settings write or package update, so a 
 undeclared setting is still refused with `unknown_setting`.
 
 A property can also have a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
-instead of the raw name. A string property without `enum` can set `choices: "routes"`. `packages.list` then fills its
-`enum` with the names of the `host.json` worker routes open to that mod, then the lead-only routes open to it whose
-connected provider offers the route's model right now, the ones its workers can run on.
+instead of the raw name. A string property without `enum` can set `choices: "routes"`. `packages.list` then fills
+`enum` with routes from `host.json` that the mod's workers can use, in this order:
+
+1. Worker routes open to that mod.
+2. Lead-only routes open to it whose connected provider currently offers the route's model.
 
 ## Settings file (`settings_file_v1`)
 

@@ -1,7 +1,7 @@
 # Change the patched Codex code
 
-How to change the Rust code in `runtime/`: set up a scratch tree, fetch V8, build and test with cargo, check the
-change and write it back. For what `runtime/` contains, see [runtime/README.md](../../runtime/README.md).
+Edit Rust in a scratch Codex tree, then use `build.py sync` to regenerate `runtime/`. Don't edit the patch or crate
+copies by hand. For the directory contents, see [runtime/README.md](../../runtime/README.md).
 
 ## Before you start
 

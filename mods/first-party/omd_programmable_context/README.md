@@ -43,10 +43,11 @@ code-mode cell the model runs `exec(tool("mod_omd_programmable_context_python_ap
 - `rlm.keep(name, value, sources)` saves a text variable of up to 32 KiB in thread storage, with up to 8 distinct
   sources. A loaded `Var`'s own `path@sha256` counts as one. `rlm.vars()` lists kept variables, and
   `rlm.restore(name)` returns one after a kernel restart or compaction.
-- `rlm.spawn(prompt, role, spec, route, workspace, tools)` starts a real child agent through `agents.spawn` and returns
+- `rlm.spawn(prompt, role, spec, route, workspace, tools)` starts a child agent through `agents.spawn` and returns
   an `Agent` with `wait`, `result`, `send`, `cancel` and `integrate`. Role, workspace, tools and route default to the
-  stored spec, then `worker` and `read_only`. `rlm.map(prompts)` spawns and waits for several. The host handles
-  admission, allowances, isolation, messages, cancellation, usage and integration conflicts.
+  stored spec, then `worker` and `read_only`. `rlm.map(prompts)` spawns and waits for several. The host checks whether
+  each agent may start, enforces its allowance and workspace isolation, delivers messages, and handles cancellation,
+  usage and conflicts when integrating changes.
 - `rlm.complete(prompt)` runs one tool-less `model.complete` call.
 - `rlm.sh(cmd)` and the kernel's `tool(name, arguments)` call the tools the current cell may use, under the same
   permissions.
@@ -56,9 +57,9 @@ If the kernel, the plugin or this mod is missing, turned off or broken, the mode
 
 ### Session harness
 
-Each session keeps versioned notes, memories, skill descriptions and reusable agent specs
-(`rlm.spawn(..., spec="name")`) as changes over the promoted project and personal harnesses. Removing a promoted entry
-hides it for the session. The mod adds them, with a usage hint, as a developer message at the start of each lead
+Each session starts with the promoted project and personal notes, memories, skill descriptions and reusable agent
+specs (`rlm.spawn(..., spec="name")`). It records its own changes as versions of that harness. Removing a promoted
+entry hides it for the session. The mod adds them, with a usage hint, as a developer message at the start of each lead
 request. It adds the kept-variable list (name, size and digest; `rlm.vars()` returns sources) as a short developer
 message just before the newest item, so keeping a variable doesn't change the cached prefix. These messages are part
 of the request only: the transcript and the base system prompt are unchanged, and compaction can't drop them.

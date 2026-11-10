@@ -43,9 +43,10 @@ Change settings in `/mods`.
 - Costs come from what each provider reports. Requests on your ChatGPT plan count as included. Extra-usage credits
   spent past the plan's limit aren't reported per request. A cost the provider doesn't report shows as unknown, not
   zero.
-- When Codex reports native dollar usage for the lead thread (`account/usage/read`, read on open, refresh and, with a
-  budget set, every turn end), the dialog shows it in place of the lead's configured-rate estimate and the budget
-  counts it instead. Workers' estimates and billed spend still count. Missing native usage falls back to the estimate.
+- When Codex reports dollar usage for the lead thread through `account/usage/read`, the dialog and budget use that
+  amount instead of the lead's configured-rate estimate. The mod reads it when the dialog opens or refreshes and,
+  with a budget set, at every turn end. Workers' estimates and billed spend still count. If Codex reports no amount,
+  the dialog and budget keep using the estimate.
 - Totals cover the last 120 requests in the session, not lifetime spend. The budget also counts what older requests
   cost before they left that window.
 - Quota windows are listed per account (Codex, Claude, Cursor), each under the account that reported it. No window

@@ -1,8 +1,7 @@
 # Build a notes mod
 
-This tutorial builds `notes`, a mod that keeps short notes. The model saves them with a tool, you clear them with a
-command, and a line above the prompt shows how many are saved. Along the way you use tools, saved state, settings and
-drawing in the terminal.
+Build `notes`, a mod that keeps short notes across restarts. The model saves them with a tool, you clear them with a
+command, and a line above the prompt shows how many are saved.
 
 ## Before you begin
 
