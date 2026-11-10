@@ -215200,10 +215200,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7b044a8bbbe535c72ec58a8ee4cf320af42b9ddb
+index 0000000000000000000000000000000000000000..518d0e7a0856989218e80956561806c0674288a4
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,941 @@
+@@ -0,0 +1,964 @@
 +use codex_omd::FileStamp;
 +
 +#[cfg(not(test))]
@@ -215284,17 +215284,10 @@ index 0000000000000000000000000000000000000000..7b044a8bbbe535c72ec58a8ee4cf320a
 +    }
 +}
 +
-+#[derive(Clone, Debug, Default, Eq, PartialEq)]
-+pub(crate) struct Snapshot {
-+    pub(crate) evidence: Option<PathBuf>,
-+    pub(crate) active_mods: usize,
-+    pub(crate) failed_mods: usize,
-+    pub(crate) rejected_selections: usize,
-+    pub(crate) observed_requests: usize,
-+    pub(crate) raw_usage_attempts: u64,
-+    pub(crate) settled_task_charge_microusd: u64,
-+    pub(crate) retained_exposure_upper_bound_microusd: u64,
-+    pub(crate) contract: String,
++struct Snapshot {
++    active_mods: usize,
++    failed_mods: usize,
++    contract: Option<String>,
 +}
 +
 +#[derive(Clone, Debug, Eq, PartialEq)]
@@ -215723,51 +215716,49 @@ index 0000000000000000000000000000000000000000..7b044a8bbbe535c72ec58a8ee4cf320a
 +    Cow::Owned(rendered)
 +}
 +
++/// The newest session directory, rescanned only when `sessions/` gains or loses an entry.
 +fn latest_session(root: &Path) -> Option<PathBuf> {
-+    std::fs::read_dir(root.join("sessions"))
++    type Cached = (PathBuf, FileStamp, Option<PathBuf>);
++    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
++    let sessions = root.join("sessions");
++    let stamp = file_stamp(&sessions)?;
++    let mut cache = CACHE.locked();
++    if let Some((cached_root, cached, latest)) = cache.as_ref()
++        && *cached_root == sessions
++        && *cached == stamp
++    {
++        return latest.clone();
++    }
++    let latest = std::fs::read_dir(&sessions)
 +        .ok()?
 +        .filter_map(Result::ok)
 +        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
 +        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
 +        .max_by_key(|(modified, _)| *modified)
-+        .map(|(_, path)| path)
++        .map(|(_, path)| path);
++    *cache = Some((sessions, stamp, latest.clone()));
++    latest
 +}
 +
-+fn snapshot_with_status(status: &Value, accounting: bool) -> Result<Snapshot, String> {
-+    let count = |key: &str| status[key].as_array().map_or(0, Vec::len);
-+    let (active_mods, failed_mods) = codex_omd::mod_counts(status);
-+    let mut snapshot = Snapshot {
-+        active_mods,
-+        failed_mods,
-+        rejected_selections: count("rejected"),
-+        contract: "none".to_string(),
-+        ..Snapshot::default()
-+    };
-+    if crate::mod_runtime::remote_frontend_active() {
-+        return Ok(snapshot);
++/// The label of `session`'s `contract.json`, re-read only when its stamp changes.
++fn contract_label(session: &Path) -> Option<String> {
++    type Cached = (PathBuf, Option<FileStamp>, Option<String>);
++    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
++    let path = session.join("contract.json");
++    let stamp = file_stamp(&path);
++    let mut cache = CACHE.locked();
++    if let Some((cached_path, cached, label)) = cache.as_ref()
++        && *cached_path == path
++        && *cached == stamp
++    {
++        return label.clone();
 +    }
-+    let paths = mod_paths().ok_or_else(|| "Oh My Diff mod host is not active".to_string())?;
-+    let Some(session) = latest_session(&paths.store) else {
-+        return Ok(snapshot);
-+    };
-+    let read = |name: &str, limit: usize| {
-+        bounded_read(&session.join(name), limit)
-+            .ok()
-+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-+            .unwrap_or(Value::Null)
-+    };
-+    if accounting {
-+        let cost = read("task-cost.json", 8_388_608);
-+        let number = |key: &str| cost[key].as_u64().unwrap_or_default();
-+        snapshot.observed_requests = cost["observed"].as_array().map_or(0, Vec::len);
-+        snapshot.raw_usage_attempts = number("raw_usage_attempts");
-+        snapshot.settled_task_charge_microusd = number("settled_task_charge_microusd");
-+        snapshot.retained_exposure_upper_bound_microusd =
-+            number("retained_exposure_upper_bound_microusd");
-+    }
-+    let contract = read("contract.json", 262_144);
-+    snapshot.contract = match (contract["status"].as_str(), contract["active"].as_object()) {
-+        (Some("active"), Some(active)) => format!(
++    let contract = bounded_read(&path, 262_144)
++        .ok()
++        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++        .unwrap_or(Value::Null);
++    let label = match (contract["status"].as_str(), contract["active"].as_object()) {
++        (Some("active"), Some(active)) => Some(format!(
 +            "{}@{} ({})",
 +            active
 +                .get("id")
@@ -215781,12 +215772,27 @@ index 0000000000000000000000000000000000000000..7b044a8bbbe535c72ec58a8ee4cf320a
 +                .get("assurance")
 +                .and_then(Value::as_str)
 +                .unwrap_or("unlabelled")
-+        ),
-+        (Some(status), _) => status.to_string(),
-+        _ => "none".to_string(),
++        )),
++        (Some(status), _) if status != "none" => Some(status.to_string()),
++        _ => None,
 +    };
-+    snapshot.evidence = Some(session);
-+    Ok(snapshot)
++    *cache = Some((path, stamp, label.clone()));
++    label
++}
++
++fn snapshot_with_status(status: &Value) -> Result<Snapshot, String> {
++    let (active_mods, failed_mods) = codex_omd::mod_counts(status);
++    let contract = if crate::mod_runtime::remote_frontend_active() {
++        None
++    } else {
++        let paths = mod_paths().ok_or_else(|| "Oh My Diff mod host is not active".to_string())?;
++        latest_session(&paths.store).and_then(|session| contract_label(&session))
++    };
++    Ok(Snapshot {
++        active_mods,
++        failed_mods,
++        contract,
++    })
 +}
 +
 +pub(crate) fn session_agents(thread: &str) -> Vec<Value> {
@@ -215825,7 +215831,7 @@ index 0000000000000000000000000000000000000000..7b044a8bbbe535c72ec58a8ee4cf320a
 +        Ok(codex_omd::RuntimeMode::UpstreamDirect) => return None,
 +        Ok(_) => {
 +            let status = mod_status();
-+            match snapshot_with_status(status.as_deref().unwrap_or(&Value::Null), false) {
++            match snapshot_with_status(status.as_deref().unwrap_or(&Value::Null)) {
 +                Err(_) if store_root().is_some() => {
 +                    "Oh My Diff · mods off in this directory · run codex in a project".to_string()
 +                }
@@ -215849,11 +215855,10 @@ index 0000000000000000000000000000000000000000..7b044a8bbbe535c72ec58a8ee4cf320a
 +                    } else {
 +                        format!(" · {} failed", snapshot.failed_mods)
 +                    },
-+                    if snapshot.contract == "none" {
-+                        String::new()
-+                    } else {
-+                        format!(" · contract {}", snapshot.contract)
-+                    }
++                    snapshot
++                        .contract
++                        .map(|contract| format!(" · contract {contract}"))
++                        .unwrap_or_default()
 +                ),
 +                _ => "Oh My Diff · mod status unavailable".to_string(),
 +            }
@@ -215921,14 +215926,6 @@ index 0000000000000000000000000000000000000000..7b044a8bbbe535c72ec58a8ee4cf320a
 +        .unwrap();
 +        let session = store.join("sessions").join("thread-1");
 +        std::fs::create_dir_all(&session).unwrap();
-+        std::fs::write(
-+            session.join("task-cost.json"),
-+            serde_json::json!({"settled_task_charge_microusd":7,
-+                "retained_exposure_upper_bound_microusd":10,"raw_usage_attempts":2,
-+                "observed":[{"model":"a"},{"model":"b"},{"model":"c"}]})
-+            .to_string(),
-+        )
-+        .unwrap();
 +        std::fs::write(
 +            session.join("contract.json"),
 +            serde_json::json!({"status":"active","active":{"id":"reviewed","version":1,
@@ -216121,6 +216118,32 @@ index 0000000000000000000000000000000000000000..7b044a8bbbe535c72ec58a8ee4cf320a
 +                .len(),
 +            2
 +        );
++    }
++
++    #[test]
++    #[serial]
++    fn status_contract_follows_rewrites_and_new_sessions() {
++        let root = TempDir::new().unwrap();
++        let store = store_fixture(&root);
++        let _omd = omd_environment(&store);
++        let contract = |status: &str| {
++            compact_status()
++                .unwrap()
++                .ends_with(&format!(" · contract {status}"))
++        };
++        assert!(contract("reviewed@1 (separately_reviewed)"));
++        std::fs::write(
++            store.join("sessions/thread-1/contract.json"),
++            serde_json::json!({"status":"active","active":{"id":"reviewed","version":12,
++                "assurance":"separately_reviewed"}})
++            .to_string(),
++        )
++        .unwrap();
++        assert!(contract("reviewed@12 (separately_reviewed)"));
++        let newer = store.join("sessions").join("thread-2");
++        std::fs::create_dir_all(&newer).unwrap();
++        std::fs::write(newer.join("contract.json"), br#"{"status":"pending"}"#).unwrap();
++        assert!(contract("pending"));
 +    }
 +
 +    #[test]
