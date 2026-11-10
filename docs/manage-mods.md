@@ -71,13 +71,6 @@ A mod installed from a folder runs from that folder, and an edit to the folder s
 (see [how trust is bound](trust-and-permissions.md#installing-doesnt-turn-a-mod-on)). To freeze a version, install a
 Git tag or a package instead.
 
-## Next steps
-
-- If a mod breaks `codex`, see [troubleshooting](troubleshooting.md).
-- For every subcommand, see [commands](commands.md).
-- For organizations, the [administrator policy](../mods/reference/administrator-policy.md)
-  controls which mods may run.
-
 ## Terminal choices and saved settings
 
 Changes in `/mods` and `/omd` save for every terminal and for future launches. To change a mod in one terminal
@@ -95,3 +88,10 @@ showing what changes before it asks you:
 `/omd` offers the same two actions. If a mod has a settings file, saving a setting the
 file sets updates that line in the file and keeps its comments. A mod the installer keeps on can't be turned off,
 but you can change its settings. Your administrator's mods can't be changed.
+
+## Next steps
+
+- If a mod breaks `codex`, see [troubleshooting](troubleshooting.md).
+- For every subcommand, see [commands](commands.md).
+- For organizations, the [administrator policy](../mods/reference/administrator-policy.md)
+  controls which mods may run.
