@@ -70,11 +70,12 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 
 - The object `connect` returns has `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`,
   `resource`, `recovery` and `request(method, params)`. Together they cover every `omd/*` and app-server method.
-- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches
-  with the last accepted or interrupted attach (a reattach the host refused is not carried over), retains the
-  in-memory `attachment.terminalToken`, replays the viewport and focus updated since that attach, resumes the
-  threads it resumed through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`.
-  Explicit detach clears terminal ownership. If a restarted host rejects the retained token, it attaches once
+- After a disconnect, the SDK reconnects with backoff (`reconnect: false` turns that off) and re-initializes.
+  It re-attaches using the last accepted or interrupted attach and the in-memory `attachment.terminalToken`;
+  it does not carry over a reattach the host refused. It then replays viewport and focus updates made since that
+  attach, resumes the threads previously resumed through `request('thread/resume', …)`, and calls
+  `onReconnect({epoch, previousEpoch})`.
+- Explicit detach clears terminal ownership. If a restarted host rejects the retained token, the SDK attaches once
   without it and inherits shared defaults. Keep terminal tokens private and in memory. Clients with separate
   terminal owners share a mod's saved state, not its settings, enablement or session UI state.
 - `unsupported(component, renderer, drawable)` returns null when the renderer can draw the component. Otherwise it

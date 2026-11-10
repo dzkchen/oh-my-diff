@@ -1,7 +1,7 @@
 # Install Oh My Diff
 
-How to install, update, switch install profile and uninstall Oh My Diff (OMD). If something fails, see
-[troubleshooting](troubleshooting.md).
+Install Oh My Diff (OMD) with the command below, then run `codex`. This guide also covers updates, install profiles
+and removal. For errors, see [troubleshooting](troubleshooting.md).
 
 ## Before you begin
 
@@ -46,9 +46,11 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/rele
 For OMD Core, use `--profile platform` instead. The [installer options](commands.md#installer-installsh) choose the
 release channel, the install folders and the Codex executable.
 
-Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`. Your Codex sign-in and
-sessions aren't touched, and neither are your Codex settings, except that `omd-package plugins` adds a
-`[marketplaces.oh-my-diff]` table to `~/.codex/config.toml`, which `omd uninstall` removes.
+The installer checks the release signature and checksum and puts commands in `~/.local/bin`. Updates check the same
+signature and checksum. Both preserve your Codex sign-in, sessions and settings.
+
+If you run `omd-package plugins`, it adds a `[marketplaces.oh-my-diff]` table to `~/.codex/config.toml`.
+`omd uninstall` removes that table.
 
 OMD adds two kinds of extension to Codex. Mods change the `codex` interface and behavior, and you manage them with
 `/mods` and `omd`. Plugins are ordinary Codex plugins of skills and tools that you add with `codex plugin add`; OMD+
@@ -88,21 +90,26 @@ omd update rollback   # undo the last update
 omd update enable     # install updates automatically
 ```
 
-While other OMD sessions are open, the update waits for your next `codex` start. Mods, settings and sign-in are
-kept. When it finishes, `omd update` and the next `codex` start name any mod the release retired, any mod that is
-now on by default but stays off for you, and any permission a first-party mod gained; `/update` shows them too.
-`omd update`, `omd uninstall` and the installer's `status` print text; add `--json` for JSON. If a mod you turned on doesn't support the new mod API, `omd update` asks before it updates. Pass `--yes` to
-update anyway. If the newer release can't be installed, for example because your Codex is on another version or
-doesn't run, `omd update` exits with an error that names the reason.
+While other OMD sessions are open, the update waits for your next `codex` start. It keeps your mods, settings and
+sign-in. After the update, `omd update`, the next `codex` start and `/update` report retired mods, new defaults left
+off for your install, and permissions that first-party mods gained.
+
+If an enabled mod doesn't support the new mod API, `omd update` asks before updating. Pass `--yes` to update anyway.
+If the release can't be installed, for example because your Codex version differs or its executable fails,
+`omd update` exits with an error that names the reason.
+
+`omd update`, `omd uninstall` and the installer's `status` print text; add `--json` for JSON.
 
 When an OMD+ release moves a mod it came with to experimental, the update turns that mod off once and leaves it
 installed. Turn it back on in `/mods` if you want it; later updates leave it as you set it. Mods you installed
 yourself are never turned off.
 
-Between releases, OMD can publish fixes to the mods it ships on their own. These updates keep your OMD version and
-leave each mod on or off as it was. `omd update` installs them when no newer release is out, `/update` offers them, and
-automatic updates download them in the background. Like releases, they install when no other OMD session is open. A version pin turns them off. `omd update rollback` undoes the last
-one. A first-party mod that needs a newer OMD waits for the next release.
+Between releases, OMD can publish first-party mod fixes separately. These updates keep your OMD version and leave
+each mod on or off as it was. `omd update` installs them when no newer release is out; `/update` also offers them.
+Automatic updates download them in the background and apply them when no other OMD session is open.
+
+A version pin disables these mod updates. `omd update rollback` undoes the last update. A first-party mod that needs
+a newer OMD waits for the next release.
 
 To change how updates work, such as the release channel, the check cadence or a version pin, use `/update` in
 `codex` or the [`omd update` commands](commands.md#omd-itself).

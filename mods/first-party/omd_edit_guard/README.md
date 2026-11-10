@@ -1,7 +1,7 @@
 # omd_edit_guard
 
-Catches syntax errors as soon as an edit introduces them. After each file edit it runs a fast syntax check on the
-changed files and, when one fails, adds the error with file and line to the tool output so the model fixes it at once.
+Checks changed files for syntax errors after each edit. When a check fails, it adds the error, file and line to the
+tool output so the model can fix it on its next step.
 It's experimental, and no install profile includes it.
 
 ## Turn it on

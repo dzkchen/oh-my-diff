@@ -82,6 +82,16 @@ export function localId(id: string): string {
 
 const SEALED = new Set(['collaboration/spawn_agent', 'collaboration/send_message', 'collaboration/followup_task']);
 
+export function flatSchema(schema: unknown): unknown {
+  if (!plain(schema)) return schema;
+  const { anyOf, oneOf, allOf, ...rest } = schema;
+  const branches = [anyOf, oneOf, allOf].flatMap(list => Array.isArray(list) ? list.filter(plain) : []);
+  if (!branches.length) return schema;
+  const properties = Object.assign({}, ...branches.map(branch => plain(branch.properties) ? branch.properties : {}), plain(rest.properties) ? rest.properties : {});
+  const required = [...new Set([...(Array.isArray(rest.required) ? rest.required : []), ...(Array.isArray(allOf) ? allOf.filter(plain).flatMap(branch => Array.isArray(branch.required) ? branch.required : []) : [])])];
+  return { ...rest, type: 'object', properties, ...required.length ? { required } : {} };
+}
+
 export function reasoningItem(block: Row, id: string): Row {
   return { type: 'reasoning', id, summary: block.thinking ? [{ type: 'summary_text', text: block.thinking }] : [] };
 }
@@ -109,7 +119,7 @@ export function translateRequest(request: Row, model: string | undefined): Row {
     if (reverse[name]) throw new Error('duplicate_host_tool');
     const schema = spec.type === 'custom'
       ? { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] }
-      : spec.parameters ?? { type: 'object', properties: {} };
+      : flatSchema(spec.parameters ?? { type: 'object', properties: {} });
     if (!plain(schema)) throw new Error('invalid_host_tool_schema');
     reverse[name] = { namespace, name: spec.name ?? name, kind };
     const description = typeof spec.description === 'string' ? spec.description : '';

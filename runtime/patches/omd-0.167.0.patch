@@ -200023,10 +200023,10 @@ index 0000000000000000000000000000000000000000..0a13c9deb169fad6568a54321e33ec53
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f4e3c9c621f3b114fef7c98812f4b59003451b1
+index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b641286682
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,2568 @@
+@@ -0,0 +1,2578 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -200918,13 +200918,21 @@ index 0000000000000000000000000000000000000000..6f4e3c9c621f3b114fef7c98812f4b59
 +/// Opens and activates the shared host while the rest of startup runs, so `prepare_startup` finds it ready.
 +pub(crate) fn open_in_background() {
 +    if crate::omd::is_active() {
-+        std::thread::spawn(|| {
++        let binding = configuration_binding();
++        let work = move || {
++            let _binding = FRONTEND_APPLY.locked();
++            if !configuration_binding_current(binding) || remote_frontend_active() {
++                return;
++            }
 +            // Keys typed while startup refreshes the terminal view then pass at once unless a mod intercepts them.
 +            if let Ok(runtime) = shared_host() {
 +                let runtime = runtime.locked();
 +                remembered_intercept("composer_key", Some(runtime.intercepts("composer_key")));
 +            }
-+        });
++        };
++        #[cfg(test)]
++        let work = inherit_test_context(work);
++        std::thread::spawn(work);
 +    }
 +}
 +
@@ -201190,6 +201198,8 @@ index 0000000000000000000000000000000000000000..6f4e3c9c621f3b114fef7c98812f4b59
 +    drop(previous);
 +    if remote {
 +        std::thread::spawn(send_client_viewport);
++    } else if token.is_some() {
++        open_in_background();
 +    }
 +}
 +
@@ -202597,10 +202607,10 @@ index 0000000000000000000000000000000000000000..6f4e3c9c621f3b114fef7c98812f4b59
 +}
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..016091ec16dc19ac7c66ac65de199ef23daa8a6e
+index 0000000000000000000000000000000000000000..93ded9275455fd148a2607a3f7a16cbc7ca84d61
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,1564 @@
+@@ -0,0 +1,1640 @@
 +use super::*;
 +use codex_omd::ModOpenOptions;
 +use pretty_assertions::assert_eq;
@@ -203750,6 +203760,82 @@ index 0000000000000000000000000000000000000000..016091ec16dc19ac7c66ac65de199ef2
 +    assert_eq!(settled(&redraws), before);
 +    drop(engine);
 +    crate::mod_ui::preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn owner_view_initializes_and_refreshes_native_render_hooks() {
++    struct Reset(Option<Arc<Mutex<ModHost>>>);
++    impl Drop for Reset {
++        fn drop(&mut self) {
++            activate_configuration(false, None, None);
++            *HOST.locked() = self.0.take();
++        }
++    }
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = codex_omd::ModStore::create(root.join("store")).unwrap();
++    let _environment = crate::omd::tests::omd_environment(store.root());
++    let _reset = Reset(HOST.locked().take());
++    let package = root.join("compact");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::json!({"schema":1,"id":"compact","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["terminal"]}).to_string()).unwrap();
++    std::fs::write(package.join("index.ts"), "export default api => api.intercept('render', {match:{component:'tool_call'}}, (e, next) => e.props.expanded ? next(e) : {tree:[{type:'text',id:'compact',label:'Compact',text:'compact ' + e.props.query}]});").unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into()],
++            "user",
++        )
++        .unwrap();
++    let (frames, _) = crate::tui::FrameRequester::test_channel();
++    let _engine = crate::mod_render::test_engine(frames);
++    shared_host().unwrap();
++    crate::mod_render::refresh((0, 0));
++    assert!(!crate::mod_render::enabled());
++    store.enable(&package, true).unwrap();
++    activate_configuration(false, Some("render-owner"), None);
++    assert!(owner_view_active());
++    wait_until("the owner's render host never opened", || {
++        render_hooked().is_some()
++    });
++    {
++        let runtime = HOST.locked().clone().unwrap();
++        let runtime = runtime.locked();
++        assert_eq!(
++            runtime.intercepts("render"),
++            Some(false),
++            "{:?}",
++            runtime.status()
++        );
++    }
++    owner_snapshot(serde_json::json!({"epoch":1,"revision":1})).unwrap();
++    crate::mod_ui::refresh();
++    assert!(crate::mod_render::enabled());
++    let target = |expanded| {
++        crate::mod_render::RenderTarget::new(
++            "tool_call",
++            "search",
++            false,
++            serde_json::json!({"kind":"web_search","query":"needle","expanded":expanded}),
++        )
++    };
++    let _wait = crate::mod_render::Wait::enter();
++    let rendered = crate::mod_render::resolve(&target(false), 80).unwrap();
++    assert!(
++        serde_json::to_string(&rendered.tree)
++            .unwrap()
++            .contains("compact needle")
++    );
++    assert!(crate::mod_render::resolve(&target(true), 80).is_none());
++    store.enable(&package, false).unwrap();
++    shared_host().unwrap().locked().turn_boundary(&|| true);
++    owner_snapshot(serde_json::json!({"epoch":1,"revision":2})).unwrap();
++    crate::mod_ui::refresh();
++    assert!(!crate::mod_render::enabled());
++    assert!(crate::mod_render::resolve(&target(false), 80).is_none());
 +}
 +
 +#[test]
@@ -206760,10 +206846,10 @@ index 0000000000000000000000000000000000000000..c8b57534186c56bca390685f1a7bdc5d
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8cb14fd8bd4e73150eac20e9f2395b4c7140bd0f
+index 0000000000000000000000000000000000000000..0fc13448be0ee754f5523453a38db6fde06c452d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,6212 @@
+@@ -0,0 +1,6216 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -208178,6 +208264,10 @@ index 0000000000000000000000000000000000000000..8cb14fd8bd4e73150eac20e9f2395b4c
 +
 +pub(crate) fn refresh() {
 +    if crate::mod_runtime::owner_view_active() || crate::mod_runtime::remote_frontend_active() {
++        if let Some(revision) = with_cache(|cache| (cache.snapshot.epoch, cache.snapshot.revision))
++        {
++            crate::mod_render::refresh(revision);
++        }
 +        return;
 +    }
 +    CACHE.with(|cache_state| {

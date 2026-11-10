@@ -1,8 +1,7 @@
 # Change a mod's saved state
 
-How to change the shape of the data a mod saves with `api.state` without losing what users already saved. The host
-never rewrites a mod's code, settings or state on its own: you bump `state_version` and register a `migrate` handler
-that converts the old data.
+To change the data format a mod saves with `api.state`, bump `state_version` and register a `migrate` handler to
+convert existing data. The host doesn't convert it for you.
 
 The example moves the [notes mod](notes-mod.md) from a plain array (`["one", "two"]`) to an object
 (`{ "notes": ["one", "two"] }`).

@@ -74,9 +74,10 @@ export default function activate(api: ModAPI) {
   const refresh = (state: Saved, notice: string | null): Saved => {
     const listed = api.host.tryCall('packages.list', { fields: [...FIELDS, 'overrides'] });
     if (!listed.ok) return { ...state, packages: [], notice: `The mod list is unavailable (${listed.error})` };
-    const packages = ordered(listed.value.packages.map(entry => ({ ...Object.fromEntries(FIELDS.map(field => [field, entry[field]])), own: owns(entry) }) as Listed));
+    const packages = unique(ordered(listed.value.packages.map(entry => ({ ...Object.fromEntries(FIELDS.map(field => [field, entry[field]])), own: owns(entry) }) as Listed)));
     return { ...state, packages, generation: listed.value.generation, reloadError: listed.value.reload_error, notice };
   };
+  const unique = (packages: Listed[]) => packages.filter((item, index) => !packages.some((other, at) => at !== index && key(other) === key(item) && (Number(other.enabled) - Number(item.enabled) || index - at) > 0));
   const ordered = (packages: Listed[]) => packages.sort((a, b) => Number(!a.failed) - Number(!b.failed) || compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
   const search = (state: Saved): Saved => {
     const trimmed = ({ id, latest, description, support, versions, installed }: PackageCatalogEntry): PackageCatalogEntry =>

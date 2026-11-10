@@ -151,5 +151,6 @@ These changes ship in OMD 1.3.0.
 
 Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
 Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
-Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
-Package previews report `identity_warning` when the ID is installed in another scope.
+Do not copy old grants to a new digest. Mods with the same ID share storage and the right to use or manage
+credentials owned by that ID. A project copy takes precedence over a user copy. Package previews report
+`identity_warning` when the ID is installed in another scope.

@@ -15,9 +15,9 @@ Host behavior outside the mod API. macOS only: the broker is a LaunchDaemon.
 | The broker | The hidden `_omdbroker` account, which owns `/Library/Application Support/OhMyDiff/broker` (mode 0700) | `/var/run/dev.ohmydiff.broker.sock` | Pinned hardened-runtime binaries (see below) |
 | `omd-broker power` | root | `/var/run/dev.ohmydiff.broker.power.sock` | Only the broker's account |
 
-The broker answers a peer only when the peer's kernel audit token resolves to a hardened-runtime binary whose code
-directory hash root has pinned. The broker asks the kernel for the running peer's signing status and code directory hash
-and never reads the executable, so binaries installed under a private home folder verify too.
+The broker answers a peer only when its kernel audit token identifies a hardened-runtime binary with a code
+directory hash pinned by root. The broker gets the running peer's signing status and code directory hash from the
+kernel rather than reading its executable. It can therefore verify binaries installed under a private home folder.
 
 `omd-broker power` does one thing: it sets `SleepDisabled` for
 [power holds](sessions-and-turns.md#power-holds-power_hold_v1). It restores the previous value when the last hold

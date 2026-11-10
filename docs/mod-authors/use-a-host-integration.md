@@ -1,8 +1,8 @@
 # Use a host integration from a mod
 
-A host integration is a program that runs `codex` inside it, such as herdr or Neovim. This page shows how a mod
-finds one and talks to it. The integration announces itself through environment variables (`HERDR_ENV`,
-`HERDR_PANE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH`, `NVIM`). A mod reads those variables, then runs the
+A host integration is a program that runs `codex` inside it, such as herdr or Neovim. Your mod can find it through
+environment variables (`HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH`, `NVIM`).
+A mod reads those variables, then runs the
 integration's binary and reaches its socket through the ordinary `exec` grants. There is no separate discovery API.
 
 ## Before you begin

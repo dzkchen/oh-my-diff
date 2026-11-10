@@ -1,9 +1,9 @@
 # Build an external client
 
-How to build a renderer other than the terminal, such as a desktop window, an editor webview or a text console,
-that attaches to a running OMD session and draws the same view as the terminal, with every mod's part combined. The
-facts each step uses are in the [External clients reference](../../mods/reference/external-clients.md) and the
-[`omd-client/1` protocol](../../mods/reference/omd-client-protocol.md).
+An external client connects to a running OMD session and draws its mod UI in a desktop window, editor webview or
+text console. The host combines every mod's UI into the view your client receives. Follow the steps below; use
+[External clients](../../mods/reference/external-clients.md) for connection options and the
+[`omd-client/1` protocol](../../mods/reference/omd-client-protocol.md) for message formats.
 
 ## Before you begin
 
@@ -11,7 +11,8 @@ facts each step uses are in the [External clients reference](../../mods/referenc
 - A source checkout of OMD and a directory that contains the patched `codex` and `omd-mod`, for the conformance
   check.
 - Two complete adapters to copy from: `mods/examples/external_client` (a text renderer) and
-  `mods/examples/approval_desk` (a GUI-shaped renderer that answers approvals).
+  `mods/examples/approval_desk` (advertises GUI rendering support and logs views and approval events as JSON;
+  it doesn't draw a window).
 
 ## Connect and draw
 
@@ -46,8 +47,8 @@ main process and runs the SDK there. Oh My Diff ships no desktop app.
 
 ## Check it
 
-From the OMD source checkout, run the conformance check. It drives both example adapters against a host with no
-terminal (headless) and a live terminal session they attach beside (co-attached), with a scripted local provider:
+From the OMD source checkout, run the conformance check. It tests both example adapters with a scripted local
+provider, first without a terminal and then connected alongside a live terminal session:
 
 ```sh
 python3 -m scripts.client_acceptance --binaries DIR

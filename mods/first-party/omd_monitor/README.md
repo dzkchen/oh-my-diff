@@ -1,7 +1,8 @@
 # omd_monitor
 
-Lets the agent wait on a background command, a file change, or a GitHub pull request, run or deployment without checking again and
-again. It sets up one monitor, keeps working, and gets one message when the thing finishes, fails or times out. It's off by default in OMD+. OMD Core doesn't include it.
+Watches background commands, files and GitHub pull requests, runs or deployments for the agent. After setting a
+monitor, the agent can continue other work and receives one message on completion, failure or timeout. It's off by
+default in OMD+. OMD Core doesn't include it.
 
 ## Turn it on
 
@@ -24,9 +25,12 @@ It also reads and watches workspace paths (`fs.read`), reads turn activity, and 
 ## Use it
 
 The model gets three tools, found through tool search as `mod_omd_monitor_watch`, `mod_omd_monitor_list` and
-`mod_omd_monitor_cancel`. The mod works without a plugin; the optional, experimental [omd-monitor plugin](../../../plugins/experimental/oh-my-diff-experimental/plugins/omd-monitor/README.md) adds a skill that guides the agent to subscribe once, keep working and handle the result. The mod owns subscriptions, persistence, timeouts and delivery. It only
-watches: it never starts a build, a process or a deployment, and monitoring a deployment does not authorize starting
-one.
+`mod_omd_monitor_cancel`. The mod works without a plugin. The optional, experimental
+[omd-monitor plugin](../../../plugins/experimental/oh-my-diff-experimental/plugins/omd-monitor/README.md) guides
+the agent to subscribe once, keep working and handle the result.
+
+The mod stores the watches, restores them after a restart, enforces timeouts and delivers results. It never starts
+a build, a process or a deployment, and monitoring a deployment does not authorize starting one.
 
 | Command | What it does |
 | --- | --- |
@@ -102,7 +106,15 @@ notifications, and adapter lines with a repeated or older sequence number, are i
 
 The GitHub adapter (`github.mjs`) is a read-only script the mod starts with `node` as a managed process:
 
-- For a PR it reads its head, check runs, commit statuses and GitHub merge state. It selects the test merge commit when it has checks or statuses, otherwise the head commit. It waits for reported checks to finish independently of merge readiness, approvals or branch freshness; a changed head, changed check source or closed PR ends the monitor. The observed head and check source SHA are retained across restarts. It pages through check runs within the deadline. Incomplete or duplicate pages never produce a success. Before success it reads the checks and statuses again and rechecks the head and test merge identity; concurrent changes postpone completion. Empty legacy statuses do not block check-only PRs. For more than 1,000 check suites, it evaluates their aggregate results instead of the limited check-runs endpoint. The result is a snapshot: recheck the PR head and merge gate before merging.
+- For a PR, the adapter reads its head, check runs, commit statuses and GitHub merge state. It uses the test merge
+  commit when that commit has checks or statuses, otherwise the head commit.
+- It waits for reported checks to finish independently of merge readiness, approvals or branch freshness. A changed
+  head, changed check source or closed PR ends the monitor. The observed head and check-source SHA survive restarts.
+- It pages through check runs within the deadline. Incomplete or duplicate pages never count as success. For more
+  than 1,000 check suites, it reads their aggregate results instead of the limited check-runs endpoint. Empty legacy
+  statuses don't block a PR that has only checks.
+- Before reporting success, it reads the checks and statuses again and verifies the head and test merge identity.
+  Concurrent changes postpone completion. The result is a snapshot: recheck the PR head and merge gate before merging.
 - It runs only `gh api --method GET` against PR, commit check and status endpoints or `repos/OWNER/REPO/actions/runs/ID` or
   `repos/OWNER/REPO/deployments/ID/statuses`.
 - It polls every `poll_seconds`, never past the monitor's timeout. For a long timeout it polls more slowly, so at most

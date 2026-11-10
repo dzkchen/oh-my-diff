@@ -42,8 +42,8 @@ after later turns, as long as the files it touches haven't changed since.
   refuses even with `force`, because putting the file back would delete them.
 - If an undo stops partway (a permission or Git error), run `/undo` again: files already put back count as done, and
   `/redo` still brings back the files as they were before the first attempt.
-- Untracked files count: a file you had but never committed is put back too, and so do tracked files that
-  `.gitignore` would otherwise skip.
+- Untracked files count: a file you had but never committed is put back too. Tracked files are also restored even
+  when they match a `.gitignore` pattern.
 
 ## What it records
 

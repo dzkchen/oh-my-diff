@@ -1,7 +1,6 @@
 # Troubleshooting
 
-Symptoms, their causes and fixes for installing OMD and running mods. Find the message or symptom you see, then
-follow its fix.
+Find your error in the tables below. If a mod prevents `codex` from starting, [turn it off from a shell](#a-mod-breaks-codex).
 
 ## Installer messages
 
@@ -33,7 +32,7 @@ If the line is already there, your shell cached the old `codex`. Run `hash -r` o
 ## A mod breaks `codex`
 
 Try these in order. All three work from any shell, even when `codex` won't start. If `codex` starts but `/mods` is
-broken, `/omd` has an on/off switch for each mod.
+broken, use the controls in `/omd`.
 
 1. Turn the mod off. Its data is kept.
 

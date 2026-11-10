@@ -1,7 +1,7 @@
 # external_client
 
-Shows a mod that starts and manages its own client adapter: a text renderer process that joins the session over the
-client protocol (`omd-client/1`) with the SDK in `@oh-my-diff/mod-api/client`. It's an example for mod authors. OMD+
+Starts and manages a text-renderer client process. The client joins the session over `omd-client/1` using the SDK
+in `@oh-my-diff/mod-api/client`. It's an example for mod authors. OMD+
 and OMD Core don't install it, and it isn't in the curated directory.
 
 Read it if you're building a mod that starts an [external client](../../reference/external-clients.md) as a
@@ -16,8 +16,8 @@ It's an API `1.0.0` mod that uses only the public mod API, like any outside auth
   an SVG `image` written with `evidence.write` on `start`. The terminal shows the image's alt text.
 - Pointer source: a press on the badge records `component_event.client`, so the status text names the client
   that clicked.
-- Launching a process: slash commands can't start processes, so `launch` hops through `events.publish` to the
-  mod's `channel` handler.
+- Launching a process: slash commands can't start processes, so `launch` publishes an event with `events.publish`.
+  The mod's `channel` handler receives it and starts the process.
 - Starting the client: the handler finds `node` with `process.which` and starts `node <client_path>` with
   `process.start {sandbox: 'none'}` under the `os` grant (`os_access.programs: ['node']`, network on for `ws://`).
 - Passing the token: the URL and token file path reach the client as `EXTERNAL_CLIENT_URL` and
@@ -56,8 +56,8 @@ EXTERNAL_CLIENT_URL=unix:///abs/omd.sock node client.mjs
 
 ### Test it
 
-`mod.test.json` runs offline: `start` writes the badge, `launch` publishes the hop, the channel handler starts the
-process, a pick and a pointer press update state, and the view lists one attached text client.
+`mod.test.json` runs offline: `start` writes the badge, `launch` publishes an event, and the channel handler starts
+the process. Selecting a client and pressing the pointer update state; the view lists one attached text client.
 
 ```sh
 python3 scripts/mod_host_check.py --no-commands --scenarios external_client

@@ -97,12 +97,15 @@ interruption sends nothing, so its result ends with no `delivered`.
 - The host keeps at most 16 agent handles, counting spawns in progress.
 - Agent handles last until cancelled, the mod is disabled or fails, or the session stops. A held failure is dropped
   when its session stops.
-- A finished or failed agent's result also reaches the parent thread's mailbox, as a native child's does, from
-  `<parent path>/<handle>` with the handle lowercased and each character other than a letter, digit or `_` made `_`.
-  An interrupted agent sends nothing, and a cancel sends only what its returned `delivered` reports. Nor is a result sent once it was claimed before the host
-  sent it: by an `agents.wait` that was already waiting, or by `agents.result` with `claim: true`. A claimed failure of a
-  `hold_failure` agent stays held for `agents.cancel` with `deliver: true`. A result over 16 KiB is cut there. With `agents.completion_wake` on, the result wakes an idle
-  parent ([Completion wake](#completion-wake)).
+- The host also sends a finished or failed agent's result to the parent thread's mailbox, as it does for a native
+  child, from `<parent path>/<handle>`. It lowercases the handle and replaces each character other than a letter,
+  digit or `_` with `_`.
+- An interrupted agent sends nothing. Cancelling sends only what the returned `delivered` reports.
+- The host does not send a result claimed before delivery by an `agents.wait` that was already waiting or by
+  `agents.result` with `claim: true`. A claimed failure of a `hold_failure` agent stays held for `agents.cancel`
+  with `deliver: true`.
+- Mailbox results are cut at 16 KiB. With `agents.completion_wake` on, delivery wakes an idle parent
+  ([Completion wake](#completion-wake)).
 
 ## Parent history
 

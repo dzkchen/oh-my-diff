@@ -1,7 +1,7 @@
 # omd_privacy
 
-Pattern-based text redaction. It replaces text that matches its secret rules, and personal data you choose, with
-placeholders such as `[REDACTED:github_token:q7xk2m9fhd4w]` in the text of requests sent to the model. It can
+Replaces detected secrets and selected personal-data patterns with placeholders such as
+`[REDACTED:github_token:q7xk2m9fhd4w]` in the text of model requests. It can
 also ask before a shell command reads a sensitive file when you set `paths` to `ask`. It's off by default in OMD+. OMD
 Core doesn't include it.
 
@@ -9,7 +9,7 @@ It does not cover:
 
 - Web search, which sends your recent messages and its queries unscanned.
 - Your screen, transcript, resume data and logs, which keep the original secrets.
-- Images, audio and files, unless `unscanned` is `deny`.
+- Images, audio and files. Setting `unscanned` to `deny` rejects requests carrying them; it doesn't scan them.
 - Provider-side tools, other mods' network calls and processes you already allowed.
 - Secrets its rules don't match, such as ones with no known prefix, split or encoded values and unquoted word-only
   passwords.
@@ -32,8 +32,8 @@ omd mods enable omd_privacy
 | --- | --- |
 | `/privacy` or `/privacy status` | Show active rules, scopes, path mode, exemptions, redaction counts and refusals |
 
-Value exemptions are unavailable. A secret keeps the same placeholder in every request, so the cached prompt prefix
-doesn't change. The ID is an HMAC of the value under a random salt kept in the mod's state, so the provider can't
+You can't exempt an individual secret value from redaction. A secret keeps the same placeholder in every request,
+so the cached prompt prefix doesn't change. The ID is an HMAC of the value under a random salt kept in the mod's state, so the provider can't
 guess a value from it.
 
 It also refuses a model call to `apply_patch`, a shell command or `write_stdin` whose arguments contain a placeholder:
@@ -74,8 +74,8 @@ The default `sensitive_paths`: `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.p
   word-only passwords. Passwords passed as command flags, such as `curl -u user:pass` or `mysql -pPASS`, and quoted
   passphrases with spaces aren't matched. Values that are file paths, such as `GOOGLE_APPLICATION_CREDENTIALS=/path/key.json`,
   are kept so the model can use the path. It can also redact harmless text, such as `1.2.3.4` with `ipv4` on.
-- Images, audio and files aren't scanned unless `unscanned` is `deny`. Provider-side tools, other mods' network calls
-  and processes you already allowed are out of reach.
+- Images, audio and files are never scanned. With `unscanned` set to `deny`, requests carrying them are refused.
+  The mod can't inspect provider-side tools, other mods' network calls or processes you already allowed.
 - The path check reads command text only. It misses paths built at run time. Globs and brace lists that could name a
   sensitive path ask first. The catch-all patterns `*` and `.*` are the exception, so neither `ls -la .*` nor `cat .*`
   asks. In inline interpreter code (`python -c`, `node -e`) and in heredoc bodies fed to an interpreter, `cat >` or

@@ -1,6 +1,7 @@
 # Cut a release
 
-How the maintainer publishes, signs and withdraws an OMD release. Nightly prereleases publish on their own; see
+The maintainer uses these steps to publish, sign or withdraw an OMD release. Nightly prereleases publish
+automatically; see
 [How CI checks a change](ci.md#nightly-builds).
 
 ## Before you start

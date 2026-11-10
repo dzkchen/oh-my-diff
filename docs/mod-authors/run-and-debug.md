@@ -1,7 +1,7 @@
 # Run and debug a mod
 
-How to run a mod you're writing in a scratch store, reload it as you edit, find out why it fails, and measure what
-it costs. For the full command list, see the [authoring reference](../../mods/reference/authoring.md).
+Use `pnpm watch` to reload a mod as you edit it in a scratch store. The commands below also report failures and
+measure startup time and memory use. For all author commands, see the [authoring reference](../../mods/reference/authoring.md).
 
 ## Before you begin
 
