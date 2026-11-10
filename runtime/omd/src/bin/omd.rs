@@ -383,7 +383,22 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             } else {
                 arguments["id"] = json!(target);
             }
-            let preview = package_controls::preview(&store, arguments)?;
+            let preview = package_controls::preview(&store, arguments).map_err(|error| {
+                let text = error.to_string();
+                let hint = match action {
+                    "rollback" if text == "package_rollback_unavailable" => {
+                        format!(": {target} has no earlier version to go back to")
+                    }
+                    _ if text == "package_unavailable" => {
+                        format!(": {target} is not in the catalog; `omd mods catalog` lists what is")
+                    }
+                    _ if text == "package_version_unavailable" => format!(
+                        ": that version of {target} is not available; `omd mods catalog {target}` shows the latest"
+                    ),
+                    _ => return error,
+                };
+                io::Error::other(text + &hint)
+            })?;
             let summary = describe(&preview.public);
             if action == "inspect" {
                 return Ok(json!({"display": summary, "preview": preview.public}));
@@ -444,7 +459,13 @@ fn folder_reference(reference: &str) -> io::Result<String> {
     } else {
         return Ok(reference.to_owned());
     };
-    Ok(path.canonicalize()?.display().to_string())
+    let resolved = path.canonicalize().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("package_folder_unavailable: {reference}: {error}"),
+        )
+    })?;
+    Ok(resolved.display().to_string())
 }
 
 fn describe(preview: &Value) -> String {
@@ -826,6 +847,13 @@ mod tests {
             .chain([temp.path().to_str().unwrap().to_owned()])
             .collect();
         assert_eq!(run(arguments).unwrap_err().to_string(), unknown);
+        let missing = folder_reference("./definitely-missing-folder")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.starts_with("package_folder_unavailable: ./definitely-missing-folder: "),
+            "{missing}"
+        );
     }
 
     #[test]

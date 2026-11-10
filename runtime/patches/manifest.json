@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.0.patch",
-    "sha256": "a3f52f680d5a4926e31f2364256820ef1b6ca59a49b4057073b6a517ab025f19"
+    "sha256": "a116b5e5826e07724595358d2d4da77d786db5af3fa25e3f06fada6938e42c15"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1555,7 +1555,7 @@
     },
     "codex-rs/omd/src/bin/omd.rs": {
       "before": null,
-      "after": "52906e54a76ac72ee05e9de6bd8cfe4c4cbee25e0936f8763dc7168fe5830ff4"
+      "after": "24cdc04ff37283d66812ed05747cdbb6394b3809debbd4692ba0751a061fefc3"
     },
     "codex-rs/omd/src/blob_store.rs": {
       "before": null,
@@ -1679,7 +1679,7 @@
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
-      "after": "b81027cd93230a73ebb55f1994cfed8c89f39070ab4823c73e8c7c6f45de3da8"
+      "after": "35ec770051ed3fa9e60d3f0f1c55b0a8fc4d2195c2a170ceff060cfbe268e39f"
     },
     "codex-rs/omd/src/mods/bridge.rs": {
       "before": null,
@@ -1743,7 +1743,7 @@
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
-      "after": "55eacb9119ec4e1140ec1c8c90a23d763857494320a1d5949fd2bab68d354953"
+      "after": "8e7dc01636ec43e68eb5ee404c79a6c3395bcf39791ceaad87aab3de8c45b972"
     },
     "codex-rs/omd/src/mods/view.rs": {
       "before": null,
