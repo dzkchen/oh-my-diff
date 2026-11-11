@@ -1119,13 +1119,8 @@ impl ManagedProcesses {
                     }
                     let mut frames = frames;
                     for mut next in readers.drain(..) {
-                        let (sender, frames, alive, open, announced) = (
-                            sender.clone(),
-                            frames.take(),
-                            alive.clone(),
-                            open.clone(),
-                            announced.clone(),
-                        );
+                        let (sender, frames, alive, open) =
+                            (sender.clone(), frames.take(), alive.clone(), open.clone());
                         let (notifier, owner, session) =
                             (notifier.clone(), owner.clone(), session.clone());
                         let reader_reaped = Arc::clone(&reaped);
@@ -1166,18 +1161,6 @@ impl ManagedProcesses {
                                 let bytes = (result.is_ok() && notify_output).then_some(size);
                                 if sender.send(result).is_err() || terminal {
                                     alive.store(false, std::sync::atomic::Ordering::Release);
-                                    if announced.swap(true, std::sync::atomic::Ordering::AcqRel) {
-                                        break;
-                                    }
-                                    if let Some(notifier) = &notifier {
-                                        notifier(ProcessNotice {
-                                            owner: owner.clone(),
-                                            session: session.clone(),
-                                            output_bytes: None,
-                                            exited: true,
-                                            deliver: notify_exit,
-                                        });
-                                    }
                                     break;
                                 }
                                 if let (Some(notifier), Some(bytes)) = (&notifier, bytes) {
@@ -1866,6 +1849,41 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             "process_stopped"
         );
         assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn output_eof_does_not_announce_exit_before_the_leader_exits() {
+        for framing in ["raw", "ndjson", "content-length"] {
+            let fixture = Fixture::new();
+            let (sender, notices) = mpsc::channel();
+            fixture
+                .processes
+                .set_notifier(Arc::new(move |notice: ProcessNotice| {
+                    if notice.exited {
+                        let _ = sender.send(notice.session);
+                    }
+                }));
+            fixture
+                .start(
+                    "server",
+                    "exec 1>&- 2>&-; sleep 2",
+                    json!({"framing":framing,"notify":["exit"]}),
+                )
+                .unwrap();
+            assert_eq!(
+                notices.recv_timeout(Duration::from_millis(300)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
+            assert_eq!(fixture.processes.running("fixture", "server"), Some(true));
+            assert_eq!(
+                notices.recv_timeout(Duration::from_secs(5)).as_deref(),
+                Ok("server")
+            );
+            assert_eq!(
+                notices.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
+        }
     }
 
     #[test]

@@ -12,9 +12,9 @@ omd install token_weather
 omd mods enable token_weather
 ```
 
-It asks to draw the line above the prompt, read the thread's token usage, follow turns and keep its readings. The
-capabilities are `terminal`, `threads`, `lifecycle` and `store`. See [Manage mods](../../../docs/manage-mods.md) for the
-other ways to install and turn on a mod, and
+It asks to draw the line above the prompt, read the thread's token usage, follow turns, identify the current thread
+and keep its readings. The capabilities are `terminal`, `threads`, `lifecycle`, `inventory` and `store`. See
+[Manage mods](../../../docs/manage-mods.md) for the other ways to install and turn on a mod, and
 [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do) for what a capability allows.
 
 ## Use it

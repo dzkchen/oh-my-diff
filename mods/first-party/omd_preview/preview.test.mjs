@@ -22,6 +22,7 @@ let unborn = null;
 let watchIds = 0;
 let thread = 'thread-1';
 let statFails = false;
+let renderFails = false;
 let live = new Map();
 let current = 'A';
 const processes = {};
@@ -86,6 +87,7 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
       })) };
     }
     if (operation === 'exec.run') {
+      if (renderFails && args.program === 'node') return { exit_code: 1, stdout: '', stderr: 'temporary failure' };
       assert.equal(Boolean(args.write), args.program === 'node');
       const run = spawnSync(args.program, args.argv, { cwd: repository, input: args.stdin, encoding: 'utf8' });
       return { exit_code: run.status, stdout: run.stdout, stderr: run.stderr };
@@ -328,3 +330,28 @@ test('inline file previews read a bounded prefix and refuse a file with no print
   }
 });
 
+test('failed watched renders retry unchanged source, including the initial render', () => {
+  let repository;
+  try {
+    renderFails = true;
+    repository = watchedRepository();
+    assert.equal(watching(repository).hashes['docs/a.md'], undefined);
+    const failed = invoke(repository, null, 'timer', { key: 'poll' });
+    assert.ok(failed.calls.some(call => call.operation === 'events.schedule'));
+    renderFails = false;
+    invoke(repository, failed.state, 'timer', { key: 'poll' });
+    const old = watching(repository).hashes['docs/a.md'];
+    assert.ok(old);
+    writeFileSync(join(repository, 'docs/a.md'), '# Changed');
+    renderFails = true;
+    const retry = invoke(repository, null, 'timer', { key: 'poll' });
+    assert.equal(watching(repository).hashes['docs/a.md'], old);
+    assert.ok(retry.calls.some(call => call.operation === 'events.schedule'));
+    renderFails = false;
+    invoke(repository, retry.state, 'timer', { key: 'poll' });
+    assert.notEqual(watching(repository).hashes['docs/a.md'], old);
+  } finally {
+    renderFails = false;
+    if (repository) rmSync(repository, { recursive: true, force: true });
+  }
+});

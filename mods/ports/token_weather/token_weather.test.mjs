@@ -10,13 +10,13 @@ function session() {
   const box = { state: null };
   const run = (event, payload) => {
     const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings: {}, state: box.state, event, payload },
-      call => assert.fail(`unexpected host call ${call.operation}`));
+      call => call.operation === 'session.info' ? { thread_id: 'parent' } : assert.fail(`unexpected host call ${call.operation}`));
     assert.equal(output.error, undefined, output.error);
     box.state = output.state ?? box.state;
     return output.value;
   };
   const notify = (params, method = 'thread/tokenUsage/updated') => run('app_notification', { method, params });
-  const usage = (inputTokens, modelContextWindow = 200_000) => notify({ tokenUsage: { last: { inputTokens }, modelContextWindow } });
+  const usage = (inputTokens, modelContextWindow = 200_000) => notify({ threadId: 'parent', tokenUsage: { last: { inputTokens }, modelContextWindow } });
   const turn = (inputTokens, modelContextWindow) => (usage(inputTokens, modelContextWindow), run('turn_end', { turn_id: 't', outcome: 'completed' }));
   const band = columns => run('terminal', { client: { columns } });
   return { box, notify, usage, turn, band };
@@ -53,8 +53,8 @@ test('notifications for other methods, an empty window or a missing count leave 
   s.turn(100_000);
   const readings = JSON.stringify(s.box.state.readings);
   s.usage(10, 0);
-  s.notify({ tokenUsage: { last: {}, modelContextWindow: 100 } });
-  s.notify({ tokenUsage: { last: { inputTokens: 10 }, modelContextWindow: 100 } }, 'account/rateLimits/updated');
+  s.notify({ threadId: 'parent', tokenUsage: { last: {}, modelContextWindow: 100 } });
+  s.notify({ threadId: 'parent', tokenUsage: { last: { inputTokens: 10 }, modelContextWindow: 100 } }, 'account/rateLimits/updated');
   assert.equal(s.box.state.pending, null);
   assert.equal(JSON.stringify(s.box.state.readings), readings);
 });
@@ -63,4 +63,13 @@ test('only the latest twelve turns are kept', () => {
   const s = session();
   for (let index = 1; index <= 14; index += 1) s.turn(index * 1000);
   assert.deepEqual(s.box.state.readings.map(reading => reading.tokens), Array.from({ length: 12 }, (_, index) => (index + 3) * 1000));
+});
+
+test('foreign and unattributed usage cannot replace the active thread reading', () => {
+  const s = session();
+  s.usage(100_000);
+  s.notify({ threadId: 'child', tokenUsage: { last: { inputTokens: 1000 }, modelContextWindow: 200_000 } });
+  s.notify({ tokenUsage: { last: { inputTokens: 2000 }, modelContextWindow: 200_000 } });
+  s.notify({}, 'ignored');
+  assert.equal(s.box.state.pending.tokens, 100_000);
 });

@@ -136,11 +136,13 @@ export default function activate(api: ModAPI) {
     const present = listed.length > MAX_WATCHES ? api.host.call('workspace.stat', { paths: stored.watch }).files : {};
     const watch = listed.length > MAX_WATCHES ? listed.filter(item => item === path || present[item]) : listed;
     if (watch.length > MAX_WATCHES) return { display: `At most ${MAX_WATCHES} files can be watched; use /preview unwatch` };
-    const result = open(render(outputFor(path), path, path, undefined, watch.includes(path)), path);
+    const rendered = render(outputFor(path), path, path, undefined, watch.includes(path));
+    const result = open(rendered, path);
     if (!watched) return result;
-    const saved = keep(stored.revision, { watch, hashes: { ...stored.hashes, [path]: file.sha256 ?? '' } });
+    const saved = keep(stored.revision, { watch, hashes: { ...stored.hashes, ...('error' in rendered ? {} : { [path]: file.sha256 ?? '' }) } });
     if (!saved.ok) return { display: `${result.display}; not watched: ${saved.error.split(':')[0]}` };
     api.host.tryCall('events.publish', { channel: 'watch', data: null });
+    if ('error' in rendered) api.host.tryCall('events.schedule', { key: 'poll', delay_ms: RETRY_MS });
     return result;
   };
 
@@ -157,14 +159,16 @@ export default function activate(api: ModAPI) {
     if (stat && !stat.ok) return retry();
     const files = stat?.ok ? stat.value.files : {};
     const next = { ...hashes };
+    let failed = false;
     for (const path of watch) {
       const hash = files[path]?.sha256;
       if (!hash || hash === hashes[path]) continue;
-      render(outputFor(path), path, path, undefined, true);
-      next[path] = hash;
+      const result = render(outputFor(path), path, path, undefined, true);
+      if ('error' in result) failed = true;
+      else next[path] = hash;
     }
     const rendered = watch.some(path => next[path] !== hashes[path]);
-    if (rendered) keep(revision, { watch, hashes: next });
+    if (rendered && !keep(revision, { watch, hashes: next }).ok) failed = true;
     const present = watch.filter(path => files[path]);
     let placed = present.length === watch.length;
     if (rewatch) {
@@ -179,7 +183,7 @@ export default function activate(api: ModAPI) {
         : api.host.tryCall('workspace.unwatch', { key: 'files' });
       placed = watched.ok && watch.every(path => files[path] || covered.includes(dir(path)));
     }
-    if (!placed) retry();
+    if (!placed || failed) retry();
     else if (load().retry !== undefined && load().retry !== RETRY_MS) save({ retry: RETRY_MS });
   };
 
