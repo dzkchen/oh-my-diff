@@ -26,7 +26,7 @@ Claude models work with tools again, /update opens with mod updates waiting, and
 ### Fixed
 
 - Keep last accepted attach parameters when a reattach is refused (#442)
-- Fixes
+- Repair the nightly validation suites
 - Actionable omd errors, safer store reset and a fuller explain table (#436)
 - /omd title first and no upstream Codex update notice (#527)
 - Redact secrets with placeholder words, keep checkpoint refs visible, quieter first launch (#526)
