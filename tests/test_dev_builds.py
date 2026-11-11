@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -87,6 +88,48 @@ class DeveloperBuildTests(unittest.TestCase):
             self.assertIn("Timing report", output.getvalue())
             self.assertIn("exit=0 elapsed_s=", output.getvalue())
             self.assertTrue((work / "target/cargo-timings/cargo-timing.html").is_file())
+
+    def test_refresh_replaces_an_unedited_trees_patch_in_place_and_keeps_native_edits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, work = Path(temporary) / "root", Path(temporary) / "work"
+            tree = work / "codex"
+            (tree / "codex-rs").mkdir(parents=True)
+            (root / "scripts").mkdir(parents=True)
+            (root / "runtime/patches").mkdir(parents=True)
+            (tree / "codex-rs/kept.rs").write_text("upstream")
+            (tree / "codex-rs/changed.rs").write_text("upstream")
+            git = lambda *args: subprocess.run(["git", "-c", "user.name=omd", "-c", "user.email=omd@example.invalid", *args],
+                                               cwd=tree, check=True, capture_output=True, text=True).stdout.strip()
+            for args in (["init", "-q"], ["add", "."], ["commit", "-qm", "pin"], ["tag", "base"]):
+                git(*args)
+            (root / "scripts/normalize_upstream_lock.py").write_text("")
+            apply = root / "scripts/apply_runtime_patch.py"
+
+            def patch(files):
+                apply.write_text("import json, sys\nfrom pathlib import Path\n"
+                                 f"for name, text in json.loads({json.dumps(json.dumps(files))}).items():\n"
+                                 "    Path(sys.argv[1], name).write_text(text)\n")
+                (root / "runtime/patches/manifest.json").write_text(json.dumps({"files": {
+                    name: {"after": build.sha(text.encode())} for name, text in files.items()}}))
+
+            first = {"codex-rs/kept.rs": "patched", "codex-rs/changed.rs": "first", "codex-rs/dropped.rs": "first"}
+            for name, text in first.items():
+                (tree / name).write_text(text)
+            patch(first)
+            with mock.patch.object(build, "ROOT", root), mock.patch.object(build, "base_tag", return_value="base"), \
+                    mock.patch.object(build, "pin", return_value={"commit": git("rev-parse", "HEAD")}):
+                self.assertEqual(build.refresh(work), "current")
+                kept = (tree / "codex-rs/kept.rs").stat().st_mtime_ns
+                patch({"codex-rs/kept.rs": "patched", "codex-rs/changed.rs": "second", "codex-rs/added.rs": "second"})
+                self.assertEqual(build.refresh(work), "refreshed")
+                self.assertEqual((tree / "codex-rs/changed.rs").read_text(), "second")
+                self.assertEqual((tree / "codex-rs/added.rs").read_text(), "second")
+                self.assertFalse((tree / "codex-rs/dropped.rs").exists())
+                self.assertEqual((tree / "codex-rs/kept.rs").stat().st_mtime_ns, kept)
+                (tree / "codex-rs/changed.rs").write_text("native edit")
+                patch({"codex-rs/kept.rs": "patched", "codex-rs/changed.rs": "third"})
+                self.assertEqual(build.refresh(work), "edited")
+                self.assertEqual((tree / "codex-rs/changed.rs").read_text(), "native edit")
 
     def test_failed_build_reports_elapsed_time_and_keeps_diagnostics(self):
         with tempfile.TemporaryDirectory() as temporary, mock.patch.object(build, "cargo_env", return_value={}):
