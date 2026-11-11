@@ -163,6 +163,37 @@ def refresh_kept_copies(manager, store, origin, packages, installed):
     return sync_sources(manager, store, origin, kept)
 
 
+def update_catalog_copies(manager, store, packages):
+    index = store / "package-index.json"
+    locked = invoke(manager, "package-lock", store)["packages"]
+    updated, review = [], []
+    for identifier, package in sorted(packages.items()):
+        entry = locked.get(identifier)
+        if (not entry or entry["source"] != {"kind": "package", "index": str(index), "id": identifier, "version": entry["version"]}
+                or entry["integrity"] == package["package_sha256"]):
+            continue
+        request = json.dumps({"action": "update", "scope": entry["scope"], "offline": True,
+                              "source": {"kind": "package", "index": str(index), "id": identifier, "version": package["version"]},
+                              "trust": {"packages": {name: item["trust"] for name, item in locked.items()}}})
+        try:
+            preview = invoke(manager, "package-plan", store, request)
+            held = (any(item["id"] in locked and locked[item["id"]]["scope"] != item["scope"] for item in preview["packages"])
+                    or any(change.get("renewed_approval") or change["state_version"]["migration_required"]
+                           for change in preview["changes"]["packages"]))
+            if not held:
+                invoke(manager, "package-apply", store, request, preview["confirmation"])
+        except RuntimeError:
+            held = True
+        if held:
+            review.append(identifier)
+            continue
+        locked = invoke(manager, "package-lock", store)["packages"]
+        updated.append(identifier)
+    if updated:
+        invoke(manager, "reload", store)
+    return {"catalog_updated": updated, "needs_review": review}
+
+
 def keep_bundled_copies(manager, store):
     selected = [item for item in invoke(manager, "selection-status", store)["selections"] if item["selected"]]
     for item in selected:
@@ -311,8 +342,10 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
                                                       "source": {"kind": "local", "path": str(shelf)}}]
     support.atomic_text(store / "package-index.json", json.dumps(index, indent=2) + "\n")
     sync_sources(manager, store, prefix / "sources", installed)
+    carried = update_catalog_copies(manager, store, {identifier: lock["packages"][identifier] for identifier in identifiers})
     marker.unlink()
-    return {"updated": sorted(installed), "capabilities": added_capabilities(before, installed)}
+    return {"updated": sorted(installed.keys() | set(carried["catalog_updated"])), "needs_review": carried["needs_review"],
+            "capabilities": added_capabilities(before, installed)}
 
 
 def rollback_mods(prefix, bin_dir):
@@ -1066,6 +1099,7 @@ def install(args):
         keep_bundled_copies(installed_manager, store)
         retired = retire_packages(installed_manager, store, args.profile, previous)
         refresh_kept_copies(installed_manager, store, prefix / "sources", packages, installed)
+        carried = update_catalog_copies(installed_manager, store, packages)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],
@@ -1106,7 +1140,7 @@ def install(args):
                   "activation": {"selection": args.profile}, "retired": sorted(retired),
                   "default_active": sorted(set(DEFAULT_ACTIVE) & set(installed))}
         if previous:
-            record["changes"] = update_changes(installed_manager, store, previous, record)
+            record["changes"] = update_changes(installed_manager, store, previous, record) | carried
         if managed:
             record["update"] = {"root": str(prefix.parents[2]), "installer": str(management_root / "install.sh"),
                                 "python": sys.executable}

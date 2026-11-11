@@ -1434,7 +1434,7 @@ def apply_mods(args, root, current, mods):
          last_mods={"serial": mods["serial"], "changed": result["updated"], "at": int(time.time()),
                     "capabilities": result.get("capabilities") or {}})
     return {"mods_updated": result["updated"], "version": mods["omd"], "serial": mods["serial"],
-            "capabilities": result.get("capabilities") or {}}
+            "capabilities": result.get("capabilities") or {}, "needs_review": result.get("needs_review") or []}
 
 
 def forget_backup(root, current):
@@ -1689,7 +1689,10 @@ def change_lines(changes):
     granted = ["{} ({})".format(name, ", ".join(added)) for name, added in sorted((changes.get("capabilities") or {}).items())]
     return [*([f"Retired and turned off: {', '.join(changes['retired'])}."] if changes.get("retired") else []),
             *([f"New default mods, left off (turn them on in /mods): {', '.join(changes['left_off'])}."] if changes.get("left_off") else []),
-            *([f"New permissions: {'; '.join(granted)}."] if granted else [])]
+            *([f"New permissions: {'; '.join(granted)}."] if granted else []),
+            *([f"Updated mods you installed from the catalog: {', '.join(changes['catalog_updated'])}."] if changes.get("catalog_updated") else []),
+            *([f"These installed mods need your review before they update; run omd mods update ID for each: {', '.join(changes['needs_review'])}."]
+              if changes.get("needs_review") else [])]
 
 
 def update_text(action, result):
