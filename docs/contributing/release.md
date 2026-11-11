@@ -65,11 +65,19 @@ a previously packaged release or skipping validation.
 
 ## Publish first-party mod updates
 
-Fixes to `mods/first-party` can reach users of the current release without a new release. The Mods workflow builds
+Fixes to `mods/first-party` reach users of the current release without a new release. The Mods workflow builds
 a bundle from `main` and publishes it as the GitHub release `mods-VERSION-N`, where VERSION is `release_pin.omd` in
 `extensions/index.json` and N counts up. The bundle holds every mod that differs from the `vVERSION` tag or that an
-earlier bundle changed. Installs of exactly that VERSION take the mods that differ from what they have. Mods new
-since the release, mods that need host features the release lacks, and a mod API change wait for the next release.
+earlier bundle changed. Installs of exactly that VERSION take the mods that differ from what they have.
+
+Every push to `main` that changes `mods/first-party` or `runtime/mods.lock.json` runs the workflow with `--auto`. It
+leaves out each changed mod the release can't run and publishes the rest, or publishes nothing when no mod is new or
+the release isn't tagged yet. A mod is left out when it needs host features the release lacks (`needs_host`), uses a
+`mod.json` field no first-party manifest at the tag used (`needs_manifest`) or calls a host operation whose schema
+changed since the tag (`needs_api`). Those mods, and mods new since the release, wait for the next release. When a mod
+an earlier bundle shipped can no longer be shipped, the run fails: cut a release.
+
+To publish by hand, for example to exclude a mod:
 
 1. Check what would ship:
 
@@ -78,7 +86,7 @@ since the release, mods that need host features the release lacks, and a mod API
    ```
 
    `bundle` lists the mods it would ship, `new` the ones that changed since the last bundle (the build refuses when
-   it is empty), `needs_host` mods whose `required_features` the release's host lacks (the build refuses them) and
+   it is empty), `needs_host`, `needs_manifest` and `needs_api` the mods the release can't run (the build refuses them) and
    `needs_release` new mods it skips. `host_changed` lists host files changed since the tag: a mod fix that depends
    on one of those changes waits for the release. `api_changed` lists the host operations whose arguments or results
    changed, and `mods/api.d.ts` when it changed; the build refuses a changed API unless you pass `--api-reviewed`

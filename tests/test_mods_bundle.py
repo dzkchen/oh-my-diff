@@ -19,7 +19,7 @@ RELEASED = schema("0", {"0": {"type": "string"}})
 
 
 class Plan(unittest.TestCase):
-    def plan(self, main, tags, features=("x_v1",), operations=RELEASED, exclude=()):
+    def plan(self, main, tags, features=("x_v1",), operations=RELEASED, exclude=(), manifests=None, sources=None, auto=False):
         refs = {("v1.0.0", "runtime/mods.lock.json"): lock(a="a0", b="b0"),
                 ("v1.0.0", "mods/conformance/compatibility.json"): {"host": {"features": list(features)}},
                 ("v1.0.0", mods_bundle.OPERATIONS): RELEASED}
@@ -32,14 +32,17 @@ class Plan(unittest.TestCase):
             for identifier in main["packages"]:
                 (root / "mods/first-party" / identifier).mkdir(parents=True)
                 (root / "mods/first-party" / identifier / "mod.json").write_text(
-                    json.dumps({"compatibility": {"required_features": ["x_v1"]}}))
+                    json.dumps((manifests or {}).get(identifier, {"compatibility": {"required_features": ["x_v1"]}})))
+                if identifier in (sources or {}):
+                    (root / "mods/first-party" / identifier / "index.ts").write_text(sources[identifier])
             with (patch.object(mods_bundle, "ROOT", root), patch.object(mods_bundle.support, "mods_lock", return_value=main),
                   patch.object(mods_bundle.mods_lock, "build", return_value=main),
                   patch.object(mods_bundle, "at", side_effect=lambda ref, path: refs[ref, path]),
                   patch.object(mods_bundle, "published", side_effect=lambda tag: {key: value["package_sha256"]
                                                                                 for key, value in tags[tag]["packages"].items()}),
-                  patch.object(mods_bundle, "git", side_effect=lambda *args: " ".join(tags) if args[0] == "tag" else "")):
-                return mods_bundle.plan(exclude)
+                  patch.object(mods_bundle, "released_manifests", return_value=[{"compatibility": {"required_features": []}}]),
+                  patch.object(mods_bundle, "git", side_effect=lambda *args: " ".join(["v1.0.0", *tags]) if args[0] == "tag" else "")):
+                return mods_bundle.automatic(exclude) if auto else mods_bundle.plan(exclude)
 
     def test_a_revert_ships_as_the_next_bundle_and_nothing_new_is_refused(self):
         planned = self.plan(lock(a="a0", b="b0", c="c0"), {"mods-1.0.0-1": lock(a="a1", b="b0")})
@@ -70,6 +73,34 @@ class Plan(unittest.TestCase):
             mods_bundle.build(Path("/nonexistent"), "c" * 40)
         with self.assertRaisesRegex(ValueError, "cannot be excluded; revert them instead: a"):
             self.plan(lock(a="a1", b="b0"), {"mods-1.0.0-1": lock(a="a2", b="b0")}, exclude=["a"])
+
+    def test_a_manifest_field_the_release_rejects_holds_that_mod_back(self):
+        manifests = {"b": {"compatibility": {"required_features": []}, "contributes": {"commands": []}}}
+        planned = self.plan(lock(a="a1", b="b1"), {}, manifests=manifests)
+        self.assertEqual(planned["needs_manifest"], {"b": ["contributes", "contributes.commands"]})
+        with patch.object(mods_bundle, "plan", return_value=planned), self.assertRaisesRegex(ValueError, "manifest fields OMD 1.0.0 rejects"):
+            mods_bundle.build(Path("/nonexistent"), "c" * 40)
+
+    def test_automatic_bundles_leave_out_every_mod_the_release_cannot_run(self):
+        manifests = {identifier: {"compatibility": {"required_features": []}} for identifier in "ab"}
+        planned = self.plan(lock(a="a1", b="b1"), {}, features=(), manifests=manifests | {"b": {"contributes": {}}}, auto=True)
+        self.assertEqual((planned["bundle"], planned["excluded"], planned["needs_manifest"]), (["a"], ["b"], {}))
+        planned = self.plan(lock(a="a1", b="b1"), {}, features=(), manifests=manifests, auto=True,
+                            operations=schema("0", {"0": {"type": "number"}}), sources={"b": "api.host.call('x.run', null)"})
+        self.assertEqual((planned["bundle"], planned["excluded"], planned["needs_api"], planned["api_changed"]),
+                         (["a"], ["b"], {}, ["x.run"]))
+        with self.assertRaisesRegex(ValueError, "no longer suit OMD 1.0.0; cut a release instead: b"):
+            self.plan(lock(a="a0", b="b0"), {"mods-1.0.0-1": lock(a="a0", b="b1")}, features=(), manifests={
+                "a": {"compatibility": {"required_features": []}}, "b": {"contributes": {}}}, auto=True)
+
+    def test_an_automatic_run_with_nothing_to_ship_succeeds_without_a_bundle(self):
+        nothing = {"omd": "1.0.0", "new": [], "excluded": []}
+        with (patch.object(mods_bundle, "pinned", return_value="1.0.0"), patch.object(mods_bundle, "git", return_value="v1.0.0"),
+              patch.object(mods_bundle, "automatic", return_value=nothing)):
+            self.assertEqual(mods_bundle.build(Path("/nonexistent"), "c" * 40, auto=True)["published"], False)
+        with patch.object(mods_bundle, "pinned", return_value="1.0.1"), patch.object(mods_bundle, "git", return_value=""):
+            self.assertEqual(mods_bundle.build(Path("/nonexistent"), "c" * 40, auto=True),
+                             {"published": False, "omd": "1.0.1", "reason": "the release is not tagged yet"})
 
 
 if __name__ == "__main__":

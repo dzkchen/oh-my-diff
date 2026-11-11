@@ -13,6 +13,7 @@ from scripts import mods_lock
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERATIONS = "runtime/omd/src/mods/operation_schema.json"
+FREE_FORM = {"settings_schema", "codex_config", "mcp_servers", "lifecycle"}
 
 
 def git(*arguments):
@@ -34,6 +35,22 @@ def required_features(identifier):
     return set(manifest.get("compatibility", {}).get("required_features", []))
 
 
+def manifest_keys(manifest):
+    return {key for name, value in manifest.items()
+            for key in [name, *(f"{name}.{inner}" for inner in (value if isinstance(value, dict) and name not in FREE_FORM else ()))]}
+
+
+def released_manifests(version):
+    return [at(f"v{version}", path) for path in git("ls-tree", "-r", "--name-only", f"v{version}", "mods/first-party").split()
+            if path.endswith("/mod.json") and path.count("/") == 3]
+
+
+def calls(identifier, names):
+    sources = " ".join(path.read_text(errors="ignore") for path in (ROOT / "mods/first-party" / identifier).rglob("*")
+                       if path.is_file() and path.suffix in {".ts", ".mjs", ".js", ".json"} and ".test." not in path.name)
+    return sorted(name for name in names if f"'{name}'" in sources or f'"{name}"' in sources)
+
+
 def operations(document):
     def resolve(node, seen=()):
         if isinstance(node, list):
@@ -48,8 +65,12 @@ def operations(document):
     return {name: resolve(operation) for name, operation in document["operations"].items()}
 
 
+def pinned():
+    return json.loads((ROOT / "extensions/index.json").read_text())["release_pin"]["omd"]
+
+
 def plan(exclude=()):
-    version = json.loads((ROOT / "extensions/index.json").read_text())["release_pin"]["omd"]
+    version = pinned()
     lock = support.mods_lock()
     if lock != mods_lock.build():
         raise ValueError("runtime/mods.lock.json differs from mods/first-party; run python3 .github/scripts/build.py locks")
@@ -77,22 +98,50 @@ def plan(exclude=()):
                          if released_operations.get(name) != operations_now.get(name))
     api_changed += git("diff", "--name-only", f"v{version}", "--", "mods/api.d.ts").splitlines()
     features = set(at(f"v{version}", "mods/conformance/compatibility.json")["host"]["features"])
+    accepted = set().union(*map(manifest_keys, released_manifests(version)))
+    changed_operations = [name for name in api_changed if "/" not in name]
     return {"omd": version, "serial": (bundles[-1][0] if bundles else 0) + 1, "changed": changed, "bundle": bundle,
             "new": sorted(identifier for identifier in bundle
                           if current[identifier] != shipped.get(identifier, released[identifier]["package_sha256"])),
             "needs_host": {identifier: sorted(missing) for identifier in bundle if (missing := required_features(identifier) - features)},
+            "needs_manifest": {identifier: sorted(unknown) for identifier in bundle if (unknown := manifest_keys(json.loads(
+                (ROOT / "mods/first-party" / identifier / "mod.json").read_text())) - accepted)},
+            "needs_api": {identifier: used for identifier in bundle if (used := calls(identifier, changed_operations))},
             "needs_release": sorted(lock["packages"].keys() - released.keys()), "excluded": sorted(exclude), "api_changed": api_changed,
             "host_changed": git("diff", "--name-only", f"v{version}..HEAD", "--", "mods/api.d.ts", "runtime/").splitlines(),
             "commits": git("log", "--no-merges", "--format=%h %s", f"v{version}..HEAD", "--",
                            *(f"mods/first-party/{identifier}" for identifier in bundle)).splitlines() if bundle else []}
 
 
-def build(output, commit, exclude=(), api_reviewed=False):
+def unsafe(planned):
+    return sorted(planned["needs_host"].keys() | planned["needs_manifest"].keys() | planned["needs_api"].keys())
+
+
+def automatic(exclude=()):
     planned = plan(exclude)
+    held = sorted(set(unsafe(planned)) - set(exclude))
+    if not held:
+        return planned
+    if shipped := sorted(set(held) - set(planned["changed"])):
+        raise ValueError(f"mods shipped in an earlier bundle no longer suit OMD {planned['omd']}; cut a release instead: {', '.join(shipped)}")
+    return plan([*exclude, *held])
+
+
+def build(output, commit, exclude=(), api_reviewed=False, auto=False):
+    if auto and not git("tag", "-l", f"v{pinned()}").strip():
+        return {"published": False, "omd": pinned(), "reason": "the release is not tagged yet"}
+    planned = automatic(exclude) if auto else plan(exclude)
     if not planned["new"]:
+        if auto:
+            return {"published": False, "omd": planned["omd"], "reason": "nothing new to ship", "excluded": planned["excluded"]}
         raise ValueError(f"no first-party mod changed since OMD {planned['omd']} or its last mod bundle")
     if planned["needs_host"]:
         raise ValueError(f"these mods need host features OMD {planned['omd']} lacks; they wait for a release: {planned['needs_host']}")
+    if planned["needs_manifest"]:
+        raise ValueError(f"these mods use manifest fields OMD {planned['omd']} rejects; they wait for a release: {planned['needs_manifest']}")
+    if planned["needs_api"]:
+        raise ValueError(f"these mods call operations that changed since OMD {planned['omd']}; they wait for a release: {planned['needs_api']}")
+    api_reviewed = api_reviewed or auto
     if planned["api_changed"] and not api_reviewed:
         raise ValueError(f"the mod host API changed since OMD {planned['omd']}: {', '.join(planned['api_changed'])}; cut a release, "
                          "or exclude the mods that depend on it and pass --api-reviewed")
@@ -133,8 +182,11 @@ def main():
     build_parser.add_argument("--commit", required=True)
     build_parser.add_argument("--api-reviewed", action="store_true",
                               help="build although the mod host API changed: no bundled mod depends on the change")
+    build_parser.add_argument("--auto", action="store_true",
+                              help="leave out every mod the release can't run and succeed without a bundle when nothing is new")
     args = parser.parse_args()
-    result = plan(args.exclude) if args.command == "plan" else build(args.output.resolve(), args.commit, args.exclude, args.api_reviewed)
+    result = plan(args.exclude) if args.command == "plan" else build(args.output.resolve(), args.commit, args.exclude,
+                                                                      args.api_reviewed, args.auto)
     print(json.dumps(result, indent=2))
 
 
