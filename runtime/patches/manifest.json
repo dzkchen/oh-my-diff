@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.1.patch",
-    "sha256": "c05ec96910c2a596d48d3af4c674bfd572e083b9a275bdd56d60d1c9073695d4"
+    "sha256": "194ad89f39c599f6dbc0878d3bb709195e28b4c2041d4fbaf3bc40a59bd168b6"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1056,6 +1056,14 @@
     "codex-rs/core/tests/suite/settings_commits.rs": {
       "before": "b2d46b58e2ad898d8146f0f6fa555c0bfcacec5a286ff7c5b6a7a92f9e1d0623",
       "after": "c95d7d0529f64677c25a34a6ece43ea994b88760c44a1dbadf1eef3e30dadb65"
+    },
+    "codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tool_removals_regular_responses.snap": {
+      "before": "c9d792a3cbd28ac36c5a6d59050486d3cd669b6f1d1c98f7d2c7b6d14710c69f",
+      "after": "c7acce1decce9261f4c953d6c1de224a669419b23eafb1f9269da1b9b71538f6"
+    },
+    "codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tools_regular_responses.snap": {
+      "before": "23a7cc37bfb6cf039869ac29987b14de53916ff46a7f44f99b727c206ea5810d",
+      "after": "92bc39ab29f4340975227f63ca7507542fd7e9678171137ea459cc9ec28a6cfd"
     },
     "codex-rs/core/tests/suite/subagent_notifications.rs": {
       "before": "189c2432d3933a68710e5bb2edfe2b29f5128fd3925d773bf5e3765efa2cc9bf",

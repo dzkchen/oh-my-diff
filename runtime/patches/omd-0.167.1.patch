@@ -35664,6 +35664,72 @@ index 823a1b50debd9c2845898f921cca1a8833d88620..394b9cedab7950e6c0b0e53eaef86014
      ) {
          if new_config.model.as_deref() != Some(COMMITTED_MODEL) {
              return;
+diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tool_removals_regular_responses.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tool_removals_regular_responses.snap
+index 8fe7c8fae3c84fd9fc9285fbccba966feb7bda61..39e09e865b5f3b5f99873d0cbb555e15cc1957a2 100644
+--- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tool_removals_regular_responses.snap
++++ b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tool_removals_regular_responses.snap
+@@ -1,6 +1,5 @@
+ ---
+ source: core/tests/suite/scenarios_incremental_tools.rs
+-assertion_line: 644
+ expression: "context_snapshot::format_request_history_snapshot(scenario, &requests,\n&ContextSnapshotOptions::default().rewrite_known_segments().include_request_settings(),)"
+ ---
+ Scenario: MCP refreshes remove one tool, then its whole namespace, before restoring both tools. Removal notices append alone; restoration appends one developer notice before both namespace declarations. Unchanged turns do not repeat updates.
+@@ -19,8 +18,8 @@ Settings:
+   tools (1; hash=f359ca6f02a419d6):
+     - web_search; hash=f103e327c6870a46
+ -- request 1 (turn) --
+-00:additional_tools/developer (3; hash=c6476125e1d67bb3):
+-        - namespace/functions; hash=6475578c7f948d18
++00:additional_tools/developer (3; hash=7748a53142f449b7):
++        - namespace/functions; hash=124fee69a69ed6b2
+           - function/exec_command
+           - function/write_stdin
+           - function/list_mcp_resources
+diff --git a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tools_regular_responses.snap b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tools_regular_responses.snap
+index 5da1b93afdc19e341ec10b8ec3354e1bf2deb984..de149847d73c72c461892ad06b6970492313da4a 100644
+--- a/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tools_regular_responses.snap
++++ b/codex-rs/core/tests/suite/snapshots/all__suite__scenarios__incremental_tools__incremental_tools_regular_responses.snap
+@@ -1,6 +1,5 @@
+ ---
+ source: core/tests/suite/scenarios_incremental_tools.rs
+-assertion_line: 399
+ expression: "context_snapshot::format_request_history_snapshot(if\nsuppress_model_change_announcements == Some(true)\n{\n    \"A model switch suppresses the model ID announcement while appending changed tools and replacement instructions. Repeated turns preserve the prefix; compaction starts a new window with the updated base.\"\n} else if incremental_tools\n{\n    \"Tool definitions precede the initial base instructions. A model switch appends one developer notice, changed tools, and replacement instructions without rewriting the prefix; compaction starts a new window with the updated base.\"\n} else\n{\n    \"Regular Responses requests carry the full current tool catalog without an incremental notice; changed execution instructions replace the catalog on subsequent requests.\"\n}, &requests,\n&ContextSnapshotOptions::default().rewrite_known_segments().include_request_settings(),)"
+ ---
+ Scenario: Tool definitions precede the initial base instructions. A model switch appends one developer notice, changed tools, and replacement instructions without rewriting the prefix; compaction starts a new window with the updated base.
+@@ -19,8 +18,8 @@ Settings:
+   tools (1; hash=16d317804b13dd3d):
+     - web_search; hash=e214d4db1bc49e89
+ -- request 1 (turn) --
+-00:additional_tools/developer (2; hash=019c865b71a05fec):
+-        - namespace/functions; hash=f3355f5705e28592
++00:additional_tools/developer (2; hash=b07492b5514a41d0):
++        - namespace/functions; hash=cc6e8cf0e5405f3a
+           - custom/exec
+           - function/wait
+           - function/exec_command
+@@ -49,8 +48,8 @@ Settings:
+ Settings: relative to window 1
+   model: "updated-tools-model"
+ -- request 3 (turn) --
+-00:additional_tools/developer (2; hash=019c865b71a05fec):
+-        - namespace/functions; hash=f3355f5705e28592
++00:additional_tools/developer (2; hash=b07492b5514a41d0):
++        - namespace/functions; hash=cc6e8cf0e5405f3a
+           - custom/exec
+           - function/wait
+           - function/exec_command
+@@ -96,8 +95,8 @@ Settings: relative to window 1
+ ## Window 3 (after request 5: input diverged at item 00)
+ Settings: same as window 2
+ -- request 6 (turn) --
+-00:additional_tools/developer (2; hash=7df544e43dd38360):
+-        - namespace/functions; hash=1e51a9a9273be2f8
++00:additional_tools/developer (2; hash=f9f0840b2e42f7f5):
++        - namespace/functions; hash=9d5d7a0adab05fef
+           - custom/exec
+           - function/wait
+           - function/exec_command
 diff --git a/codex-rs/core/tests/suite/subagent_notifications.rs b/codex-rs/core/tests/suite/subagent_notifications.rs
 index ec628fd960b1e0abaf9d9d5582e661fdf4b16837..4a53607b11994d03b72212d1736afe64778d567f 100644
 --- a/codex-rs/core/tests/suite/subagent_notifications.rs
