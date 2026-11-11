@@ -107,7 +107,8 @@ yourself are never turned off.
 A release or a first-party mod update also updates the first-party mods you installed from the catalog, with
 `omd install ID` or from the Available group in `/mods`, and leaves each on or off as it was. A mod that asks for a
 new permission or changes how it stores its data isn't updated. The update names it, and `omd mods update ID` shows
-what changes before you approve it.
+what changes before you approve it. `omd update rollback` moves the updated mods back to the versions of the release it
+restores.
 
 Between releases, OMD can publish first-party mod fixes separately. These updates keep your OMD version and leave
 each mod on or off as it was. `omd update` installs them when no newer release is out; `/update` also offers them.

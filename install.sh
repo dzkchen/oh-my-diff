@@ -843,6 +843,8 @@ def rollback(args, root, bin_dir, current):
     try:
         set_links(root, bin_dir)
         restore_store(previous, upstream, bin_dir)
+        with contextlib.suppress(OSError, ValueError, RuntimeError):
+            package(current, upstream, bin_dir, "catalog-align", "--to", previous / "prefix")
         target = status(previous, upstream, bin_dir)
     except BaseException:
         atomic_symlink(root / "previous", previous)
@@ -1432,7 +1434,7 @@ def apply_mods(args, root, current, mods):
     (update_dir(root) / "staged" / f"{mods['sha256']}.tar.xz").unlink(missing_ok=True)
     save(root, mods=None, pending_mods=None, failed_mods=None, held_mods=None,
          last_mods={"serial": mods["serial"], "changed": result["updated"], "at": int(time.time()),
-                    "capabilities": result.get("capabilities") or {}})
+                    "capabilities": result.get("capabilities") or {}, "needs_review": result.get("needs_review") or []})
     return {"mods_updated": result["updated"], "version": mods["omd"], "serial": mods["serial"],
             "capabilities": result.get("capabilities") or {}, "needs_review": result.get("needs_review") or []}
 
@@ -1620,7 +1622,7 @@ def launch(args, root, current):
         except (OSError, ValueError, RuntimeError, tarfile.TarError) as error:
             print(f"The first-party mod update failed and nothing changed: {error}", file=sys.stderr)
             return
-        print(f"Updated first-party mods: {', '.join(result['mods_updated'])}." if "mods_updated" in result else
+        print(update_text("now", result) if "mods_updated" in result else
               "First-party mod updates are ready and install when OMD starts while no other session is open.", file=sys.stderr)
         return
     automatic = staged.get("automatic", True) and requested != available.get("version")

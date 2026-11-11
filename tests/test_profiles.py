@@ -940,7 +940,7 @@ enabled = true
         index = "/store/package-index.json"
         locked = {identifier: {"version": "1.0.0", "integrity": "old", "scope": "user", "trust": {},
                                "source": {"kind": "package", "index": index, "id": identifier, "version": "1.0.0"}}
-                  for identifier in ("approval", "broken", "current", "moved")}
+                  for identifier in ("approval", "broken", "current", "migrating", "moved", "odd", "rescoped")}
         locked["current"]["integrity"] = "new"
         locked["elsewhere"] = locked["moved"] | {"source": {"kind": "repository"}}
         applied = []
@@ -953,14 +953,40 @@ enabled = true
                 applied.append(identifier)
             if identifier == "broken":
                 raise RuntimeError("policy refuses it")
-            return {"packages": [{"id": identifier, "scope": "user"}], "confirmation": "c", "changes": {"packages": [
-                {"renewed_approval": identifier == "approval", "state_version": {"migration_required": False}}]}}
+            if identifier == "odd":
+                return {}
+            return {"packages": [{"id": identifier, "scope": "project" if identifier == "rescoped" else "user"}], "confirmation": "c",
+                    "changes": {"packages": [{"renewed_approval": identifier == "approval",
+                                              "state_version": {"migration_required": identifier == "migrating"}}]}}
 
         with patch.object(profiles, "invoke", side_effect=invoke):
             result = profiles.update_catalog_copies("manager", Path("/store"), {
                 identifier: {"version": "2.0.0", "package_sha256": "new"} for identifier in locked})
-        self.assertEqual(result, {"catalog_updated": ["moved"], "needs_review": ["approval", "broken"]})
+        self.assertEqual(result, {"catalog_updated": ["moved"], "needs_review": ["approval", "broken", "migrating", "odd", "rescoped"]})
         self.assertEqual(applied, ["moved"])
+        with patch.object(profiles, "invoke", side_effect=RuntimeError("no lock")):
+            self.assertEqual(profiles.update_catalog_copies("manager", Path("/store"), {}), {"catalog_updated": [], "needs_review": []})
+
+    def test_reconcile_points_the_catalog_at_this_installation_before_moving_its_copies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, store = base / "prefix", base / "store"
+            (prefix / "management/runtime").mkdir(parents=True)
+            store.mkdir()
+            packages = {"omd_usage": {"version": "1.0.0", "package_sha256": "old"}, "omd_new": {"version": "1.0.0", "package_sha256": "n"}}
+            (prefix / "management/runtime/mods.lock.json").write_text(json.dumps({"packages": packages}))
+            entry = {"version": "2.0.0", "integrity": "new", "source": {"kind": "local", "path": "/later"}, "description": "d"}
+            (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": {
+                "omd_usage": [entry], "third": [entry | {"source": {"kind": "repository"}}]}}))
+            with patch.object(profiles, "update_catalog_copies", return_value={"catalog_updated": ["omd_usage"], "needs_review": []}) as moved:
+                self.assertEqual(profiles.align_catalog(prefix, "manager", store)["catalog_updated"], ["omd_usage"])
+            moved.assert_called_once_with("manager", store, packages)
+            index = json.loads((store / "package-index.json").read_text())["packages"]
+            self.assertEqual(index["omd_usage"], [entry | {"version": "1.0.0", "integrity": "old",
+                                                           "source": {"kind": "local", "path": str(prefix / "sources/omd_usage")}}])
+            self.assertEqual(index["third"][0]["version"], "2.0.0")
+            (store / "package-index.json").unlink()
+            self.assertEqual(profiles.align_catalog(prefix, "manager", store), {"catalog_updated": [], "needs_review": []})
 
     def test_a_directory_package_on_beside_its_bundled_copy_is_turned_off(self):
         store = Path("/store")
