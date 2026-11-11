@@ -1,0 +1,33 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "drift",
+  "name": "Cloud drift",
+  "detail": "Dusk clouds sliding past at different heights and speeds over a low sun.",
+  "sky": [
+    "#172347",
+    "#5a4a86",
+    "#e39a7f"
+  ],
+  "palette": {
+    "tint": [
+      "#2b2550",
+      "#3b2c4f"
+    ],
+    "accent": "#ffe0b0"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "clouds",
+      "colors": [
+        "#ffc78a",
+        "#c9b6e6",
+        "#f8dfe8",
+        "#6b5a96",
+        "#2a2340",
+        "#fff1d6"
+      ]
+    }
+  ]
+}

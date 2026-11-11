@@ -1,12 +1,33 @@
 import { customScene } from './custom.ts';
 import type { SceneFile } from './custom.ts';
-import { Canvas, ALPHABET, R, G, B, rgb, mix, clamp, REVEAL_MS, PANE_SHADE, GLYPH_SHADE } from './canvas.ts';
+import { Canvas, TEXTURE, hash, wrap, ALPHABET, R, G, B, rgb, mix, clamp, REVEAL_MS, PANE_SHADE, GLYPH_SHADE } from './canvas.ts';
 import type { Sample, Palette, Rect } from './canvas.ts';
-import { SCENES } from './builtins.ts';
+import type { Scene } from './canvas.ts';
 export * from './canvas.ts';
-export { SCENES } from './builtins.ts';
-export const catalog = (files: SceneFile[] = []) => [...SCENES, ...files.map(customScene)];
-export const scene = (id: string | null | undefined, files: SceneFile[] = []) => catalog(files).find(item => item.id === id) ?? null;
+const imageScene: Scene = {
+  id: 'image', name: 'Your image', detail: 'Your picture drawn as glyph tiles, with a slow light sweep and drifting motes.',
+  paint(c, t) {
+    const sample = c.sample;
+    if (!sample) return c.sky([0x101010, 0x202020]);
+    for (let y = 0; y < c.height; y++) {
+      const sy = Math.min(sample.height - 1, Math.floor(y / c.height * sample.height));
+      for (let tx = 0; tx < c.cols; tx++) {
+        const sx = Math.min(sample.width - 1, Math.floor(tx / c.cols * sample.width));
+        const at = (sy * sample.width + sx) * 6;
+        const color = parseInt(sample.rgb.slice(at, at + 6), 16);
+        for (let x = tx * 2; x < Math.min(c.width, tx * 2 + 2); x++) {
+          c.bg[y * c.width + x] = mix(color, 0x000000, 0.35);
+          c.fg[y * c.width + x] = mix(color, 0xffffff, 0.15);
+          c.glyph[y * c.width + x] = TEXTURE.charCodeAt(hash(x, y, 7) % TEXTURE.length);
+        }
+      }
+    }
+    c.shaft(wrap(t * 1.5, c.cols + 20) - 10, 0.5, 3, 0xffffff, 0.12);
+    c.particles(16, 11, t, 0.3, -0.2, '·', [0xffffff], 0.5);
+  },
+};
+export const catalog = (files: SceneFile[] = [], bundled: SceneFile[] = []) => [...bundled.map(file => customScene(file, file.id)), ...files.map(file => customScene(file)), imageScene];
+export const scene = (id: string | null | undefined, files: SceneFile[] = [], bundled: SceneFile[] = []) => catalog(files, bundled).find(item => item.id === id) ?? null;
 
 export function samplePalette(sample: Sample): Palette {
   const average = (from: number, to: number) => {
@@ -24,11 +45,11 @@ export function samplePalette(sample: Sample): Palette {
   return { tint: [top, bottom], accent: mix(mix(average(0, sample.height), 0xffffff, 0.45), 0xffffff, 0.5) };
 }
 
-export function compose(id: string, previous: string | null, progress: number, width: number, height: number, density: number, sample: Sample | null, t: number, energy = 0, files: SceneFile[] = []): Canvas {
+export function compose(id: string, previous: string | null, progress: number, width: number, height: number, density: number, sample: Sample | null, t: number, energy = 0, files: SceneFile[] = [], bundled: SceneFile[] = []): Canvas {
   const draw = (which: string) => {
     const canvas = new Canvas(width, height, density, sample);
     canvas.energy = clamp(energy, 0, 1);
-    (scene(which, files) ?? SCENES[0]).paint(canvas, t);
+    scene(which, files, bundled)?.paint(canvas, t);
     return canvas;
   };
   const next = draw(id);

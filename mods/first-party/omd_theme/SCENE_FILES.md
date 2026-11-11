@@ -44,8 +44,19 @@ The mod rejects imports with an ID already in your library. Removing the selecte
 current conversation; removing a different scene leaves the current choice selected.
 
 Your library can hold eight scenes, each up to 16 KiB of UTF-8 JSON, including whitespace. Imported scenes follow
-the same motion, reduced-motion and calm-while-working settings as built-in scenes. Density changes the number
+the same motion, reduced-motion and calm-while-working settings as bundled scenes. Density changes the number
 of particles; it does not resize sprites, blobs or glows.
+
+## Bundled scene files
+
+The [bundled collection](collection/) uses this same file format. Copy any of its scenes from the Scenes tab
+or with `/theme share ID`, edit its name, sky, palette or layers, and import the result. An imported copy uses
+`custom:ID`, so it can coexist with the bundled original. Use that full ID with `share` or `remove` when both
+copies have the same ID. Bare IDs address the bundled original while it is installed.
+
+`/theme remove ember` removes the bundled Ember scene from your saved choices. `/theme restore ember` adds it
+back without changing your selected scene. Both actions are also in the panel. Bundled scenes do not count
+against the eight imported scenes, and you can remove all of them.
 
 ## Write a scene file
 
@@ -87,7 +98,8 @@ be shortened on screen. Scene files describe drawings and motion; the mod does n
 
 ### Draw layers
 
-Each layer has a `kind` and the fields listed below. `alpha` controls its strength from 0 to 1 and defaults to 1.
+Each layer has a `kind` and the fields listed below. For glows, blobs, particles and sprites, `alpha` controls
+its strength from 0 to 1 and defaults to 1.
 
 | Kind | What it draws | Required fields | Optional fields |
 | --- | --- | --- | --- |
@@ -95,6 +107,7 @@ Each layer has a `kind` and the fields listed below. `alpha` controls its streng
 | `blob` | An oval of glyph tiles with a soft edge | `kind`, `width`, `height`, `color` | `x`, `y`, `alpha` |
 | `particles` | Moving glyphs that wrap around the screen | `kind`, `count`, `glyphs`, `colors` | `seed`, `vx`, `vy`, `sway`, `alpha` |
 | `sprite` | A picture drawn from rows of characters | `kind`, `rows`, `ink` | `x`, `y`, `alpha` |
+| `effect` | A reusable procedural drawing from the bundled collection | `kind`, `effect`, `colors` | `art` (required for some effects) |
 
 For glows and blobs, `x` and `y` locate the center. For sprites, they locate the top-left corner.
 Both default to 0.5: halfway across or down the scene. Positions use fractions of the scene's width and height.
@@ -123,6 +136,32 @@ characters and combining marks are rejected as particle glyphs. `count` sets the
 oscillation in tiles. These three fields default to 0 and accept values from -10 to 10. `seed` chooses their
 starting positions; it defaults to 1 and accepts values from 0 to 65535.
 
+### Reuse a drawing effect
+
+An `effect` layer draws a procedural animation with colors and optional artwork supplied by the JSON file.
+Start with the matching bundled file below, then change its colors or combine the effect with other layers.
+Effects draw over the file's `sky`; they do not select a scene or add anything to the picker themselves.
+
+`colors` is an ordered array of `#rrggbb` colors. Use all listed entries in order. `art`, where required, contains
+arrays of 1–48 nonempty rows of up to 96 characters, with one array per frame. Effects have their own positions,
+strengths and animation; they do not accept `x`, `y` or `alpha`.
+
+| Effect | Template | Colors in order | Art |
+| --- | --- | --- | --- |
+| `emblem` | [Ember](collection/ember.omd-scene.json) | Mark glow, mark top, mark bottom, fire glow, grid, three ember colors | One frame; `#` tiles draw the mark |
+| `clouds` | [Cloud drift](collection/drift.omd-scene.json) | Sun, grid, two cloud colors, birds, motes | None |
+| `reef` | [Lagoon](collection/lagoon.omd-scene.json) | Shafts, surface, seabed, sand, sprite `s`, sprite `d`, sprite `k`, bubbles | Two sprite frames; `s`, `d` and `k` tiles draw |
+| `jellyfish` | [Jellyfish](collection/jelly.omd-scene.json) | Shaft, two mote colors, three jellyfish colors | None |
+| `fireflies` | [Fireflies](collection/fireflies.omd-scene.json) | Stars, hills, grass, halos, fireflies | None |
+| `moon` | [Moonlit night](collection/moonlit.omd-scene.json) | Stars, moon glow, moon shade, moon face, cloud, meteor, far hills, near hills, ground lights | None |
+| `curtains` | [Aurora](collection/aurora.omd-scene.json) | Three pairs of band and crest colors, stars, ridge, snow, foreground | None |
+| `fish` | [Koi](collection/koi.omd-scene.json) | Head patch, body, fin shade, fin light, tail patch, eye | None |
+| `ribbons` | [Prismatic flow](collection/prism.omd-scene.json) | Five ribbon colors | None |
+| `orbit` | [Event horizon](collection/horizon.omd-scene.json) | Shadow, light | None |
+
+The `curtains` effect responds to active turns and the turn-end flare in imported files too. All effects follow
+the same animation, density and calm settings as the bundled originals.
+
 ### Animate a layer
 
 You can replace any numeric `x`, `y`, `radius`, `width`, `height`, or `alpha` with an object that changes the value
@@ -148,7 +187,8 @@ the mod clamps alpha to 0–1, glow radius to at least 0, and blob radii to at l
 
 With Normal animation, time advances in seconds; Slow runs at half that speed. Animation Off and Reduced motion
 draw a still frame at 24 scene seconds, rather than at time zero. Check that your scene also looks right there.
-Calm while working pauses time during a turn. Custom scenes do not receive Aurora's turn-end flare.
+Calm while working pauses time during a turn. The `curtains` effect also receives the turn-end flare, unless
+animation is off or reduced motion is on.
 
 ## Troubleshooting
 

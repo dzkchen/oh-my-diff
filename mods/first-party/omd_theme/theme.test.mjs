@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { callback } from '../../../tests/mod_runner.mjs';
-import { SCENES } from './scenes.ts';
+import { loadCollection } from './custom.ts';
+import { compose as composeScene } from './scenes.ts';
 
 const dir = new URL('./', import.meta.url);
 const read = name => readFileSync(new URL(name, dir), 'utf8');
@@ -12,7 +13,10 @@ const manifest = JSON.parse(read('mod.json'));
 const source = read('index.ts');
 const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: read(name), sha256: '0'.repeat(64) }]));
 const NOW = 1_800_000_000_000;
-const SCENE_IDS = SCENES.filter(scene => scene.id !== 'image').map(scene => scene.id);
+const BUNDLED = loadCollection(read);
+const SCENE_IDS = BUNDLED.map(file => file.id);
+const compose = (id, previous, progress, width, height, density, sample, t, energy = 0) =>
+  composeScene(id, previous, progress, width, height, density, sample, t, energy, [], BUNDLED);
 
 function call(input, overrides = {}) {
   const calls = [];
@@ -275,8 +279,8 @@ test('every scene animates in single-width glyphs at narrow and wide sizes', asy
   const scenes = await import(new URL('scenes.ts', dir));
   for (const id of SCENE_IDS) {
     for (const [width, height] of [[56, 6], [200, 30]]) {
-      const a = scenes.compose(id, null, 1, width, height, 1.8, null, 30);
-      const b = scenes.compose(id, null, 1, width, height, 1.8, null, 30.5);
+      const a = compose(id, null, 1, width, height, 1.8, null, 30);
+      const b = compose(id, null, 1, width, height, 1.8, null, 30.5);
       assert.ok(scenes.changed(a, b).length > 0, `${id} ${width}x${height} moves`);
       for (const code of a.glyph) assert.ok(code >= 32 && code !== 127 && String.fromCodePoint(code).length === 1, `${id} glyph ${code}`);
     }
@@ -336,7 +340,6 @@ test('the panel applies choices at once and keeps Codex\'s picker and the termin
 });
 
 test('enabling a scene from no scene never draws the Ember fallback', async () => {
-  const { compose } = await import(new URL('scenes.ts', dir));
   for (const id of SCENE_IDS) {
     const expected = compose(id, null, 1, 120, 44, 1, null, 1);
     for (const progress of [0, 0.1, 0.5]) {
@@ -348,13 +351,13 @@ test('enabling a scene from no scene never draws the Ember fallback', async () =
 test('Aurora flares when a turn ends and stirs while one runs with calm off, in place; other scenes ignore turns', async () => {
   const scenes = await import(new URL('scenes.ts', dir));
   const glow = canvas => canvas.bg.reduce((sum, color) => sum + (color >> 8 & 255), 0);
-  const at = energy => scenes.compose('aurora', null, 1, 120, 34, 1, null, 30, energy);
+  const at = energy => compose('aurora', null, 1, 120, 34, 1, null, 30, energy);
   assert.ok(glow(at(1)) > glow(at(0.5)) && glow(at(0.5)) > glow(at(0)));
   const lit = canvas => [...canvas.bg].map(color => (color >> 8 & 255) > 60);
   const overlap = lit(at(0)).filter((on, index) => on && lit(at(0.1))[index]).length;
   assert.ok(overlap > 0.95 * lit(at(0)).filter(Boolean).length, 'a fading flare moves the curtains only a little per step');
   for (const id of SCENE_IDS.filter(id => id !== 'aurora')) {
-    assert.deepEqual(scenes.compose(id, null, 1, 80, 20, 1, null, 30, 1).bg, scenes.compose(id, null, 1, 80, 20, 1, null, 30).bg, id);
+    assert.deepEqual(compose(id, null, 1, 80, 20, 1, null, 30, 1).bg, compose(id, null, 1, 80, 20, 1, null, 30).bg, id);
   }
 
   const state = ready({ scene: 'aurora' });
@@ -642,4 +645,84 @@ test('a stale thread can select the saved scene and the picker previews its curr
   });
   assert.match(unavailable.value.display, /store unavailable/);
   assert.deepEqual(unavailable.state, shown);
+});
+
+test('bundled scenes can be copied, removed, restored and reimported as independent files', () => {
+  const store = { value: null };
+  const state = ready();
+  let copied;
+  call({ event: 'command', name: 'theme', payload: 'share ember', state }, {
+    store, 'terminal.copy': args => { copied = JSON.parse(args.text); return { status: 'confirmed' }; },
+  });
+  assert.deepEqual(copied, BUNDLED[0]);
+  const removed = call({ event: 'command', name: 'theme', payload: 'panel remove:ember', state }, { store });
+  assert.equal(removed.state.prefs.scene, 'off');
+  assert.deepEqual(store.value.removed, ['ember']);
+  const panel = removed.of('terminal.panel')[0];
+  assert(!panel.items.some(item => item.id === 'scene:ember'));
+  assert(panel.items.some(item => item.id === 'restore:ember'));
+  assert.deepEqual(started(store.value, store.files).state.prefs.removed, ['ember']);
+  const imported = call({ event: 'command', name: 'theme', payload: 'import ember.json', state }, {
+    store, 'workspace.read': () => ({ files: { 'ember.json': { text: JSON.stringify(copied), sha256: '0'.repeat(64) } } }),
+  });
+  assert.equal(imported.state.prefs.scene, 'custom:ember');
+  assert.deepEqual(imported.state.prefs.removed, ['ember']);
+  const restored = call({ event: 'command', name: 'theme', payload: 'panel restore:ember', state: imported.state }, { store });
+  assert.equal(restored.state.prefs.scene, 'custom:ember');
+  assert.deepEqual(restored.state.prefs.removed, []);
+  assert(restored.of('terminal.panel')[0].items.some(item => item.id === 'scene:ember'));
+  assert(restored.of('terminal.panel')[0].items.some(item => item.id === 'scene:custom:ember'));
+  const deleted = call({ event: 'command', name: 'theme', payload: 'remove custom:ember', state: restored.state }, { store });
+  assert.equal(deleted.state.prefs.scene, 'off');
+  assert.equal(deleted.state.prefs.library.length, 0);
+  assert.deepEqual(deleted.state.prefs.removed, []);
+});
+
+test('removing every bundled scene leaves an empty picker without a fallback or frame timer', () => {
+  const store = { value: null };
+  const stale = ready();
+  for (const id of SCENE_IDS) call({ event: 'command', name: 'theme', payload: `remove ${id}`, state: stale }, { store });
+  const start = started(store.value, store.files);
+  assert.equal(start.state.prefs.scene, 'off');
+  assert.deepEqual(start.of('events.schedule'), []);
+  const panel = call({ event: 'command', name: 'theme', payload: '', state: start.state }, { store }).of('terminal.panel')[0];
+  assert.deepEqual(panel.items.filter(item => item.id.startsWith('scene:')).map(item => item.id), ['scene:off']);
+  const unavailable = call({ event: 'command', name: 'theme', payload: 'ember', state: stale }, { store });
+  assert.equal(unavailable.of('store.put').length, 0);
+  assert.match(call({ event: 'command', name: 'theme', payload: 'terminal', state: start.state }, { store }).value.display, /Orca/);
+  const restored = call({ event: 'command', name: 'theme', payload: 'restore aurora', state: start.state }, { store });
+  assert.equal(restored.state.prefs.scene, 'off');
+  const chosen = call({ event: 'command', name: 'theme', payload: 'aurora', state: restored.state }, { store });
+  assert.equal(chosen.state.prefs.scene, 'aurora');
+});
+
+test('the JSON collection determines names, defaults and commands, including an empty collection', () => {
+  const file = JSON.parse(read('examples/lanterns.omd-scene.json'));
+  const replacement = {
+    ...assets,
+    'collection.json': { text: JSON.stringify(['collection/different.json']), sha256: '0'.repeat(64) },
+    'collection/different.json': { text: JSON.stringify(file), sha256: '0'.repeat(64) },
+  };
+  const start = call({ event: 'start', payload: null, assets: replacement });
+  assert.equal(start.state.prefs.scene, 'lanterns');
+  const panel = call({ event: 'command', name: 'theme', payload: '', state: start.state, assets: replacement }).of('terminal.panel')[0];
+  assert.deepEqual(panel.items.filter(item => item.id.startsWith('scene:')).map(item => item.id), ['scene:lanterns', 'scene:off']);
+  const empty = call({ event: 'start', payload: null, assets: { ...assets, 'collection.json': { text: '[]', sha256: '0'.repeat(64) } } });
+  assert.equal(empty.state.prefs.scene, 'off');
+  assert.deepEqual(empty.of('events.schedule'), []);
+});
+
+test('conflicting removals preserve saved scenes and imported IDs cannot remove a bundled namesake', () => {
+  const store = { value: null };
+  const stale = ready();
+  call({ event: 'command', name: 'theme', payload: 'remove lagoon', state: stale }, { store });
+  const before = structuredClone(store.value);
+  const conflict = call({ event: 'command', name: 'theme', payload: 'remove ember', state: stale }, {
+    store, 'store.put': () => { throw new Error('store_revision_conflict'); },
+  });
+  assert.match(conflict.value.display, /store_revision_conflict/);
+  assert.deepEqual(store.value, before);
+  const unavailable = call({ event: 'command', name: 'theme', payload: 'remove custom:ember', state: stale }, { store });
+  assert.match(unavailable.value.display, /No scene/);
+  assert.deepEqual(store.value, before);
 });

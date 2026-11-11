@@ -1,14 +1,14 @@
-import { parseScene } from './custom.ts';
+import { loadCollection, parseScene } from './custom.ts';
 import type { SceneFile } from './custom.ts';
 import type { Json, ModAPI, TerminalPanel, TerminalPanelItem, TerminalPatch } from '../../api.d.ts';
-import { FRAME_SECONDS, SCENES, catalog, STILL_SECONDS, changed, compose, pack, place, revealProgress, samplePalette, scene, shade } from './scenes.ts';
-import type { Rect, Sample } from './scenes.ts';
+import { FRAME_SECONDS, catalog, STILL_SECONDS, changed, compose, pack, place, revealProgress, samplePalette, scene, shade } from './scenes.ts';
+import type { Palette, Rect, Sample } from './scenes.ts';
 import { ENVIRONMENT, LABELS, TERMINALS, TOPICS, detect, steps } from './steps.ts';
 import type { Terminal, Topic } from './steps.ts';
 
 type Speed = 'off' | 'slow' | 'normal';
 type Density = 'sparse' | 'normal' | 'dense';
-type Prefs = { library?: SceneFile[]; scene: string; speed: Speed; density: Density; calm: boolean; image: Sample | null; family: string };
+type Prefs = { library?: SceneFile[]; removed?: string[]; scene: string; speed: Speed; density: Density; calm: boolean; image: Sample | null; family: string };
 type StoredPrefs = Omit<Prefs, 'library'> & { library?: string[] };
 type Area = { x: number; y: number; columns: number; rows: number };
 type View = { columns: number; rows: number; reduced: boolean; color: boolean; colors: string; phase: string | null; surface: string | null; chat: Area | null; raster: string };
@@ -16,7 +16,6 @@ type State = { inactive?: boolean; idle?: boolean; prefs: Prefs | null; view: Vi
 type Remembered = { selected?: string; query?: string };
 type Tick = { run: number; drawn: number; rest?: number; width: number; height: number; look: string; misses: number };
 
-const DEFAULTS: Prefs = { scene: 'ember', speed: 'normal', density: 'normal', calm: true, image: null, family: '' };
 const SPEEDS: Speed[] = ['normal', 'slow', 'off'];
 const DENSITIES: Density[] = ['normal', 'sparse', 'dense'];
 const DENSITY: Record<Density, number> = { sparse: 0.5, normal: 1, dense: 1.8 };
@@ -42,6 +41,7 @@ const UNKNOWN_RETRIES = 40;
 const WAIT_MS = 2000;
 const WAKE_MS = 30_000;
 const SAMPLE = { columns: 60, rows: 24 };
+const FALLBACK_PALETTE: Palette = { tint: [0x202020, 0x101010], accent: 0xffffff };
 const TABS = [{ id: 'scenes', title: 'Scenes' }, { id: 'motion', title: 'Motion' }, { id: 'terminal', title: 'Terminal' }];
 const encoder = new TextEncoder();
 const clip = (text: string, bytes: number) => encoder.encode(text).length <= bytes ? text : text.slice(0, encoder.encodeInto(text, new Uint8Array(bytes - 3)).read) + '…';
@@ -60,9 +60,6 @@ const paused = (s: State) => s.busy && !!s.prefs?.calm;
 const behind = (s: State) => s.view?.phase !== 'fresh';
 const energy = (s: State, at: number) => Math.max(s.busy && !s.prefs?.calm ? 1 : 0, s.ended !== undefined && at >= s.ended ? Math.exp(-(at - s.ended) / FLARE_MS) : 0);
 const fontName = (value: string) => clip(value.replace(/["\\\n\r]/g, '').trim(), 128);
-const palette = (prefs: Prefs) => prefs.scene === 'image' && prefs.image ? samplePalette(prefs.image) : (scene(prefs.scene, prefs.library) ?? SCENES[0]).palette!;
-const stepsFor = (prefs: Prefs, terminal: Terminal, topic: Topic, family = prefs.family) =>
-  steps(terminal, topic, palette(prefs), prefs.scene === 'off' ? SCENES[0].id : prefs.scene, family || DEFAULT_FONT);
 const rasterFor = (thread: string | null | undefined) => thread ? `omd_theme_${thread.toLowerCase().replace(/[^a-z0-9]/g, '')}`.slice(0, 48) : RASTER;
 const digest = (text: string) => [...text].reduce((hash, char) => Math.imul(hash ^ char.charCodeAt(0), 0x01000193), 0x811c9dc5) >>> 0;
 const tickKey = (tick: Tick) => ['f', tick.run, tick.rest === undefined ? tick.drawn : `${tick.drawn}r${tick.rest}`, tick.width, tick.height, tick.look, tick.misses].join('.');
@@ -82,6 +79,12 @@ const bands = (rect: Rect): Rect[] => {
 
 export default function activate(api: ModAPI) {
   api.builtins({ commands: { replace: { theme: 'theme' } } });
+
+  const bundled = loadCollection(name => api.assets.read(name).text);
+  const installed = (prefs: Pick<Prefs, 'removed'>) => bundled.filter(file => !prefs.removed?.includes(file.id));
+  const palette = (prefs: Prefs) => prefs.scene === 'image' && prefs.image ? samplePalette(prefs.image) : scene(prefs.scene, prefs.library, installed(prefs))?.palette ?? FALLBACK_PALETTE;
+  const stepsFor = (prefs: Prefs, terminal: Terminal, topic: Topic, family = prefs.family) =>
+    steps(terminal, topic, palette(prefs), prefs.scene, family || DEFAULT_FONT);
 
   const read = (): State => ({ prefs: null, view: null, run: 0, switched: null, busy: false, ...api.state.get() as Partial<State> | null });
   const write = (patch: Partial<State>) => api.state.set({ ...read(), ...patch } as unknown as Json);
@@ -112,9 +115,11 @@ export default function activate(api: ModAPI) {
         if (!(error instanceof Error)) throw error;
       }
     }
-    const known = value.scene === 'off' || (value.scene === 'image' ? !!image : !!scene(value.scene, library));
+    const removed = Array.isArray(value.removed) ? bundled.filter(file => value.removed!.includes(file.id)).map(file => file.id) : [];
+    const available = installed({ removed });
+    const known = value.scene === 'off' || (value.scene === 'image' ? !!image : !!scene(value.scene, library, available));
     const pick = <T extends string>(found: unknown, allowed: T[]) => allowed.includes(found as T) ? found as T : allowed[0];
-    return { library, scene: known ? value.scene! : DEFAULTS.scene, speed: pick(value.speed, SPEEDS), density: pick(value.density, DENSITIES),
+    return { library, removed, scene: known ? value.scene! : available[0]?.id ?? 'off', speed: pick(value.speed, SPEEDS), density: pick(value.density, DENSITIES),
       calm: value.calm !== false, image, family: typeof value.family === 'string' ? fontName(value.family) : '' };
   };
   const save = (prefs: Prefs, patch: Partial<State> = {}) => {
@@ -220,7 +225,7 @@ export default function activate(api: ModAPI) {
     const shown = { width, height, look };
     const frame = (n: number) => {
       const art = compose(prefs.scene, quiet ? null : s.switched?.from ?? null, s.switched ? revealProgress(origin + n * period - s.switched.at) : 1,
-        chat.columns, chat.rows, DENSITY[prefs.density], prefs.image, quiet ? STILL_SECONDS : n * FRAME_SECONDS, quiet ? 0 : energy(s, origin + n * period), prefs.library);
+        chat.columns, chat.rows, DENSITY[prefs.density], prefs.image, quiet ? STILL_SECONDS : n * FRAME_SECONDS, quiet ? 0 : energy(s, origin + n * period), prefs.library, installed(prefs));
       const canvas = place(art, width, height, chat.x, chat.y);
       return behind(s) ? shade(canvas, BEHIND, BEHIND_CAP) : shade(canvas, 0, WELCOME_CAP);
     };
@@ -294,8 +299,8 @@ export default function activate(api: ModAPI) {
   const item = (entry: TerminalPanelItem): TerminalPanelItem => ({ ...entry, label: clip(entry.label, 128), ...entry.description ? { description: clip(entry.description, 256) } : {}, ...entry.detail ? { detail: clip(entry.detail, 512) } : {} });
   const listing = (prefs: Prefs, notice: string | null): TerminalPanel => {
     const here = terminalHere();
-    const showing = prefs.scene === 'off' ? 'no scene' : prefs.scene === 'image' ? prefs.image?.label ?? 'your image' : scene(prefs.scene, prefs.library)?.name;
-    const scenes = catalog(prefs.library).filter(entry => entry.id !== 'image' || prefs.image).map(entry => item({
+    const showing = prefs.scene === 'off' ? 'no scene' : prefs.scene === 'image' ? prefs.image?.label ?? 'your image' : scene(prefs.scene, prefs.library, installed(prefs))?.name;
+    const scenes = catalog(prefs.library, installed(prefs)).filter(entry => entry.id !== 'image' || prefs.image).map(entry => item({
       id: `scene:${entry.id}`, tab: 'scenes', group: 'Scenes', kind: 'action', label: `${entry.id === prefs.scene ? '● ' : ''}${entry.id === 'image' ? `${entry.name}: ${prefs.image!.label}` : entry.name}`,
       description: entry.id === prefs.scene ? 'showing' : undefined, keywords: entry.id, detail: entry.detail,
     }));
@@ -311,10 +316,13 @@ export default function activate(api: ModAPI) {
         item({ id: 'syntax', tab: 'scenes', kind: 'action', label: 'Syntax colours…', description: "Codex's own syntax-highlighting theme picker", detail: 'Opens the /theme picker Codex ships; this mod takes over /theme while it is on.' }),
         ...scenes,
         item({ id: 'import', tab: 'scenes', kind: 'text', value: '', label: 'Import scene…', description: 'Path to an .omd-scene.json file in this workspace' }),
-        ...(prefs.library ?? []).flatMap(file => [
-          item({ id: `share:${file.id}`, tab: 'scenes', group: 'Manage imported scenes', kind: 'action', label: `Copy ${file.name} scene file` }),
-          item({ id: `remove:${file.id}`, tab: 'scenes', group: 'Manage imported scenes', kind: 'action', label: `Remove ${file.name}` }),
+        ...catalog(prefs.library, installed(prefs)).filter(entry => entry.id !== 'image').flatMap(file => [
+          item({ id: `share:${file.id}`, tab: 'scenes', group: 'Manage scenes', kind: 'action', label: `Copy ${file.name} scene file` }),
+          item({ id: `remove:${file.id}`, tab: 'scenes', group: 'Manage scenes', kind: 'action', label: `Remove ${file.name}` }),
         ]),
+        ...bundled.filter(file => prefs.removed?.includes(file.id)).map(file => item({
+          id: `restore:${file.id}`, tab: 'scenes', group: 'Removed bundled scenes', kind: 'action', label: `Restore ${file.name}`,
+        })),
         item({ id: 'scene:off', tab: 'scenes', group: 'Scenes', kind: 'action', label: `${prefs.scene === 'off' ? '● ' : ''}No scene`, detail: 'Sessions show the usual welcome and colours.' }),
         item({ id: 'image', tab: 'scenes', kind: 'text', value: '', label: 'Your image…', description: 'A PNG or JPEG path, drawn as glyph tiles', detail: 'Asks before reading the file and keeps only a small colour sample.' }),
         item({ id: 'speed', tab: 'motion', kind: 'choice', value: prefs.speed, label: 'Animation', options: [{ value: 'normal', label: 'Normal' }, { value: 'slow', label: 'Slow' }, { value: 'off', label: 'Off (one still frame)' }] }),
@@ -339,7 +347,7 @@ export default function activate(api: ModAPI) {
   };
   const reveal = (prefs: Prefs) => {
     const from = read().prefs?.scene ?? 'off';
-    return from === 'off' || scene(from, prefs.library) ? { from, at: Date.now() } : null;
+    return from === 'off' || scene(from, prefs.library, installed(prefs)) ? { from, at: Date.now() } : null;
   };
   const applyPrefs = (prefs: Prefs, patch: Partial<State> = {}) => {
     const changed = JSON.stringify(read().prefs) !== JSON.stringify(prefs);
@@ -393,30 +401,42 @@ export default function activate(api: ModAPI) {
     }
     return `Imported ${imported.name}`;
   };
+  const bundledScene = (prefs: Prefs, id: string) => installed(prefs).find(file => file.id === id);
   const removeScene = (prefs: Prefs, id: string) => {
+    if (bundledScene(prefs, id)) {
+      save({ ...prefs, removed: [...(prefs.removed ?? []), id], scene: prefs.scene === id ? 'off' : prefs.scene }, { switched: null });
+      return `Removed ${id}`;
+    }
+    const keyId = id.replace(/^custom:/, '');
     const library = prefs.library ?? [];
-    if (!library.some(file => file.id === id)) return `No imported scene named ${id}`;
-    const next = { ...prefs, library: library.filter(file => file.id !== id), scene: prefs.scene === `custom:${id}` ? 'off' : prefs.scene };
-    const key = sceneKeys.get(id)!;
+    if (!library.some(file => file.id === keyId)) return `No scene named ${id}`;
+    const next = { ...prefs, library: library.filter(file => file.id !== keyId), scene: prefs.scene === `custom:${keyId}` ? 'off' : prefs.scene };
+    const key = sceneKeys.get(keyId)!;
     const previous = api.host.call('store.get', { key, scope: 'user' });
     save(next, { switched: null });
     if (previous) api.host.tryCall('store.delete', { key, expected_revision: previous.revision, scope: 'user' });
     return `Removed ${id}`;
   };
+  const restoreScene = (prefs: Prefs, id: string) => {
+    if (!bundled.some(file => file.id === id)) return `No bundled scene named ${id}`;
+    save({ ...prefs, removed: (prefs.removed ?? []).filter(removed => removed !== id) });
+    return `Restored ${id}`;
+  };
   const shareScene = (prefs: Prefs, id: string) => {
-    const file = prefs.library?.find(file => file.id === id);
-    if (!file) return `No imported scene named ${id}`;
+    const file = bundledScene(prefs, id) ?? prefs.library?.find(file => file.id === id.replace(/^custom:/, ''));
+    if (!file) return `No scene named ${id}`;
     const copied = api.host.tryCall('terminal.copy', { text: JSON.stringify(file) });
     return copied.ok && ['confirmed', 'pending'].includes(copied.value.status)
       ? `Scene copied; save as ${file.id}.omd-scene.json to share it`
       : `Could not copy scene: ${copied.ok ? copied.value.status : copied.error}`;
   };
   const change = (prefs: Prefs, id: string, value: string): string | null => {
+    if (id.startsWith('restore:')) return restoreScene(prefs, id.slice(8));
     if (id.startsWith('share:')) return shareScene(prefs, id.slice(6));
     if (id === 'import') return importScene(prefs, value);
     if (id.startsWith('remove:')) return removeScene(prefs, id.slice(7));
     if (id.startsWith('scene:')) {
-      if (id !== 'scene:off' && !scene(id.slice(6), prefs.library)) return 'Scene is unavailable';
+      if (id !== 'scene:off' && !scene(id.slice(6), prefs.library, installed(prefs))) return 'Scene is unavailable';
       choose(prefs, id.slice(6));
       return null;
     }
@@ -471,10 +491,11 @@ export default function activate(api: ModAPI) {
         return show(stepsPanel(prefs, who, topic, done ? 'Copied. Nothing else was changed.' : `Copy ${copied.ok ? `not confirmed (${copied.value.status})` : `failed: ${copied.error}`}`));
       }
       if (verb === 'import') return { display: importScene(prefs, raw.slice(6).trim()) };
-      if (verb === 'share') return { display: shareScene(prefs, id.replace(/^custom:/, '')) };
-      if (verb === 'remove') return { display: removeScene(prefs, id.replace(/^custom:/, '')) };
+      if (verb === 'share') return { display: shareScene(prefs, id) };
+      if (verb === 'restore') return { display: restoreScene(prefs, id) };
+      if (verb === 'remove') return { display: removeScene(prefs, id) };
       if (verb === 'image' && id) return { display: sample(prefs, raw.replace(/^image\s+/, '')) };
-      if (verb === 'off' || scene(verb, prefs.library)) {
+      if (verb === 'off' || scene(verb, prefs.library, installed(prefs))) {
         if (verb === 'image' && !prefs.image) return { display: 'Pick an image first: /theme image PATH' };
         choose(prefs, verb);
         return null;
@@ -490,7 +511,7 @@ export default function activate(api: ModAPI) {
           .map(entry => `${entry.title}\n${entry.text}${entry.copy.includes('mainImage') ? `\n\n${entry.copy}` : ''}`);
         return { display: [here ? null : 'Terminal not detected; the steps for each supported terminal:', ...text].filter(Boolean).join('\n\n') };
       }
-      if (verb) return { display: `Usage: /theme [${SCENES.map(entry => entry.id).join('|')}|off|syntax|import PATH|share ID|remove ID|image PATH|font FAMILY|terminal]` };
+      if (verb) return { display: `Usage: /theme [${catalog(prefs.library, installed(prefs)).map(entry => entry.id).join('|')}|off|syntax|import PATH|share ID|remove ID|restore ID|image PATH|font FAMILY|terminal]` };
       return showListing(prefs, null);
     } catch (error) {
       if (!(error instanceof Error)) throw error;

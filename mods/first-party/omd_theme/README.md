@@ -30,6 +30,12 @@ You can also [import and share scenes from JSON files](#import-and-share-scenes)
 
 ### Scenes
 
+The bundled scenes are standalone [JSON files](collection/), installed by default. Each can be copied or removed
+in the Scenes tab, just like an imported scene. For example, `/theme share ember` copies Ember's file and
+`/theme remove ember` removes it from your picker. Removal is remembered across sessions; removing the selected
+scene switches to No scene. Use `/theme restore ember` or its Restore action in the panel to add it back.
+You can remove every bundled scene and use only your own imports or image.
+
 | Scene | Command | What moves |
 | --- | --- | --- |
 | Ember mark | `/theme ember` | The OMD logo over a banked fire; embers rise on the draft |
@@ -72,15 +78,15 @@ For a file whose `id` is `lanterns`, use `/theme custom:lanterns` to select it a
 copy its JSON to the clipboard, and `/theme remove lanterns` to remove the saved copy. Sharing a scene copies
 only that scene file, without your image, font or motion choices.
 
-Your library holds up to eight scenes of 16 KiB each. To replace a saved scene, remove it and import the edited
-file. The Scenes tab has import, copy and remove actions too.
+Your imported library holds up to eight scenes of 16 KiB each; bundled scenes do not use those slots. To replace
+a saved scene, remove it and import the edited file. The Scenes tab has import, copy and remove actions too.
 
 [Write and share a scene](SCENE_FILES.md) covers the format, a complete example, animation and troubleshooting.
 
 ### The panel
 
-- Scenes: pick a built-in or imported scene, import a scene file, copy or remove an imported scene, choose No
-  scene, Your image… (asks before reading the file and keeps only a 60×24 color sample), or Syntax colours….
+- Scenes: pick a bundled or imported scene, import a scene file, copy or remove any scene, restore a bundled
+  scene, choose No scene, Your image… (asks before reading the file and keeps only a 60×24 color sample), or Syntax colours….
 - Motion: animation normal, slow or off (one still frame), how many glyphs drift and calm while working
   (pauses the scene during a turn). Aurora's flare when a turn finishes shows either way, unless animation is off.
 - Terminal: steps for the terminal you run in, found from its environment variables. Each opens the lines to add,
@@ -102,8 +108,8 @@ file. The Scenes tab has import, copy and remove actions too.
 
 ## Settings
 
-It has no settings in `/mods`. Your scene and motion choices and imported library are saved for sessions using
-the same mod store. Opening `/theme` refreshes the current conversation from those saved choices. Other running
+It has no settings in `/mods`. Your scene and motion choices, removed bundled scenes and imported library are saved
+for sessions using the same mod store. Opening `/theme` refreshes the current conversation from those saved choices. Other running
 conversations keep their current scene until you open `/theme`, change a theme preference there, or start or
 resume a session.
 
