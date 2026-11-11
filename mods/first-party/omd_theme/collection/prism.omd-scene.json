@@ -1,0 +1,31 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "prism",
+  "name": "Prismatic flow",
+  "detail": "Dense pearlescent ribbons of cyan, ivory and rose drift diagonally across charcoal.",
+  "sky": [
+    "#0b0b12",
+    "#0b0b12"
+  ],
+  "palette": {
+    "tint": [
+      "#181827",
+      "#101019"
+    ],
+    "accent": "#aeeeff"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "ribbons",
+      "colors": [
+        "#3b6ac5",
+        "#78dfff",
+        "#f8f1da",
+        "#f290a3",
+        "#9c83c8"
+      ]
+    }
+  ]
+}

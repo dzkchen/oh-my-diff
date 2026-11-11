@@ -21,8 +21,13 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      reuse_run_id: ${{ steps.reuse.outputs.reuse_run_id }}
+      reuse_artifact_id: ${{ steps.reuse.outputs.reuse_artifact_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -39,20 +44,32 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/release.py check "$VERSION"
+      - name: Find a passing dry run for this commit
+        id: reuse
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/release.py reuse "$VERSION" --github-output "$GITHUB_OUTPUT"
 
   validate:
     needs: check
+    if: needs.check.outputs.reuse_run_id == ''
     uses: ./.github/workflows/validate.yml
     with:
       version: ${{ needs.check.outputs.version }}
 
   publish:
     needs: [check, validate]
-    if: github.repository == 'dzkchen/oh-my-diff'
+    if: >-
+      always() && !cancelled() && github.repository == 'dzkchen/oh-my-diff' && needs.check.result == 'success' &&
+      (needs.validate.result == 'success' || (needs.validate.result == 'skipped' &&
+      needs.check.outputs.reuse_run_id != '' && needs.check.outputs.reuse_artifact_id != ''))
     runs-on: ubuntu-24.04
     environment: release
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -61,9 +78,19 @@ jobs:
         with:
           install_args: python@3.14.6
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: needs.check.outputs.reuse_run_id == ''
         with:
           name: package
           path: release
+      - name: Download the package from the passing dry run
+        if: needs.check.outputs.reuse_run_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.check.outputs.reuse_artifact_id }}
+          run-id: ${{ needs.check.outputs.reuse_run_id }}
+          github-token: ${{ github.token }}
+          path: release
+          merge-multiple: true
       - name: Publish the verified release (dry run prints the commands, unsigned)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,4 +99,4 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && 'yes' || '' }}
         run: |
           python3 scripts/release.py notes "$VERSION" > notes.md
-          python3 .github/scripts/ci.py publish --directory release --notes notes.md ${DRY_RUN:+--dry-run}
+          python3 .github/scripts/ci.py publish --directory release --notes notes.md --version "$VERSION" ${DRY_RUN:+--dry-run}

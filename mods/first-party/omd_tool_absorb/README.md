@@ -68,7 +68,7 @@ It has no settings.
 - A duplicate read is answered with a pointer to the first one's output instead of a second copy. A duplicate of a
   read whose output didn't fit or that couldn't run gets that read's note.
 - Reads issued one at a time are left alone, and reads inside code-mode cells are never merged, since code mode
-  already runs a cell's reads as one step. Models that work through code mode, such as the GPT models Codex `0.167.0`
+  already runs a cell's reads as one step. Models that work through code mode, such as the GPT models Codex `0.167.1`
   uses, get only the code-mode reuse.
 - It needs an OMD host that supports per-call batch results and code-mode values (host features
   `tool_batch_success_v1` and `code_mode_values_v1`). An older host refuses to turn it on.

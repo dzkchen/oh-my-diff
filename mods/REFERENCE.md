@@ -3,7 +3,7 @@
 This is every [mod API reference page](reference/README.md) in one file, for agents and search. Generated from
 the pages in the order of their contents table; edit the pages, not this file.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.167.0`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.167.1`.
 `omd-mod status` reports the OMD release as `host.omd`. A package's `compatibility.releases` is matched against that
 version. The host loads only mods for this API version. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
@@ -404,7 +404,7 @@ Use it when you check whether a design fits the host. Each row gives one limit a
 states the exact rule and the error a call gets. The `host.json` limits an operator can change are under
 [Host limits](#host-limits).
 
-Values are those of Mod API `1.0.0` on Codex `0.167.0`; limits of experimental entries may change in any release.
+Values are those of Mod API `1.0.0` on Codex `0.167.1`; limits of experimental entries may change in any release.
 
 ### Limits by area
 
@@ -3263,6 +3263,8 @@ cover every thread of that session, including threads in its worktrees.
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
+- `surfaces: {disable: ['context_indicator']}` (experimental) hides the stock `N% context left` footer
+  indicator, for a mod that shows context itself.
 - `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
   they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
   experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.

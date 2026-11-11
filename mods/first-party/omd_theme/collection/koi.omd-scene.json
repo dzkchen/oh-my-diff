@@ -1,0 +1,32 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "koi",
+  "name": "Koi",
+  "detail": "Ivory veil fins and a vermilion head, gently waving in black water.",
+  "sky": [
+    "#000000",
+    "#020305"
+  ],
+  "palette": {
+    "tint": [
+      "#241918",
+      "#100f12"
+    ],
+    "accent": "#ffbd91"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "fish",
+      "colors": [
+        "#ff4a12",
+        "#fff4d9",
+        "#a3a5a2",
+        "#fff5df",
+        "#f48749",
+        "#111308"
+      ]
+    }
+  ]
+}

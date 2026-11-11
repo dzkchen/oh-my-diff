@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "as_of": "2026-11-03",
+  "as_of": "2026-11-11",
   "host": {
-    "codex": "0.167.0",
-    "omd": "1.5.1",
+    "codex": "0.167.1",
+    "omd": "1.5.2",
     "release_status": "development",
     "latest_stable": "1.5.0",
     "stability": "stable",

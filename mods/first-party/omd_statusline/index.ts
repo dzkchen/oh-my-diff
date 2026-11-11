@@ -1,9 +1,9 @@
 import type { Json, ModAPI, TerminalComponent, TerminalPanel, TerminalPanelItem, TerminalPatch, TerminalRenderSite } from '../../api.d.ts';
-import { DEFAULTS, EMPTY, SEGMENTS, charge, githubKey, layout, render, scripts, settings, visible } from './segments.ts';
+import { DEFAULTS, EMPTY, LABELS, SEGMENTS, charge, fromCodex, githubKey, layout, preview, render, scripts, settings, visible } from './segments.ts';
 import type { Charge, Data, Settings } from './segments.ts';
-import { GITHUB_ORIGIN, GITHUB_QUERY, GIT_SCRIPT, ansi, parseGit, parseGithub, payload } from './sources.ts';
+import { GITHUB_ORIGIN, GITHUB_QUERY, GIT_SEGMENTS, ansi, gitScript, parseGit, parseGithub, payload } from './sources.ts';
 
-type Editor = { draft: Settings; notice: string | null };
+type Editor = { draft: Settings; base: string; notice: string | null };
 type Seen = Data['seen'][string];
 
 const BEAT_MS = 150_000;
@@ -12,7 +12,8 @@ const PREVIEW_COLUMNS = 64;
 export default function activate(api: ModAPI) {
   const config = settings(api.settings);
   const configured = scripts(config.scripts);
-  api.builtins({ surfaces: { disable: ['status_line'] }, commands: { replace: { statusline: 'statusline' } } });
+  const indicator = layout(config, configured.scripts.map(script => script.id)).some(line => line.includes('context'));
+  api.builtins({ surfaces: { disable: ['status_line', ...indicator ? ['context_indicator' as const] : []] }, commands: { replace: { statusline: 'statusline' } } });
 
   const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
   const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -22,9 +23,10 @@ export default function activate(api: ModAPI) {
     for (const [key, fallback] of Object.entries(EMPTY)) if (fallback && typeof fallback === 'object' && !Array.isArray(fallback)) data[key] = { ...fallback, ...object(stored[key]) };
     return data as Data;
   };
-  // A settings change reaches the session's host only at its next turn, so drawing follows the editor's last apply while this host still runs with settings that apply superseded.
   const effective = (data: Data): Settings => data.pending?.from.includes(JSON.stringify(config)) ? data.pending.to : config;
-  const shows = (ids: string[], data: Data) => configured.scripts.length > 0 || layout(effective(data), configured.scripts.map(script => script.id)).some(line => line.some(id => ids.includes(id)));
+  const shown = (data: Data) => layout(effective(data), configured.scripts.map(script => script.id), data.seed).flat();
+  const shows = (ids: string[], data: Data) => configured.scripts.length > 0 || shown(data).some(id => ids.includes(id));
+  const gitNeeds = (data: Data) => GIT_SEGMENTS.filter(id => shows([id], data) && (effective(data).github || id === 'git' || id === 'changes'));
   const update = (change: (data: Data) => void) => {
     const data = saved();
     const before = JSON.stringify(data);
@@ -33,18 +35,18 @@ export default function activate(api: ModAPI) {
   };
 
   const refreshGit = () => {
-    const key = saved().cwd ?? '';
-    // The checkout in argv makes a state-conflict retry after a directory change rerun Git instead of replaying the old output.
-    const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', GIT_SCRIPT, key], timeout_ms: 3000, max_output_bytes: 65_536 });
+    const data = saved();
+    const needs = gitNeeds(data);
+    if (!needs.length) return;
+    const key = data.cwd ?? '';
+    const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', gitScript(needs), key], timeout_ms: 3000, max_output_bytes: 65_536 });
     update(data => {
       data.git = !run.ok ? { ...parseGit(key, ''), error: visible(run.error, 80) }
         : run.value.exit_code !== 0 || run.value.timed_out ? { ...parseGit(key, ''), error: run.value.timed_out ? 'timed out' : 'not a repository' }
-        // A capped status would silently undercount, so say it was truncated instead of showing wrong numbers.
         : run.value.stdout_truncated ? { ...parseGit(key, ''), error: 'status truncated' }
         : parseGit(key, run.value.stdout);
     });
   };
-  const gitSoon = api.time.after('git_soon', 2000, refreshGit);
 
   const pollGithub = (force = false) => {
     const now = Date.now();
@@ -109,36 +111,55 @@ export default function activate(api: ModAPI) {
     if (rates.available) update(data => limits(data, rates.value));
   };
 
-  const timers = [
-    api.time.every('limits', 60_000, refreshLimits),
-    api.time.every('git', config.refresh_s * 1000, refreshGit),
-    ...config.github ? [api.time.every('github', 30_000, () => pollGithub())] : [],
-    api.time.every('tick', 60_000, () => {
-      const data = saved();
-      const now = Date.now();
-      const drawn = (at: number) => JSON.stringify(render(data, effective(data), { now: at, columns: 1000, cwd: data.cwd, settled: null }));
-      if (drawn(now) !== drawn(now - 60_000)) update(next => { next.tick += 1; next.beat = now; });
-    }),
-    ...configured.scripts.map(script => api.time.every(`script_${script.id}`, script.interval_s * 1000, () => runScript(script.id))),
-  ];
-  const armedFor = JSON.stringify(config);
-  const arm = (force = false) => {
-    const { beat, armed } = saved();
-    if (!force && beat !== null && Date.now() - beat < BEAT_MS && armed === armedFor) return;
-    for (const timer of timers) timer.start();
-    update(data => { data.beat = Date.now(); data.armed = armedFor; });
-  };
   const refresh = (force: boolean) => {
     refreshLimits();
     refreshGit();
     pollGithub(force);
     for (const script of configured.scripts) runScript(script.id, force);
   };
-  const soon = api.time.after('refresh_soon', 1000, () => refresh(false));
-  // Subprocess and network refreshes wait until startup has settled so they never compete with the first commands.
-  const settle = api.time.after('settle', 2000, () => {
-    workspace();
-    refresh(true);
+  const tick = () => {
+    const data = saved();
+    const now = Date.now();
+    const drawn = (at: number) => JSON.stringify(render(data, effective(data), { now: at, columns: 1000, cwd: data.cwd, settled: null }));
+    if (drawn(now) !== drawn(now - 60_000)) update(next => { next.tick += 1; });
+  };
+  const jobs = (data: Data): Record<string, [number | null, () => void]> => ({
+    settle: [null, () => {
+      if (!readConfig()) { update(next => { next.due.settle = Date.now() + 30_000; }); return; }
+      workspace(); refresh(true);
+    }], limits: [60_000, refreshLimits], tick: [60_000, tick],
+    ...gitNeeds(data).length ? { git: [effective(data).refresh_s * 1000, refreshGit] } : {},
+    ...config.github ? { github: [30_000, () => pollGithub()] } : {},
+    ...Object.fromEntries(configured.scripts.map(script => [`script:${script.id}`, [script.interval_s * 1000, () => runScript(script.id)]])),
+  });
+  const armedFor = JSON.stringify(config);
+  const wake = (change: (data: Data, now: number) => void = () => {}, force = false) => update(data => {
+    const now = Date.now();
+    change(data, now);
+    const active = jobs(data);
+    for (const [job, [interval]] of Object.entries(active)) if (interval !== null) data.due[job] ??= now + interval;
+    for (const job of Object.keys(data.due)) if (!(job in active)) delete data.due[job];
+    const delay = Math.min(86_400_000, Math.max(1000, Math.min(...Object.values(data.due)) - now));
+    if (!force && data.timer !== null && data.timer > now && data.timer <= now + delay) return;
+    if (api.host.tryCall('events.schedule', { key: 'due', delay_ms: delay }).ok) Object.assign(data, { beat: now, armed: armedFor, timer: now + delay });
+  });
+  const arm = () => {
+    const { beat, armed } = saved();
+    if (beat === null || Date.now() - beat >= BEAT_MS || armed !== armedFor) wake(undefined, true);
+  };
+  const soon = (pick: (job: string) => boolean, delay: number) => wake((data, now) => {
+    for (const job of Object.keys(jobs(data))) if (pick(job)) data.due[job] = Math.min(data.due[job] ?? Infinity, now + delay);
+  });
+  api.on('timer', ({ key }) => {
+    if (key !== 'due') return;
+    const data = saved();
+    const active = jobs(data);
+    const ready = Object.keys(data.due).filter(job => data.due[job] <= Date.now() && job in active);
+    try {
+      for (const job of ready) active[job][1]();
+    } finally {
+      wake(next => { for (const job of ready) if (next.due[job] <= Date.now()) delete next.due[job]; }, true);
+    }
   });
 
   const limits = (data: Data, value: unknown) => {
@@ -155,8 +176,6 @@ export default function activate(api: ModAPI) {
     const credits = object(snapshot.credits);
     if (Object.keys(credits).length) data.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? 'credits' : 'none';
   };
-  // Mirrors Codex's processing-tier label: the configured tier (or, unset, the catalog default) when the model offers it,
-  // named from the catalog, or Flex on a provider other than Amazon Bedrock.
   const tierFor = (configured: unknown, model: string | null, provider: string | null, fallback = false): Data['model']['tier'] => {
     if ((typeof configured !== 'string' || !configured) && !fallback) return null;
     const listed = api.host.tryCall('app.request', { method: 'model/list', params: { includeHidden: true, limit: 200 } });
@@ -176,12 +195,24 @@ export default function activate(api: ModAPI) {
     update(data => { data.workspace = account.type === 'chatgpt' && typeof account.workspaceName === 'string' && account.workspaceName ? visible(account.workspaceName, 60) : null; });
   };
 
+  const readConfig = () => {
+    const read = api.host.tryCall('app.request', { method: 'config/read', params: { includeLayers: true } });
+    if (!read.ok) return false;
+    const values = object(object(read.value).config);
+    const layers: unknown[] = Array.isArray(object(read.value).layers) ? object(read.value).layers : [];
+    const user = layers.map(layer => object(object(layer).name)).find(name => name.type === 'user');
+    const codex = object(values.tui).status_line;
+    update(data => {
+      data.profile = typeof user?.profile === 'string' && user.profile ? visible(user.profile, 60) : null;
+      data.model.tier = tierFor(values.service_tier, data.model.requested, data.model.provider, true);
+      data.seed = Array.isArray(codex) ? fromCodex(codex) : null;
+      if (typeof values.model_reasoning_effort === 'string') data.model.effort = values.model_reasoning_effort;
+      data.context.window = number(values.model_context_window) ?? data.context.window;
+    });
+    return true;
+  };
   const configure = () => {
     const session = api.host.tryCall('session.info', null);
-    const read = api.host.tryCall('app.request', { method: 'config/read', params: { includeLayers: true } });
-    const values = object(read.ok ? object(read.value).config : null);
-    const layers: unknown[] = read.ok && Array.isArray(object(read.value).layers) ? object(read.value).layers : [];
-    const user = layers.map(layer => object(object(layer).name)).find(name => name.type === 'user');
     update(data => {
       if (session.ok) {
         if (data.thread !== session.value.thread_id) data.started = Date.now();
@@ -190,15 +221,9 @@ export default function activate(api: ModAPI) {
         data.model = { ...data.model, requested: session.value.model ?? data.model.requested, provider: session.value.provider };
       }
       if (data.started === null) data.started = Date.now();
-      if (read.ok) {
-        data.profile = typeof user?.profile === 'string' && user.profile ? visible(user.profile, 60) : null;
-        data.model.tier = tierFor(values.service_tier, data.model.requested, data.model.provider, true);
-      }
-      if (typeof values.model_reasoning_effort === 'string') data.model.effort = values.model_reasoning_effort;
-      data.context.window = number(values.model_context_window) ?? data.context.window;
     });
-    arm(true);
-    settle.start();
+    readConfig();
+    wake((data, now) => { data.due = { settle: now + 2000 }; }, true);
   };
   api.on('start', configure);
   api.on('resume', configure);
@@ -238,11 +263,9 @@ export default function activate(api: ModAPI) {
   api.on('turn_end', () => {
     update(data => {
       data.tools = {};
-      // The turn after the one an apply landed in runs with the host's current settings, whichever route changed them.
       if (data.pending) data.pending = data.pending.turns || JSON.stringify(config) === JSON.stringify(data.pending.to) ? null : { ...data.pending, turns: 1 };
     });
-    arm();
-    soon.start();
+    soon(job => job !== 'settle' && job !== 'tick', 1000);
   });
   api.on('compaction_end', ({ outcome }) => {
     if (outcome === 'compacted' || outcome === 'replaced') update(data => { data.context.compactions += 1; data.context.compacted = Date.now(); });
@@ -261,7 +284,7 @@ export default function activate(api: ModAPI) {
   api.on('tool_result', ({ call_id, tool, agent_id, thread_id }) => {
     if (agent_id || thread_id && saved().thread && thread_id !== saved().thread) return;
     update(data => { delete data.tools[call_id]; });
-    if (/patch|edit|write|exec|shell/.test(tool)) gitSoon.start();
+    if (/patch|edit|write|exec|shell/.test(tool) && gitNeeds(saved()).length) soon(job => job === 'git', 2000);
   });
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update_ = object(params);
@@ -304,18 +327,26 @@ export default function activate(api: ModAPI) {
     if (publisher === 'omd_statusline' && 'pending' in sent) {
       const pending = object(sent.pending);
       update(next => { next.pending = Array.isArray(pending.from) ? { from: pending.from.filter((item: unknown) => typeof item === 'string').slice(-8), to: settings(object(pending.to)), turns: 0 } : null; });
-      return pollGithub(true);
+      refreshGit();
+      pollGithub(true);
+      return wake();
     }
-    arm(true);
     refresh(true);
+    wake();
   });
 
   const editor = (): Editor => {
     const stored = object(api.uiState.get());
-    return { draft: 'draft' in stored ? settings(object(stored.draft)) : effective(saved()), notice: typeof stored.notice === 'string' ? stored.notice : null };
+    const current = effective(saved());
+    return 'draft' in stored ? { draft: settings(object(stored.draft)), base: typeof stored.base === 'string' ? stored.base : JSON.stringify(current), notice: typeof stored.notice === 'string' ? stored.notice : null }
+      : { draft: current, base: JSON.stringify(current), notice: null };
+  };
+  const fresh = (notice: string | null = null): Editor => {
+    const current = effective(saved());
+    return { draft: current, base: JSON.stringify(current), notice };
   };
   const ids = () => [...SEGMENTS, ...configured.scripts.map(script => `script:${script.id}`)];
-  const flatten = (draft: Settings) => layout(draft, configured.scripts.map(script => script.id));
+  const flatten = (draft: Settings) => layout(draft, configured.scripts.map(script => script.id), saved().seed);
   const custom = (draft: Settings): [Settings, string[][]] => [{ ...draft, preset: 'custom', hidden: '' }, flatten(draft)];
   const joined = (lines: string[][]) => lines.filter(line => line.length).map(line => line.join(' ')).join('; ');
   const edit = (state: Editor, verb: string, rest: string[]): Editor => {
@@ -330,6 +361,21 @@ export default function activate(api: ModAPI) {
       const { tones, github, refresh_s, scripts } = state.draft;
       return { ...state, draft: { ...DEFAULTS, tones, github, refresh_s, scripts }, notice: 'Defaults restored in the preview; Save keeps them' };
     }
+    if (verb === 'move') {
+      const [draft, lines] = custom(state.draft);
+      const row = lines.findIndex(line => line.includes(first));
+      if (row < 0) return state;
+      const line = lines[row];
+      const at = line.indexOf(first);
+      const step = Number(value);
+      if (line[at + step] !== undefined) [line[at], line[at + step]] = [line[at + step], line[at]];
+      else if (lines[row + step]) {
+        line.splice(at, 1);
+        if (step < 0) lines[row + step].push(first);
+        else lines[row + step].unshift(first);
+      }
+      return { ...state, draft: { ...draft, layout: joined(lines) }, notice: null };
+    }
     if (verb !== 'put' || !ids().includes(first)) return state;
     const [draft, lines] = custom(state.draft);
     const kept = lines.map(line => line.filter(id => id !== first));
@@ -341,31 +387,44 @@ export default function activate(api: ModAPI) {
   const field = (value: string) => value.slice(0, encoder.encodeInto(value, new Uint8Array(2000)).read);
   const panel = (state: Editor): TerminalPanel => {
     const data = saved();
-    const preview = render(data, state.draft, { now: Date.now(), columns: PREVIEW_COLUMNS, cwd: data.cwd, settled: null }).map(spans => spans.map(span => span.text).join(''));
-    const problem = configured.error ?? state.notice;
+    const now = Date.now();
+    const cwd = data.cwd ?? '/home/you/project';
+    const drawn = render(preview(data, state.draft, now, cwd), state.draft, { now, columns: PREVIEW_COLUMNS, cwd, settled: null }).map(spans => spans.map(span => span.text).join(''));
+    const dirty = JSON.stringify(state.draft) !== JSON.stringify(effective(data));
     const lines = flatten(state.draft);
-    const choice = (id: 'placement' | 'preset' | 'glyphs', label: string, options: string[]): TerminalPanelItem =>
-      ({ id, tab: 'settings', label, kind: 'choice', value: state.draft[id], options: options.map(option => ({ value: option, label: option })) });
-    const segment = (id: string): TerminalPanelItem => {
+    const order = lines.flat();
+    const name = (id: string) => LABELS[id as keyof typeof LABELS] ?? `Script: ${id.slice(7)}`;
+    const choice = (id: 'placement' | 'preset' | 'glyphs', label: string, options: [string, string][]): TerminalPanelItem =>
+      ({ id, tab: 'settings', label, kind: 'choice', value: state.draft[id], options: options.map(([value, text]) => ({ value, label: text })) });
+    const save = (id: string, tab: string): TerminalPanelItem => ({ id, tab, label: dirty ? 'Save (unsaved changes)' : 'Save', description: dirty ? 'Keep the previewed settings' : 'Nothing changed yet', kind: 'action' });
+    const segment = (id: string): TerminalPanelItem[] => {
       const at = lines.findIndex(line => line.includes(id));
       const others = lines.filter(line => line.some(other => other !== id)).length;
       const slots = Array.from({ length: Math.min(4, others + 1) }, (_, index) => ({ value: String(index + 1), label: `Line ${index + 1}` }));
-      return { id: `segment:${id}`, tab: 'segments', label: id, kind: 'choice', value: at >= 0 ? String(at + 1) : 'off', options: [{ value: 'off', label: 'Hidden' }, ...slots] };
+      const index = order.indexOf(id);
+      return [{ id: `segment:${id}`, tab: 'segments', label: name(id), description: `Segment ${id}`, kind: 'choice', value: at >= 0 ? String(at + 1) : 'off', options: [{ value: 'off', label: 'Hidden' }, ...slots] },
+        ...index > 0 ? [{ id: `up:${id}`, tab: 'segments', label: `Move earlier: ${name(id)}`, kind: 'action' as const }] : [],
+        ...index >= 0 && index < order.length - 1 ? [{ id: `down:${id}`, tab: 'segments', label: `Move later: ${name(id)}`, kind: 'action' as const }] : []];
     };
     return {
       title: 'Status line', search: true, action: { command: 'statusline', args: 'panel' },
-      subtitle: [problem && visible(problem, 200), `Preview (${state.draft.placement} the composer):`, ...preview.length ? preview : ['Nothing to show yet: segments appear once their data arrives']].filter(Boolean).join('\n'),
+      subtitle: [configured.error ?? state.notice, dirty && 'Unsaved changes: Save keeps them, Discard changes drops them',
+        state.draft.preset === 'auto' && data.seed !== null && 'Layout from your Codex tui.status_line',
+        `Preview (${state.draft.placement} the composer; sample values where no data has arrived yet):`, ...drawn.length ? drawn : ['Nothing to show']]
+        .filter((line): line is string => typeof line === 'string').map(line => visible(line, 200)).join('\n'),
       tabs: [{ id: 'settings', title: 'Settings' }, { id: 'segments', title: 'Segments' }],
       items: [
-        choice('placement', 'Placement', ['below', 'above']),
-        choice('preset', 'Preset', ['compact', 'detailed', 'custom']),
-        choice('glyphs', 'Glyphs', ['unicode', 'ascii']),
+        choice('placement', 'Placement', [['below', 'below'], ['above', 'above']]),
+        choice('preset', 'Preset', [['auto', data.seed === null ? 'auto (compact)' : 'auto (from tui.status_line)'], ['compact', 'compact'], ['detailed', 'detailed'], ['custom', 'custom']]),
+        choice('glyphs', 'Glyphs', [['unicode', 'unicode'], ['ascii', 'ascii']]),
         { id: 'bars', tab: 'settings', label: 'Progress bars', kind: 'toggle', value: state.draft.bars },
-        { id: 'thresholds', tab: 'settings', label: 'Thresholds', description: 'warn,alert per segment, such as context=70,90', kind: 'text', value: field(state.draft.thresholds) },
-        { id: 'apply', tab: 'settings', label: 'Save', description: 'Keep these settings', kind: 'action' },
+        { id: 'thresholds', tab: 'settings', label: 'Warning levels', description: 'segment=warn,alert: context and limits in percent used, cost in USD (context=70,90 limits=70,90 cost=5,20)', kind: 'text', value: field(state.draft.thresholds) },
+        save('apply', 'settings'),
+        { id: 'discard', tab: 'settings', label: 'Discard changes', description: 'Back to the saved settings', kind: 'action' },
         { id: 'reset', tab: 'settings', label: 'Reset to defaults', description: 'In the preview until you save', kind: 'action' },
-        { id: 'order', tab: 'segments', label: 'Order', description: 'Segment names in order, lines separated by ;', kind: 'text', value: field(joined(lines)) },
-        ...ids().map(segment),
+        save('save', 'segments'),
+        { id: 'order', tab: 'segments', label: 'Order', description: 'Segment ids in order, lines separated by ;', kind: 'text', value: field(joined(lines)) },
+        ...[...order, ...ids().filter(id => !order.includes(id))].flatMap(segment),
       ],
     };
   };
@@ -394,15 +453,18 @@ export default function activate(api: ModAPI) {
       return shown.ok ? null : { display: `The status line editor is unavailable: ${shown.error}` };
     };
     if (verb && verb !== 'panel') return { display: HELP };
-    if (!verb) return show({ draft: effective(saved()), notice: null });
     const state = editor();
+    if (!verb) return show(JSON.stringify(state.draft) === state.base ? fresh() : { ...state, notice: null });
     const [item = '', ...value] = rest;
     if (!item) return show(state);
-    if (item !== 'apply') {
+    if (item === 'discard') return show(fresh('Changes discarded'));
+    if (item !== 'apply' && item !== 'save') {
+      const [kind, id = ''] = item.split(/:(.*)/);
       const next = item === 'reset' ? edit(state, 'reset', [])
         : item === 'order' ? edit(state, 'order', value)
-          : item.startsWith('segment:') ? edit(state, 'put', [item.slice(8), ...value])
-            : edit(state, 'set', [item, ...value]);
+          : kind === 'segment' ? edit(state, 'put', [id, ...value])
+            : kind === 'up' || kind === 'down' ? edit(state, 'move', [id, kind === 'up' ? '-1' : '1'])
+              : edit(state, 'set', [item, ...value]);
       return show(next);
     }
     const data = saved();
@@ -410,11 +472,10 @@ export default function activate(api: ModAPI) {
     const values = Object.fromEntries(Object.entries(state.draft).filter(([key, entry]) => current[key as keyof Settings] !== entry));
     if (!Object.keys(values).length) return show({ ...state, notice: 'Status line unchanged' });
     const superseded = (data.pending?.from ?? []).filter(entry => entry !== JSON.stringify(config));
-    // The session records the apply through this mod's own channel; writing this mod's settings reloads it, so no host call, durable state or command view may follow a successful write.
     api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: { from: [...superseded, JSON.stringify(config)].slice(-8), to: state.draft } } });
     const written = api.host.tryCall('settings.write', { values });
     if (written.ok) {
-      api.uiState.set({ ...state, notice: 'Status line saved' } as unknown as Json);
+      api.uiState.set({ draft: state.draft, base: JSON.stringify(state.draft), notice: 'Status line saved' } as unknown as Json);
       return null;
     }
     api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: data.pending } as unknown as Json });
@@ -436,7 +497,6 @@ export default function activate(api: ModAPI) {
     const data = saved();
     const columns = number(input.client?.columns) ?? 120;
     const rows = number(input.client?.rows);
-    // Drawing writes durable state only when something it caches changed: mod counts or the viewport. Thread-scoped state can't be written before the session has a thread (the startup event has no ledger).
     const viewport = rows !== null ? { columns, rows } : data.viewport;
     const mods = input.identity?.mods ?? data.mods;
     const changed = JSON.stringify([viewport, mods]) !== JSON.stringify([data.viewport, data.mods]);

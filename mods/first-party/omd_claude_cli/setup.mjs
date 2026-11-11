@@ -101,14 +101,20 @@ export async function discover(claude, account = null) {
       name: million && !/1M/i.test(label) ? `${label} (1M context)` : label,
       description: String(option.description ?? ''), efforts: option.supportsEffort ? option.supportedEffortLevels ?? [] : [],
       thinking: option.supportsAdaptiveThinking === true };
-    const probe = await offline(claude, cliArgs(entry, entry.efforts.at(-1)),
-      [{ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'ok' }] } }], account);
-    entry.window = probe.find(event => event.type === 'result')?.modelUsage?.[entry.cli]?.contextWindow;
-    if (!Number.isInteger(entry.window) || entry.window < 100000) throw new Error(`claude_context_window_unmeasured:${entry.cli}`);
     models.push(entry);
     if (models.length === 16) break;
   }
   if (!models.length) throw new Error('claude_model_catalog_empty');
+  for (let offset = 0; offset < models.length; offset += 4) {
+    const results = await Promise.allSettled(models.slice(offset, offset + 4).map(async entry => {
+      const probe = await offline(claude, cliArgs(entry, entry.efforts.at(-1)),
+        [{ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'ok' }] } }], account);
+      entry.window = probe.find(event => event.type === 'result')?.modelUsage?.[entry.cli]?.contextWindow;
+      if (!Number.isInteger(entry.window) || entry.window < 100000) throw new Error(`claude_context_window_unmeasured:${entry.cli}`);
+    }));
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+  }
   return models;
 }
 

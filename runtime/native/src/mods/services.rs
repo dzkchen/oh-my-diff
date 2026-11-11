@@ -149,6 +149,17 @@ impl Service {
     }
 }
 
+async fn stop_services(services: Vec<Service>) {
+    for service in &services {
+        if let Some(job) = &service.job {
+            job.abort();
+        }
+    }
+    for service in services {
+        service.stop().await;
+    }
+}
+
 impl Services {
     pub(super) fn new(terminal_owner: Option<String>) -> Self {
         Self {
@@ -168,9 +179,7 @@ impl Services {
             })
             .map(|(_, service)| service)
             .collect::<Vec<_>>();
-        for service in stale {
-            service.stop().await;
-        }
+        stop_services(stale).await;
         drop(records);
     }
 
@@ -184,9 +193,7 @@ impl Services {
                 .map(|(_, agent)| agent)
                 .collect::<Vec<_>>()
         };
-        for agent in owned {
-            agent.stop().await;
-        }
+        stop_services(owned).await;
     }
 
     pub(super) async fn cleanup_session(&self, session: &Session) {
@@ -201,9 +208,7 @@ impl Services {
                 .filter_map(|key| records.remove(&key))
                 .collect::<Vec<_>>()
         };
-        for service in owned {
-            service.stop().await;
-        }
+        stop_services(owned).await;
     }
 
     async fn publish_models(
@@ -1000,6 +1005,71 @@ async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn service_cleanup_aborts_all_jobs_before_waiting_for_the_first() {
+        let root = tempfile::tempdir().unwrap();
+        let task = Arc::new(
+            Task::create(
+                codex_omd::Limits {
+                    requests: 3,
+                    exposure_microusd: 100,
+                    seconds: 30,
+                    concurrent_workers: 2,
+                    max_depth: 2,
+                },
+                root.path().join("evidence"),
+            )
+            .unwrap(),
+        );
+        let (release, wait) = std::sync::mpsc::channel();
+        let (started, start) = tokio::sync::oneshot::channel();
+        let first = tokio::task::spawn_blocking(move || {
+            started.send(()).unwrap();
+            let _ = wait.recv();
+            Ok(Value::Null)
+        });
+        start.await.unwrap();
+        struct Cancelled(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Cancelled {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+        let (cancelled, cancellation) = tokio::sync::oneshot::channel();
+        let guard = Cancelled(Some(cancelled));
+        let second = tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+            Ok(Value::Null)
+        });
+        let service = |job| Service {
+            terminal_owner: None,
+            mod_id: "m".into(),
+            generation: 1,
+            started_at_ms: 0,
+            route: None,
+            job: Some(job),
+            task: task.clone(),
+            worker: "worker".into(),
+            _gateway: None,
+            _snapshot: tempfile::tempdir().unwrap(),
+        };
+        let first = service(first);
+        let snapshot = first._snapshot.path().to_path_buf();
+        let cleanup = tokio::spawn(stop_services(vec![first, service(second)]));
+        tokio::time::timeout(Duration::from_secs(5), cancellation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!cleanup.is_finished());
+        assert!(snapshot.exists());
+        release.send(()).unwrap();
+        cleanup.await.unwrap();
+        assert!(!snapshot.exists());
+    }
 
     #[test]
     fn loopback_provider_grants_define_their_provider() {

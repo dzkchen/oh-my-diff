@@ -3,7 +3,7 @@
 Build and test Oh My Diff (OMD) mods in a scratch store. Ask the user before installing one in their real store.
 Follow the [work order](#work-in-this-order) below and use the [mod author guides](#guides-to-follow) for examples.
 
-Everything here is for mod API `1.0.0` on Codex `0.167.0`, Apple Silicon macOS. Only that API version loads, so check
+Everything here is for mod API `1.0.0` on Codex `0.167.1`, Apple Silicon macOS. Only that API version loads, so check
 `api` in a mod's `mod.json` before you reuse older code. Tool versions are in [Support](support.md).
 
 ## Rules
@@ -74,6 +74,7 @@ See [Mods, plugins, skills and hooks](how-omd-works.md#mods-plugins-skills-and-h
 | Scratch store, watch, status, reports, cost | [Run and debug a mod](mod-authors/run-and-debug.md) |
 | Author tools without an OMD install | [Run the author tools from a source checkout](mod-authors/run-from-source.md) |
 | Scenario files, TypeScript tests, mocks | [Test a mod](mod-authors/test-a-mod.md) |
+| Component choices, tones, layout and keyboard behavior | [Terminal UI style guide](STYLEGUIDE.md) |
 | Install, Git, npm, update, roll back | [Install, share and update a mod](mod-authors/publish-a-mod.md) |
 | Ship skills and a mod together | [Bundle a mod in a plugin](mod-authors/bundle-in-a-plugin.md) |
 | Change the shape of saved state | [Change a mod's saved state](mod-authors/migrate-state.md) |

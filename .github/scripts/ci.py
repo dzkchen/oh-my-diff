@@ -313,7 +313,7 @@ def update_acceptance(archive, version, upstream):
                                    "--bin-dir", base / "bin", "--upstream", codex], env=env)
 
         def installed(codex, expected):
-            status = json.loads(installer(codex, "status"))["profile"]
+            status = json.loads(installer(codex, "status", "--json"))["profile"]
             if status["version"] != expected or any(item["error"] or not item["pinned_source_current"] for item in status["packages"]):
                 raise ValueError(f"expected a healthy {expected} installation:\n{json.dumps(status, indent=2)}")
 
@@ -397,10 +397,12 @@ def publish_mods(directory, dry_run=False):
     support.output(create)
 
 
-def publish(directory, notes=None, dry_run=False):
+def publish(directory, notes=None, dry_run=False, expected_version=None):
     provenance = json.loads((directory / "provenance.json").read_text())
     manifest = json.loads((directory / "omd-release.json").read_text())
     version = manifest["version"]
+    if expected_version is not None and version != expected_version:
+        raise ValueError(f"release package version {version} does not match {expected_version}")
     pattern = r"\d+\.\d+\.\d+(?:-rc\.\d+)?" if notes else r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.\d+"
     if (provenance["commit"] != os.environ["GITHUB_SHA"] or provenance["version"] != version
             or not re.fullmatch(pattern, version)
@@ -450,7 +452,7 @@ def main():
     parser.add_argument("--directory", type=Path, default=Path("release"))
     parser.add_argument("--suite", choices=("native", "core", "core-integration"))
     parser.add_argument("--release", action="store_true", help="validate: the core integration suite reports but does not gate")
-    parser.add_argument("--version", help="package this stable release version instead of a nightly")
+    parser.add_argument("--version", help="package this stable release version, or require it when publishing")
     parser.add_argument("--notes", type=Path, help="publish a stable release with these notes")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -459,7 +461,7 @@ def main():
             parser.error("validate requires --job")
         raise SystemExit(validate(args.job, args.release))
     if args.command == "publish":
-        publish(args.directory, args.notes, args.dry_run)
+        publish(args.directory, args.notes, args.dry_run, args.version)
     elif args.command == "publish-mods":
         publish_mods(args.directory, args.dry_run)
     elif args.command == "package":

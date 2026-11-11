@@ -1,0 +1,44 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "ember",
+  "name": "Ember mark",
+  "detail": "The OMD mark glowing over a banked fire; embers rise and drift on the draft.",
+  "sky": [
+    "#0b0910",
+    "#1a0d0f",
+    "#34140a"
+  ],
+  "palette": {
+    "tint": [
+      "#2a140c",
+      "#14090a"
+    ],
+    "accent": "#ffd27a"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "emblem",
+      "colors": [
+        "#ff7a2a",
+        "#ffc46b",
+        "#ff5a1f",
+        "#ff6a1a",
+        "#6b3a26",
+        "#ffd27a",
+        "#ff8a2a",
+        "#ff4d1a"
+      ],
+      "art": [
+        [
+          " ###  #   # #### ",
+          "#   # ## ## #   #",
+          "#   # # # # #   #",
+          "#   # #   # #   #",
+          " ###  #   # #### "
+        ]
+      ]
+    }
+  ]
+}

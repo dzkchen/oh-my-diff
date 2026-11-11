@@ -9,6 +9,7 @@ short arguments and their result. It's on by default in OMD+. OMD Core doesn't i
 ✗ 2 searches needle · 1 interrupted · 0.2s
 • Edit tui/src/transcript_view/layout.rs · +9 −3
 ✗ Shell pnpm lint · exit 1 · 18 lines · 2.4s
+  └ error: lint failed
 ```
 
 ## Turn it off
@@ -37,10 +38,10 @@ It has no settings.
 
 - It uses the `terminal` and `builtins` capabilities to draw tool rows and group shell commands. Its host needs
   `render_hooks_v1`, `builtins_v1` and `transcript_exec_groups_v1`.
-- Groups show failed and interrupted command counts separately, marked `✗`; expand the group for each command
-  and its exit code.
+- Groups show failed and interrupted command counts separately, marked `✗`, with the latest failure's exit code
+  (`2 failed · exit 127`); expand the group for each command.
 - Shell commands join their group when they start, so its running count includes commands such as `cargo test`.
-- A failed row is marked `✗` with the exit code, and a second line shows why: the last output line of a shell
+- A failed row is marked `✗` with the exit code, and a second, muted line shows why: the last output line of a shell
   command (the latest failed one in a group), or the first error line of an MCP or app tool.
 - Your own `!cmd` commands, approvals, `/diff` and the assistant's messages look the same as before.
 - Inline sessions (`--no-alt-screen`) print one-line rows to scrollback. `Ctrl+T` shows them in full.
