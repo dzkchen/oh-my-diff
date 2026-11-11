@@ -11,8 +11,8 @@
   },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_theme"},
-  "capabilities": ["terminal", "commands", "store", "events", "lifecycle", "builtins", "exec"],
-  "assets": ["scenes.ts", "steps.ts"],
+  "capabilities": ["terminal", "commands", "store", "events", "lifecycle", "builtins", "exec", "fs.read"],
+  "assets": ["scenes.ts", "steps.ts", "canvas.ts", "builtins.ts", "custom.ts"],
   "exec_environment": ["TERM_PROGRAM", "KITTY_WINDOW_ID", "GHOSTTY_RESOURCES_DIR", "WEZTERM_EXECUTABLE"],
   "subscriptions": {"channels": ["omd_theme/wake"]},
   "compatibility": {

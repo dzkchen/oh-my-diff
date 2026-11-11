@@ -1,0 +1,14 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "lanterns",
+  "name": "Lanterns",
+  "detail": "Warm lights drift up through a blue night.",
+  "sky": ["#070d26", "#16213a", "#302238"],
+  "palette": { "tint": ["#16213a", "#302238"], "accent": "#ffd699" },
+  "layers": [
+    { "kind": "glow", "x": 0.65, "y": { "base": 0.45, "amplitude": 0.08, "period": 12 }, "radius": 0.4, "color": "#ffab56", "alpha": 0.25 },
+    { "kind": "particles", "count": 28, "seed": 17, "vx": 0.15, "vy": -0.5, "sway": 1.5, "glyphs": ".*o", "colors": ["#ffd699", "#f9a45c"], "alpha": 0.85 },
+    { "kind": "sprite", "x": { "base": 0.3, "amplitude": 0.04, "period": 9 }, "y": { "base": 0.8, "drift": -0.015 }, "rows": [" aa ", "abba", " aa ", " .. "], "ink": { "a": "#f4a257", "b": "#fff1c2", ".": "#b75e3a" }, "alpha": 0.9 }
+  ]
+}
