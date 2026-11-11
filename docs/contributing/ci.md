@@ -7,18 +7,18 @@ workflow and job. For local test commands, see [tests/README.md](../../tests/REA
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `pr.yml` | Pull requests, the merge queue and pushes to `main` | Portable checks, selected native compilation, one `PR gate` status; main pushes warm the compile cache |
+| `pr.yml` | Pull requests, the merge queue and pushes to `main` | Portable checks, selected native compilation and one `PR gate` status |
 | `validate.yml` | Called by the two below | Tests, lints, builds and packages on `macos-15` |
 | `nightly.yml` | Daily at 07:17 UTC, or **Run workflow** | Validates; on `main` publishes a nightly prerelease |
-| `release.yml` | A `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates, publishes the release |
+| `release.yml` | A `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates or reuses a passing dry run for the same commit, then publishes |
 | `issue-triage.yml` | An issue is opened or edited | Adds the `area:` label for the form's Area field |
 
 ## Pull requests
 
 Every pull request runs the portable checks on Linux: mod type and static checks (`mise run mods:check`), native
 ownership, first-party mod and plugin lock freshness, a selected set of host-free Python tests and workflow linting.
-A newer push cancels the older run. Pushes to `main` also run these checks, always including native compilation,
-to seed the shared compile cache for new PRs.
+A newer push cancels the older run. Pushes to `main` use the same native selection and warm the shared compile
+cache when native inputs change. A documentation-only push does not rebuild Rust.
 
 There is no workflow-level path filter, so documentation pull requests also report `PR gate`. The gate requires
 successful selection and portable checks, and successful native checks when they're selected. Only an
@@ -31,7 +31,9 @@ mod examples, first-party packages, plugins, or the Python and Node `tests/`. An
 unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Every `runtime/` change
 selects it, Markdown copies included, to detect patch drift.
 
-The selection compares the merge commit with its first parent and examines both paths of a rename.
+For a pull request, the selection compares the merge commit with its first parent. A main push compares against
+the commit before the push, including every pushed commit. The merge queue supplies its base commit. The
+selection examines both paths of a rename. A new push to a pull request checks the entire merged diff again.
 
 The native job runs on macOS. It replays the patch and fails on drift, runs Rustfmt, and compiles `codex-cli`,
 `codex-exec` and all crates tested by the nightly, including their test targets. Native tests run only in the nightly
@@ -74,6 +76,11 @@ The nightly also runs the tests that `mise run mods:test` lists but leaves to ot
 Only passing runs on `main` publish. The version is `NEXT-nightly.UTC_TIMESTAMP.RUN_ID.ATTEMPT`, where `NEXT` is the
 version in `runtime/release.lock.json`, or its next patch if that is a stable release. A nightly is always a
 prerelease and never marked latest.
+
+For a release tag, CI can download the package from a passing release dry run for that exact commit and version.
+The tag run checks the dry run's workflow, jobs and artifact identity, then verifies the downloaded package and
+signs it before publishing. If no eligible package remains, CI runs full validation. Nightly compiler caches do
+not qualify a package for this reuse. See [Cut a release](release.md).
 
 Releases and first-party mod bundles (the manual Mods workflow) are in [Cut a release](release.md).
 

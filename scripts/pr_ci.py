@@ -32,8 +32,15 @@ def main():
         results = json.loads(os.environ["PR_NEEDS"])
         print(json.dumps(results, indent=2))
         raise SystemExit(0 if gate(results) else 1)
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    if os.environ["GITHUB_EVENT_NAME"] == "push":
+        base = event["before"]
+    elif os.environ["GITHUB_EVENT_NAME"] == "merge_group":
+        base = event["merge_group"]["base_sha"]
+    else:
+        base = "HEAD^1"
     paths = subprocess.check_output([
-        "git", "diff", "--name-only", "--no-renames", "-z", os.environ["PR_BASE_SHA"], "HEAD", "--",
+        "git", "diff", "--name-only", "--no-renames", "-z", base, "HEAD", "--",
     ]).decode().split("\0")
     selected = str(needs_native(path for path in paths if path)).lower()
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
