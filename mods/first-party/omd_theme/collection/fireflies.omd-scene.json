@@ -1,0 +1,32 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "fireflies",
+  "name": "Fireflies",
+  "detail": "A dark treeline under a night sky; fireflies wander and blink with soft halos.",
+  "sky": [
+    "#0b1830",
+    "#0a1a24",
+    "#07140e"
+  ],
+  "palette": {
+    "tint": [
+      "#10261b",
+      "#0a1a12"
+    ],
+    "accent": "#f6ffc2"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "fireflies",
+      "colors": [
+        "#9fb0d0",
+        "#04100a",
+        "#1f4a2a",
+        "#d6ff5c",
+        "#f6ffc2"
+      ]
+    }
+  ]
+}
