@@ -4438,7 +4438,8 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         Some("user"),
         "a busy thread keeps its queue"
     );
-    core.autonomy.turn_ended(core, &fixture.lead, true);
+    core.autonomy
+        .turn_ended(core, &fixture.lead, "test-turn", true);
     assert_eq!(
         pick(&grants).0,
         None,
@@ -4447,7 +4448,8 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
     core.autonomy.user_turn(&thread);
     let (first, _) = pick(&grants);
     assert_eq!(first.unwrap()["key"], "triage");
-    core.autonomy.turn_ended(core, &fixture.lead, false);
+    core.autonomy
+        .turn_ended(core, &fixture.lead, "test-turn", false);
     assert_eq!(
         core.autonomy.running(&thread).as_deref(),
         Some("monitor"),
@@ -5207,6 +5209,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
             turn_id: "turn-2",
             server,
             request_id: "7",
+            request_key: "7",
             request: &request,
             session_store,
             thread_store,
@@ -5234,6 +5237,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         turn_store: None,
         server: "docs",
         request_id: "7",
+        request_key: "7",
         action: "accept",
         content: Some(&json!({"token": "hunter2"})),
         by: None,
@@ -5249,6 +5253,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
             turn_id: "turn-2",
             server: "bulk",
             request_id: &format!("{id:02}"),
+            request_key: &format!("{id:02}"),
             request: &request,
             session_store,
             thread_store,
@@ -5260,6 +5265,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
             turn_store: None,
             server: "bulk",
             request_id: id,
+            request_key: id,
             action: "accept",
             content: Some(&json!({"token": "hunter2"})),
             by: None,
@@ -7178,4 +7184,65 @@ async fn headless_owner_views_get_their_own_clients_terminal_facts() {
     );
     assert_eq!(other, "70");
     drop(fixture);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn elicitation_redaction_isolates_threads_and_typed_ids() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["lifecycle", "approvals", "store"],
+        manifest: json!({}),
+        source: "export default api => api.on('elicitation_result', e => api.state.set([...(api.state.get() ?? []), e]));",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let session = ExtensionData::new("session");
+    let first = ExtensionData::new("first");
+    let second = ExtensionData::new("second");
+    first.insert(fixture.lead.clone());
+    second.insert(Lead {
+        thread: ThreadId::new(),
+        ..fixture.lead.clone()
+    });
+    for (store, key, secret) in [
+        (&first, "7", true),
+        (&second, "7", false),
+        (&first, "\"7\"", false),
+    ] {
+        let request = json!({"mode": "form", "requested_schema": {"properties": {"token": {"type": "string", "writeOnly": secret}}}});
+        mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
+            turn_store: store,
+            turn_id: "turn",
+            server: "docs",
+            request_id: "7",
+            request_key: key,
+            request: &request,
+            session_store: &session,
+            thread_store: store,
+        })
+        .await;
+    }
+    mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
+        turn_store: None,
+        server: "docs",
+        request_id: "7",
+        request_key: "7",
+        action: "accept",
+        content: Some(&json!({"token": "cross-thread-secret"})),
+        by: None,
+        session_store: &session,
+        thread_store: &first,
+    })
+    .await;
+    let log = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .state("observer")
+        .cloned()
+        .unwrap();
+    assert_eq!(log[0]["content"]["token"], "[redacted]");
+    assert_eq!(mods.elicitations.lock().unwrap().len(), 2);
 }

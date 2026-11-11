@@ -181,7 +181,7 @@ struct Mods {
     /// Tool and outcome of each lead call until its batch settles or its thread's next turn starts.
     settled: Mutex<BTreeMap<(String, String), (String, String)>>,
     /// Secret fields of each pending elicitation, redacted from its result.
-    elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
+    elicitations: Mutex<std::collections::VecDeque<((String, String, String), Vec<String>)>>,
 }
 
 struct PendingTool {
@@ -1495,6 +1495,7 @@ impl TurnLifecycleContributor for Mods {
             this.autonomy.turn_ended(
                 &this.core,
                 &lead,
+                input.turn_store.level_id(),
                 matches!(
                     input.reason,
                     codex_protocol::protocol::TurnAbortReason::Interrupted
@@ -1572,7 +1573,8 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
-            this.autonomy.turn_ended(&this.core, &lead, false);
+            this.autonomy
+                .turn_ended(&this.core, &lead, input.turn_store.level_id(), false);
             let Some(turn) = this.take_turn(&lead.thread) else {
                 return;
             };

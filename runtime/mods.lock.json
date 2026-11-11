@@ -181,10 +181,10 @@
         "index.ts": "665d79af2c07e6031d43544edac25f2389bcd8b53ee1c8c88b9584be8f834329",
         "mod.json": "041d4da7f1e9bb3e0d2f6764c4de475139f79c29670e6bf9157a84540485c0fa",
         "setup.mjs": "f5000fdab138b690618fbacf2e1aa1f851df311179b284026156f23c8b67eecb",
-        "transport.mjs": "db0cfef98a3cfa42540b268bbb707f2ecf50194576fa6135e25168e31fac59ef"
+        "transport.mjs": "6b276fca917aa7700eb3eddea325bfb2c61e542db36fe1c689b0252044405267"
       },
       "id": "omd_cursor",
-      "package_sha256": "769cca2c4984b8cd37036995d73274f42858c836c9e764ef5590b58107399d80",
+      "package_sha256": "9e634c98e8ccb952f476cdeaa8e3f1e8652004527bf11f5e861315bef22c67a7",
       "source": "mods/first-party/omd_cursor",
       "version": "1.0.1"
     },
@@ -623,14 +623,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "83bbf121011a0c2c000024319b5c7d1bb3ced0ea9f2414cb82de5e431e89ade6",
+        "index.ts": "1b9d2f3067c89abe86316f99e75b6255a8b18d05aa4f70b76d9f0c053a85008e",
         "mermaid.ts": "9bb9c854b9f442bf653aaf4c611921180627b69e14623661bcd2f03d35563436",
         "mod.json": "681f10971bc616adcf90e2ec7662655a401b17f6c7cbd5c7968a6f37de501a09",
         "render.mjs": "9dd37da4aebb6299f4a684f92b4ca20e4d0f1619e044123245e9ef4727bc5810",
         "text.ts": "a017c054e28b0cd4665fee3e7eaaaeb18f3bb70c9af547b7b554d2a859e77689"
       },
       "id": "omd_preview",
-      "package_sha256": "bd0fd1ba5d8b3bd5c3ffa049f95a2cc251288e71b1a3041fd31ebee99028276b",
+      "package_sha256": "34e3daae0f9687aac8a99fc17c4a91b2e6b8df44d9c582d96142ce7032503096",
       "source": "mods/first-party/omd_preview",
       "version": "1.1.2"
     },
