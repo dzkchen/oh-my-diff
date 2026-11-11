@@ -588,7 +588,7 @@ else if (argv[0] === 'auth') {
     const before = await host();
     await writeFile(join(store, 'host.json'), JSON.stringify({ ...before, worker_limits: { ...before.worker_limits, requests: 350 } }));
     const probes = (await readFile(join(root, 'auth.log'), 'utf8')).length;
-    const refreshed = spawnSync(process.execPath, [join(updated, 'setup.mjs'), 'default', 'refresh'], { encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin' } });
+    const refreshed = spawnSync(process.execPath, [join(updated, 'setup.mjs'), 'refresh'], { encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin' } });
     assert.equal(refreshed.status, 0, refreshed.stderr);
     assert.deepEqual(JSON.parse(refreshed.stdout).accounts, JSON.parse(fromCache.stdout).accounts);
     const after = await host();
@@ -696,9 +696,9 @@ const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url),
 
 const clock = 1_800_000_000_000;
 
-function modEvent(event, payload, state, answer, name) {
+function modEvent(event, payload, state, answer, name, build = {}) {
   const calls = [];
-  const output = callback({ virtual_time_ms: clock, source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings: {}, package: { id: manifest.id }, state, event, payload, name }, call => {
+  const output = callback({ virtual_time_ms: clock, source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings: {}, package: { id: manifest.id, version: build.version }, entrypoint_sha256: build.sha, state, event, payload, name }, call => {
     calls.push(call);
     return answer(call);
   });
@@ -733,23 +733,33 @@ test('login skips the browser when the CLI already reports the account signed in
   }
 });
 
-test('a session start re-applies setup once after the mod changed, and says so only when it fails', () => {
-  const accounts = [{ name: 'default', billing: 'subscription', config_dir: null, route: 'claude', models: 1 }];
-  const models = [{ slug: 'claude-opus-5', display: 'Claude Opus 5', context_window: 200000, efforts: ['high'] }];
-  const start = (state, setup = { exit_code: 0, stdout: JSON.stringify({ accounts, models }), stderr: '' }) => modEvent('start', {}, state, call => {
-    if (call.operation === 'packages.list') return { packages: [{ id: 'omd_claude_cli', path: '/store/package-cache/omd_claude_cli/new' }] };
+test('a session start re-applies setup once per update, and reports a failure once', () => {
+  const accounts = [{ name: 'work', billing: 'subscription', config_dir: '/store/routes/claude/accounts/work', route: 'claude-work', models: 1 }];
+  const models = [{ slug: 'claude-opus-5.work', display: 'Claude Opus 5 · work', context_window: 200000, efforts: ['high'] }];
+  const ok = { exit_code: 0, stdout: JSON.stringify({ accounts, models }), stderr: '' };
+  const start = (state, { sha = 'aaa', version = '1.0.0', path = '/store/sources/omd_claude_cli', setup = ok, register = true } = {}) => modEvent('start', {}, state, call => {
+    if (call.operation === 'packages.list') return { packages: [{ id: 'omd_claude_cli', path }] };
+    if (call.operation === 'providers.register' && !register) throw new Error('sidecar_start_failed');
     return call.operation === 'exec.run' ? setup : {};
-  });
-  const runs = result => result.calls.filter(call => call.operation === 'exec.run').map(call => call.arguments.argv);
-  assert.deepEqual(runs(start(null)), []);
-  const stale = start({ accounts, models, setup: ' /store/package-cache/omd_claude_cli/old' });
-  assert.deepEqual(runs(stale), [['/store/package-cache/omd_claude_cli/new/setup.mjs', 'default', 'refresh']]);
-  assert.equal(stale.state.setup, ' /store/package-cache/omd_claude_cli/new');
-  assert.deepEqual(notices(stale.calls), []);
-  assert.deepEqual(runs(start(stale.state)), []);
-  const failed = start({ accounts, models }, { exit_code: 1, stdout: '', stderr: 'host_route_limit' });
+  }, undefined, { sha, version });
+  const ran = (result, operation = 'exec.run') => result.calls.filter(call => call.operation === operation).map(call => call.arguments.argv);
+  assert.deepEqual(ran(start(null)), []);
+  const first = start({ accounts, models });
+  assert.deepEqual(ran(first), [['/store/sources/omd_claude_cli/setup.mjs', 'refresh']]);
+  assert.deepEqual(notices(first.calls), []);
+  const again = start(first.state);
+  assert.deepEqual([ran(again), ran(again, 'packages.list')], [[], []]);
+  assert.equal(ran(start(first.state, { sha: 'bbb' })).length, 1);
+  assert.equal(ran(start(first.state, { version: '1.0.1' })).length, 1);
+  assert.equal(ran(start(first.state, { sha: null, path: '/store/package-cache/omd_claude_cli/new' })).length, 1);
+  const failed = start({ accounts, models }, { setup: { exit_code: 1, stdout: '', stderr: 'host_route_limit' } });
   assert.match(notices(failed.calls)[0], /could not re-apply its setup after the update: host_route_limit; run \/claude login/);
-  assert.equal(failed.state.setup, undefined);
+  const quiet = start(failed.state, { setup: { exit_code: 1, stdout: '', stderr: 'host_route_limit' } });
+  assert.deepEqual([ran(quiet), notices(quiet.calls)], [[], []]);
+  assert.equal(ran(start(failed.state, { sha: 'bbb' })).length, 1);
+  const stopped = start({ accounts, models }, { register: false });
+  assert.match(notices(stopped.calls)[0], /the provider did not start; restart OMD\+ and run \/claude/);
+  assert.equal(ran(start(stopped.state, { register: false })).length, 0);
 });
 
 test('login runs as a background process that says the sign-in link once and reports through setup', () => {

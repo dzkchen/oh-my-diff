@@ -134,13 +134,13 @@
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "34c61c2bc7ff1b6c0f540cb3d532d5c36e4496987ab6291747037bd9327423d7",
+        "index.ts": "bb073a838bcbd4a5899804a6f53bab07311751a54881b83d1f1181f39f381ac6",
         "mod.json": "9c1f8e05f976574a9eb4d84013f905404d9ab5e356e50587ff2266809929da97",
-        "setup.mjs": "5f4dc4a7f9881048e955d5362d3b8a4c9cce2b12a0f1d4ba0f44390db71f9b53",
+        "setup.mjs": "51d7bd66a504ee28db080c33db92f2e1d9d23bf48698f9fe03c4661a610c059e",
         "transport.mjs": "4f85584f8e53141d39e8520baf1b6864d571f18c25140b27389699a547903e33"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "ef580130dacbe79a1cb2b80ef531df9885755d2726a866ac910b0dc5bde2c09a",
+      "package_sha256": "7e2911fc63bbec00a09b5b31562ec6cf7abb46d9d43132bfebd8f87833ac9674",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.4"
     },
