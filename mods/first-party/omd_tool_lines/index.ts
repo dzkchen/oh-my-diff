@@ -112,6 +112,7 @@ const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null =>
 const group = (calls: RenderExecCall[]): Row => {
   const failed = calls.filter(call => call.status === 'failed' || call.status === 'interrupted');
   const interrupted = calls.filter(call => call.status === 'interrupted');
+  const latestFailed = calls.filter(call => call.status === 'failed').at(-1);
   const running = calls.filter(call => call.status === 'running');
   const latest = running.at(-1) ?? failed.at(-1) ?? calls.at(-1)!;
   const counts = new Map<string, number>();
@@ -125,9 +126,10 @@ const group = (calls: RenderExecCall[]): Row => {
     args: exec(latest).args,
     marker: [running.length ? `${running.length} running` : null,
       failed.length > interrupted.length ? `${failed.length - interrupted.length} failed` : null,
+      latestFailed?.exit_code ? `exit ${latestFailed.exit_code}` : null,
       interrupted.length ? `${interrupted.length} interrupted` : failed.length || running.length ? null : 'ok',
       duration(calls.reduce((total, call) => total + (call.duration_ms ?? 0), 0))],
-    failed: failed.length > 0, running: running.length > 0, reason: lastLine(failed.filter(call => call.status === 'failed').at(-1)?.output_tail),
+    failed: failed.length > 0, running: running.length > 0, reason: lastLine(latestFailed?.output_tail),
   };
 };
 
@@ -150,7 +152,7 @@ const line = (id: string, item: Row, columns: number): TerminalComponent => {
 
 const reason = (id: string, text: string, columns: number): TerminalComponent => {
   const shown = fit(text, Math.max(0, Math.min(columns, 256) - 4), 240);
-  return { type: 'line', id, label: fit(text, 120, 120, 120), spans: [{ text: `  └ ${shown}`, tone: 'failure' }] };
+  return { type: 'line', id, label: fit(text, 120, 120, 120), spans: [{ text: `  └ ${shown}`, tone: 'muted' }] };
 };
 
 export default function activate(api: ModAPI) {

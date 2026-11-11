@@ -76,7 +76,8 @@ export default function activate(api: ModAPI) {
       }
       delete state.pending[key];
       if (!answered.ok) continue;
-      api.host.tryCall('terminal.notice', { text: `No answer within ${Math.round(limit / 1000)} s (the user may be away), so ${WHAT[item.kind]} automatically. Continue with work that does not depend on it.`,
+      const first = api.host.tryCall('store.put', { key: 'first_notice', value: true, expected_revision: null, scope: 'user' }).ok;
+      api.host.tryCall('terminal.notice', { text: `No answer within ${Math.round(limit / 1000)} s (the user may be away), so ${WHAT[item.kind]} automatically.${first ? ' omd_auto_continue does this; to turn it off, open /mods and disable it.' : ''} Continue with work that does not depend on it.`,
         kind: 'info', placement: 'transcript', audience: 'user' });
       if (item.kind === 'approval') api.host.tryCall('terminal.notice', { text: `The approval was declined because no one answered within ${Math.round(limit / 1000)} s: a timeout, not a refusal. Do not retry actions that need approval; continue with work that does not.`,
         kind: 'info', placement: 'transcript', audience: 'model' });

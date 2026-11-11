@@ -214,6 +214,24 @@ test('a mod that needs approval again says so and names the command that reviews
   assert.match(scoped.detail, /omd mods update omd_preview --scope project$/);
 });
 
+test('status and failure lines use plain words with a next step, and unknown codes keep their raw text', () => {
+  const rows = packages => invoke('', { packages }).panels[0].items.filter(item => item.tab === 'installed');
+  const [changed] = rows([mod('omd_preview', { failed: 'source_changed: omd_preview changed after it was trusted; review it' })]);
+  assert.match(changed.detail, /Why it failed: its files changed after you trusted them; review the change, then trust it again/);
+  assert.doesNotMatch(changed.detail, /source_changed/);
+  const [unknown] = rows([mod('omd_preview', { failed: 'activation failed' })]);
+  assert.match(unknown.detail, /Why it failed: activation failed/);
+  const [twice] = rows([mod('omd_preview', { conflicts: ['mod_conflict: omd_preview is enabled twice in the user scope'] })]);
+  assert.match(twice.detail, /Conflict: two copies of it are on in the same place; turn one off/);
+  const [blocked] = rows([mod('omd_preview', { enabled: false, effective: false, blocked: 'bad release' })]);
+  assert.match(blocked.detail, /^blocked · [^]*Blocked \(quarantined\): bad release/);
+  assert.equal(rows([mod('omd_preview', { effective: false })])[0].description.split(' · ')[0], 'overridden by another copy');
+  assert.equal(rows([mod('omd_preview', { pending: 'reload' })])[0].description.split(' · ')[0], 'turning off at your next message');
+  assert.equal(rows([mod('omd_preview', { effective: false, pending: 'reload' })])[0].description.split(' · ')[0], 'starting at your next message');
+  const subtitle = invoke('omd_preview', { packages: [mod('omd_preview', { failed: 'capability_denied: omd_preview: x' })] }).panels[0].subtitle;
+  assert.match(subtitle, /Why it failed: it needs a permission you have not approved/);
+});
+
 test('the list groups mods by state, searches their commands and reopens where it was closed', () => {
   const packages = [logo, mod('omd_usage', { enabled: false, effective: false }), mod('omd_preview', { failed: 'activation failed' })];
   const index = () => ({ packages: [{ id: 'omd_frecency', description: 'Ranks files', latest: '1.0.0', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });

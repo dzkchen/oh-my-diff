@@ -29,7 +29,10 @@ It watches tool output in the turn:
 - Checks: test runners and build checks (pytest, `python -m unittest`, `runtests.py`, `cargo test|check|clippy`,
   `go test|vet`, `pnpm|npm|yarn test`, `node --test`, `mise run test|check`, jest, vitest (also `pnpm [exec] vitest`), tsc, `make test|check`, rspec, phpunit, mvn, gradle and others),
   passing on exit code 0. A check in a command with `||`, `;` or a newline doesn't count as passing, since its exit
-  code may not be the check's; its failure still counts. A check left running is settled when `write_stdin` reports
+  code may not be the check's; its failure still counts. A check piped into another command (`npx mocha | tail`)
+  doesn't count either unless `set -o pipefail` (or `set -euo pipefail`, followed by `;`, `&&` or a newline) comes
+  first, since the pipe's exit code is the last command's. A piped run whose output shows a failure (`1 failed`,
+  mocha `1 failing`, rspec `1 failure`, phpunit `FAILURES!`, a traceback and so on) still counts as failed. A check left running is settled when `write_stdin` reports
   its exit code.
 
 When the turn would stop after an edit with no passing check since:

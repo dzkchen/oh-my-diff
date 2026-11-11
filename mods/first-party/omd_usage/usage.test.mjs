@@ -6,12 +6,13 @@ import { callback } from '../../../tests/mod_runner.mjs';
 const usageMod = {
   source: readFileSync(new URL('index.ts', import.meta.url), 'utf8'),
   capabilities: JSON.parse(readFileSync(new URL('mod.json', import.meta.url), 'utf8')).capabilities,
+  assets: { 'cache_ttl.ts': { text: readFileSync(new URL('cache_ttl.ts', import.meta.url), 'utf8'), sha256: '0'.repeat(64) } },
 };
 const NOW = 1_800_000_000_000;
 
-function call({ source, capabilities }, input, answer = () => ({ delivered: 1, dropped: 0 })) {
+function call({ source, capabilities, assets }, input, answer = () => ({ delivered: 1, dropped: 0 })) {
   const calls = [];
-  const output = callback({ source, filename: 'index.ts', api: '1.0.0', capabilities, settings: {}, state: null, virtual_time_ms: NOW, ...input }, hostCall => {
+  const output = callback({ source, filename: 'index.ts', entrypoint: 'index.ts', assets, api: '1.0.0', capabilities, settings: {}, state: null, virtual_time_ms: NOW, ...input }, hostCall => {
     calls.push(hostCall);
     const value = answer(hostCall);
     if (value instanceof Error) throw value;
@@ -41,8 +42,88 @@ const start = (session = { thread_id: 'lead', model: 'gpt-6.1-sol', provider: 'o
       : operation === 'app.request' ? (limits ? { rateLimits: limits } : new Error('unavailable')) : { delivered: 1, dropped: 0 }).state;
 
 test('costs follow the ledger basis: an unpriced native response stays unknown', () => {
-  assert.match(dialog(feed(start(), [['model_response', response('i1')]])).text, /1 included/);
-  assert.match(dialog(feed(start(), [['model_response', response('u1', { credential: null, cost: { microusd: null, basis: 'unpriced' } })]])).text, /unknown cost/);
+  assert.match(dialog(feed(start(), [['model_response', response('i1')]])).text, /1 request included/);
+  assert.match(dialog(feed(start(), [['model_response', response('u1', { credential: null, cost: { microusd: null, basis: 'unpriced' } })]])).text, /1 request, cost unknown/);
+});
+
+test('the dialog uses plain labels, shows its keys and leaves out rows with nothing to show', () => {
+  const { text } = dialog(feed(start(), [['model_response', response('i1')]]));
+  assert.match(text, /Esc or Alt\+a closes/);
+  assert.match(text, /This conversation: 1 request included/);
+  assert.doesNotMatch(text, /Lead|Host ledger|ledger|none|unavailable|unknown|No tools|No plan|Workers/);
+  const opened = { ...feed(start(), [['model_response', response('i1')]]), open: true };
+  const paid = cost => call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead', cwd: '/repo', cost } }, state: opened }).value.sites.dialog.components[0].children.map(child => child.text ?? '').join('\n');
+  assert.match(paid({ settled_task_charge_microusd: 1_250_000 }), /Paid API use: \$1\.25/);
+  assert.doesNotMatch(paid({ settled_task_charge_microusd: 0 }), /Paid API/);
+});
+
+test('cache expiry says whether the lifetime is the provider\'s or an estimate', () => {
+  const api = response('a1', { credential: 'key', cost: { microusd: 100, basis: 'settled' } });
+  assert.match(dialog(feed(start(), [['model_response', api]])).text, /Cache expiry: ~29m left \(estimated TTL/);
+  const reported = response('c1', { provider: 'claude', credential: 'profile', cost: { microusd: 100, basis: 'settled' }, usage: { ...api.usage, omd_cache_ttl_seconds: 3600 } });
+  assert.match(dialog(feed(start({ thread_id: 'lead', model: 'gpt-6.1-sol', provider: 'claude' }), [['model_response', reported]])).text, /Cache expiry: ~59m left \(provider TTL/);
+  assert.doesNotMatch(dialog(feed(start(), [['model_response', response('i1')]])).text, /Cache expiry/);
+});
+
+test('cache expiry replays reported lifetimes in request order without crossing cache identities', () => {
+  const api = (id, minutes, patch = {}) => response(id, { credential: 'key', cost: { microusd: 100, basis: 'settled' },
+    timing: { started_at_ms: NOW - minutes * 60_000, first_event_ms: 1, duration_ms: 1000 }, ...patch });
+  const reported = api('r1', 2, { usage: { input_tokens: 10_000, output_tokens: 500, omd_cache_ttl_seconds: 3600 } });
+  const read = api('r2', 1);
+  const partial = feed(start(), [['model_response', reported]]);
+  for (const entry of partial.hud.entries) { delete entry.cache; delete entry.started; }
+  assert.doesNotMatch(dialog(partial).text, /Cache expiry/);
+  assert.match(dialog(feed(partial, [['model_response', read]])).text, /Cache expiry: ~29m left \(estimated TTL/);
+  for (const observations of [[reported, read], [read, reported], [read, reported, read]]) {
+    const state = feed(start(), observations.map(item => ['model_response', item]));
+    assert.match(dialog(state).text, /Cache expiry: ~59m left \(provider TTL/);
+  }
+  for (const patch of [{ route: 'other' }, { credential: 'other' }, { requested_model: 'other' }, { served_model: 'other' }]) {
+    const state = feed(start(), [['model_response', reported], ['model_response', { ...read, ...patch }]]);
+    assert.match(dialog(state).text, /Cache expiry: ~29m left \(estimated TTL/);
+  }
+  assert.doesNotMatch(dialog(feed(start(), [['model_response', reported], ['model_response', { ...read, provider: 'other' }]])).text, /Cache expiry/);
+  const unmeasured = { ...read, usage: { input_tokens: 10_000, output_tokens: 500 } };
+  assert.match(dialog(feed(start(), [['model_response', reported], ['model_response', unmeasured]])).text, /Cache expiry: ~59m left \(provider TTL/,
+    'response.cache supplies cache activity independently of normalized token usage');
+  const corrected = { ...reported, usage: { ...reported.usage, omd_cache_ttl_seconds: 7200 } };
+  assert.match(dialog(feed(start(), [['model_response', reported], ['model_response', read], ['model_response', corrected]])).text, /Cache expiry: ~1h59m left \(provider TTL/);
+  const worker = { ...corrected, request_id: 'w3', scope: { thread_id: 'child', agent_id: 'worker', kind: 'subagent' },
+    timing: { ...read.timing, started_at_ms: NOW - 30_000 } };
+  assert.match(dialog(feed(start(), [['model_response', reported], ['model_response', read], ['model_response', worker]])).text, /Cache expiry: ~59m left \(provider TTL/);
+  const slow = { ...read, timing: { ...read.timing, started_at_ms: NOW - 2 * 60_000, duration_ms: 90_000 } };
+  assert.match(dialog(feed(start(), [['model_response', { ...reported, timing: { ...reported.timing, started_at_ms: NOW - 10 * 60_000 } }], ['model_response', slow]])).text,
+    /Cache expiry: ~58m left \(provider TTL/, 'cache use is timed from request start, independently of response duration');
+});
+
+test('OpenAI long-cache reads preserve the write deadline and extend an expired deadline only thirty minutes', () => {
+  const api = (id, minutes, reported, cache) => response(id, { credential: 'key', cost: { microusd: 100, basis: 'settled' },
+    usage: { input_tokens: 10_000, input_tokens_details: { cached_tokens: cache.read_tokens }, output_tokens: 500, ...reported ? { omd_cache_ttl_seconds: 43200 } : {} }, cache,
+    timing: { started_at_ms: NOW - minutes * 60_000, first_event_ms: 1, duration_ms: 1000 } });
+  const write = api('w1', 60, true, { read_tokens: 0, write_tokens: 10_000 });
+  for (const reported of [false, true]) {
+    const read = api('r2', 1, reported, { read_tokens: 8000, write_tokens: 0 });
+    for (const observations of [[write, read], [read, write], [write, read, write]]) {
+      const state = feed(start(), observations.map(item => ['model_response', item]));
+      assert.match(dialog(state).text, /Cache expiry: ~11h00m left \(provider TTL/);
+      assert.match(dialog(state, hud, NOW + 11 * 3_600_000 + 1).text, /Cache expiry: TTL passed/);
+    }
+    const old = { ...write, timing: { ...write.timing, started_at_ms: NOW - 13 * 3_600_000 } };
+    assert.match(dialog(feed(start(), [['model_response', old], ['model_response', read]])).text, /Cache expiry: ~29m left \(provider TTL/);
+  }
+});
+
+test('every dialog action ends in a refresh that changes the saved state, since the host redraws the dialog only on a change', () => {
+  const open = { ...feed(start(), [['model_response', response('i1')]]), open: true };
+  const task = hostCall => hostCall.operation === 'task.status' ? { ledger: { thread_id: 'lead', cost: null }, limits: {}, worker_limits: {} } : { delivered: 1, dropped: 0 };
+  for (const argument of ['', 'refresh', 'expanded', 'compact', 'close', 'toggle']) {
+    const out = call(usageMod, { event: 'command', name: 'hud', payload: argument, state: open }, task);
+    assert.deepEqual(out.calls.filter(item => item.operation === 'events.publish').map(item => item.arguments.channel), ['refresh'], argument);
+  }
+  assert.equal(call(usageMod, { event: 'command', name: 'hud', payload: 'noop', state: open }, task).calls.length, 0);
+  const refresh = state => call(usageMod, { event: 'channel', payload: { channel: 'omd_usage/refresh', data: null, publisher: 'omd_usage' }, state }, task).state;
+  const once = refresh(open);
+  assert.notDeepEqual(refresh(once), once);
 });
 
 test('usage ledger is request-idempotent, keeps lead context apart from workers and orders by observation time', () => {
@@ -60,7 +141,7 @@ test('usage ledger is request-idempotent, keeps lead context apart from workers 
   assert.match(text, /input 20k \+ output 700 of 272k/);
   assert.match(text, /headroom 219k/);
   assert.match(text, /Workers: 1 .*90k tokens/);
-  assert.match(text, /Lead input 30k · cache read 26k/);
+  assert.match(text, /Conversation input 30k · cache read 26k/);
 
   state = feed(state, [['model_response', response('s1', { cost: { microusd: null, basis: 'unsettled' }, route: 'api', credential: 'key' })]]);
   state = feed(state, [['model_response', response('s1', { cost: { microusd: 1_500, basis: 'settled' }, route: 'api', credential: 'key' })],
@@ -163,7 +244,7 @@ test('native thread dollars replace the configured-rate estimate and the budget 
   const native = refresh(estimated, 7_500_000);
   assert.equal(native.state.hud.native, 7.5);
   assert.deepEqual(native.calls.find(item => item.operation === 'app.request').arguments, { method: 'account/usage/read', params: { threadId: 'lead' } });
-  assert.match(dialog(native.state, settings).text, /Lead: \$7\.50 native/);
+  assert.match(dialog(native.state, settings).text, /This conversation: \$7\.50 native/);
   assert.doesNotMatch(dialog(native.state, settings).text, /configured-rate/);
   assert.match(dialog(native.state, settings).text, /\$7\.50 spent/);
   assert.equal(refresh(native.state, null).state.hud.native, null, 'unknown native usage falls back to the estimate');

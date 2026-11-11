@@ -39,7 +39,7 @@ The panel's tabs:
   still shows the commands and keys it adds, and experimental mods are marked. Available holds directory mods you
   haven't installed and the mod components of Codex plugins you added.
 - Settings opens one mod's own panel: On first, then its settings. A list of words is edited as comma-separated text
-  (or a JSON list, for entries with commas), and an object or a list of objects as JSON. Changes apply to, below the settings, picks every terminal or only this one. Settings change only on the copy that is on: a user or project copy shadowed by
+  (or a JSON list, for entries with commas), and an object or a list of objects as JSON. Changes apply to, below the settings, picks every terminal or only this one. Settings change only on the copy that is on: a user or project copy overridden by
   the other, or one that is off, shows why instead of its settings.
 - Directory installs from a source or updates.
 

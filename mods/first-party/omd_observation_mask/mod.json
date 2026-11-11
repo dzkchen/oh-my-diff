@@ -3,6 +3,7 @@
   "id": "omd_observation_mask",
   "version": "1.1.0",
   "api": "1.0.0",
+  "assets": ["cache_ttl.ts"],
   "state_version": 1,
   "state_scope": "thread",
   "description": "Keeps long sessions workable: hides older large tool outputs from requests; /mask lists them, recall restores them",
@@ -12,12 +13,12 @@
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_observation_mask"},
   "capabilities": ["history", "interception", "middleware", "tools", "store", "commands", "model", "lifecycle", "inventory"],
-  "compatibility": {"required_features": ["history_v1", "tool_original_v1", "continuation_middleware_v1", "model_turn_interception_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "lifecycle_events_v1"]},
+  "compatibility": {"required_features": ["history_v1", "tool_original_v1", "continuation_middleware_v1", "model_turn_interception_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "lifecycle_events_v1", "package_imports_v1", "package_text_assets_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {
       "mode": {"type": "string", "enum": ["batch", "continue"], "default": "batch", "title": "When to hide outputs", "description": "Automatic batches, or only a successful /continue after estimated cache expiry (/continue --compact forces it). Continue mode needs the omd_continue mod and has no estimate on ChatGPT plans, so only --compact hides there"},
-      "cache_ttl_minutes": {"type": "string", "enum": ["auto", "5", "10", "30", "60", "120"], "default": "auto", "title": "Estimated cache lifetime", "description": "Used in continue mode; auto skips OpenAI subscriptions and unpriced responses, and uses provider-reported lifetimes or a 30-minute OpenAI API estimate"},
+      "cache_ttl_minutes": {"type": "string", "enum": ["auto", "5", "10", "30", "60", "120", "720"], "default": "auto", "title": "Estimated cache lifetime", "description": "Used in continue mode; auto skips OpenAI subscriptions and unpriced responses, and uses provider-reported lifetimes or a 30-minute OpenAI API estimate; 720 is OpenAI's 12-hour cache"},
       "keep_recent": {"type": "number", "default": 10, "title": "Recent outputs kept", "description": "Newest tool outputs always sent in full (at least 1)"},
       "min_bytes": {"type": "number", "default": 1024, "title": "Minimum size", "description": "Outputs smaller than this many bytes are never hidden"},
       "batch_bytes": {"type": "number", "default": 32768, "title": "Batch size", "description": "Bytes of hideable outputs to collect before hiding them at once; 0 hides each as soon as it is old enough"}

@@ -30,7 +30,9 @@ When the time runs out:
 - Questions get an instruction to continue already-authorized work, use best judgment for optional choices, and state
   the assumption. A timeout does not grant permission, authorize spending or settle a required decision.
 
-A transcript note tells you that the request timed out. The model receives the tool's answer or denial. For each
+A transcript note tells you that the request timed out. The first time it ever fires, on any thread, the note also
+says to open `/mods` to turn it off; that one-time flag is kept in the mod's user-scope store. The model receives the
+tool's answer or denial. For each
 declined approval it also gets one short notice with its next request, saying the decline was a timeout, not a refusal,
 and not to retry actions that need approval. Neither note changes any earlier message, so the provider can still reuse
 its cache of the conversation.

@@ -3244,6 +3244,8 @@ cover every thread of that session, including threads in its worktrees.
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
+- `surfaces: {disable: ['context_indicator']}` (experimental) hides the stock `N% context left` footer
+  indicator, for a mod that shows context itself.
 - `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
   they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
   experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.

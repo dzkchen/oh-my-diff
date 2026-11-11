@@ -3,6 +3,7 @@
   "id": "omd_usage",
   "version": "1.0.1",
   "api": "1.0.0",
+  "assets": ["cache_ttl.ts"],
   "state_version": 1,
   "state_scope": "thread",
   "description": "Usage dialog (Alt+a or /hud): context, cache, cost and quota for each request",
@@ -17,7 +18,7 @@
     "channels": ["omd_usage/refresh"],
     "app": ["account/updated", "account/rateLimits/updated", "thread/settings/updated", "thread/tokenUsage/updated", "thread/reverted", "turn/plan/updated"]
   },
-  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1", "app_v1", "model_turn_interception_v1", "ui_controls_v1"] },
+  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1", "app_v1", "model_turn_interception_v1", "ui_controls_v1", "package_imports_v1", "package_text_assets_v1"] },
   "settings_schema": {
     "type": "object",
     "properties": {

@@ -5,11 +5,12 @@ import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
+const assets = { 'cache_ttl.ts': { text: readFileSync(new URL('./cache_ttl.ts', import.meta.url), 'utf8'), sha256: '0'.repeat(64) } };
 const settings = { keep_recent: 2, min_bytes: 1000, batch_bytes: 10_000 };
 
 function run(event, name, payload, { state = null, store = new Map(), host = {}, settings: overrideSettings = {}, now = 1_800_000_000_000 } = {}) {
   const calls = [];
-  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { ...settings, ...overrideSettings }, virtual_time_ms: now, event, name, payload }, call => {
+  const output = callback({ source, filename: 'index.ts', entrypoint: 'index.ts', assets, api: manifest.api, capabilities: manifest.capabilities, state, settings: { ...settings, ...overrideSettings }, virtual_time_ms: now, event, name, payload }, call => {
     assert.notEqual(event, 'history', 'history runs without a native task host');
     calls.push(call);
     if (call.operation === 'store.get') return store.has(call.arguments.key) ? { value: store.get(call.arguments.key), revision: 1, provenance: {} } : null;
@@ -245,6 +246,12 @@ test('cache estimates skip subscriptions, local and unknown providers and do not
   for (const changed of [{ ...session, model: 'other' }, { ...session, provider: 'other' }, { ...session, route: 'other' }]) {
     assert.equal(requestContinue(state, { host: { 'session.info': () => changed } }).value.result.submit, 'Resume task');
   }
+});
+
+test('the OpenAI 12-hour cache estimate counts a first read as 30 minutes only', () => {
+  const read = cached({ provider: 'openai', usage: {}, cost: { basis: 'settled' } });
+  const { cache } = continuation('model_response', '', read, { settings: { cache_ttl_minutes: '720' } }).state;
+  assert.deepEqual([cache.ttl, cache.expires], [720 * minute, NOW + 30 * minute]);
 });
 
 test('reported cache reads refresh matching estimates; stale and worker responses cannot overwrite them', () => {
