@@ -72,8 +72,13 @@ async function pull(program) {
     if (results.length !== first.total_count || (first.total_count > 100 && (results.some(row => !Number.isInteger(row.id)) || new Set(results.map(row => row.id)).size !== results.length))) throw new Error('check results incomplete');
     return results;
   };
-  const runs = await collect(field === 'check_suites' ? suites : await read(program, path));
-  const status = await read(program, `${base}/status?per_page=100`);
+  const observations = await Promise.allSettled([
+    (async () => collect(field === 'check_suites' ? suites : await read(program, path)))(),
+    read(program, `${base}/status?per_page=100`),
+  ]);
+  const rejected = observations.find(result => result.status === 'rejected');
+  if (rejected) throw rejected.reason;
+  const [runs, status] = observations.map(result => result.value);
   const latest = await read(program);
   if (latest.state !== 'open') return { state: 'closed', conclusion: 'failure', terminal: true, head, url: latest.html_url };
   if (latest.head?.sha !== sha) return { state: 'head changed', conclusion: 'failure', terminal: true, head, url: latest.html_url };

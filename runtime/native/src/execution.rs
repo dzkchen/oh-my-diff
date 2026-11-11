@@ -75,23 +75,39 @@ pub(super) async fn stop_worker(
     }
 }
 
-/// `stop_worker` for `Drop`, on the runtime that owns the thread: awaits `job` first and drops `keep` last.
-pub(super) fn stop_dropped(
+/// `stop_worker` for `Drop`, on the runtime that owns the thread: awaits `job` first and returns `keep` after shutdown.
+pub(super) fn stop_dropped<K: Send + 'static>(
     runtime: &tokio::runtime::Handle,
     thread: Arc<codex_core::CodexThread>,
     task: Arc<Task>,
     worker: String,
     discard: bool,
     job: Option<tokio::task::JoinHandle<()>>,
-    keep: impl Send + 'static,
-) {
+    keep: K,
+) -> tokio::task::JoinHandle<K> {
+    owned_shutdown(
+        runtime,
+        job,
+        async move {
+            stop_worker(&thread, &task, &worker, discard).await;
+        },
+        keep,
+    )
+}
+
+fn owned_shutdown<K: Send + 'static>(
+    runtime: &tokio::runtime::Handle,
+    job: Option<tokio::task::JoinHandle<()>>,
+    stop: impl std::future::Future<Output = ()> + Send + 'static,
+    keep: K,
+) -> tokio::task::JoinHandle<K> {
     runtime.spawn(async move {
         if let Some(job) = job {
             let _ = job.await;
         }
-        stop_worker(&thread, &task, &worker, discard).await;
-        drop(keep);
-    });
+        stop.await;
+        keep
+    })
 }
 
 pub(super) fn intersect(
@@ -632,5 +648,54 @@ mod tests {
             .unwrap();
             assert_eq!(status.success(), granted);
         }
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn owned_shutdown_finishes_after_its_waiter_is_cancelled() {
+        let resource = tempfile::tempdir().unwrap();
+        let path = resource.path().to_path_buf();
+        let (release_job, wait_job) = std::sync::mpsc::channel();
+        let (job_started, job_start) = tokio::sync::oneshot::channel();
+        let job = tokio::task::spawn_blocking(move || {
+            job_started.send(()).unwrap();
+            let _ = wait_job.recv();
+        });
+        job_start.await.unwrap();
+        job.abort();
+        let (stop_started, mut stop_start) = tokio::sync::oneshot::channel();
+        let (release_stop, wait_stop) = tokio::sync::oneshot::channel();
+        let (stopped, stop_done) = tokio::sync::oneshot::channel();
+        let cleanup = owned_shutdown(
+            &tokio::runtime::Handle::current(),
+            Some(job),
+            async move {
+                stop_started.send(()).unwrap();
+                wait_stop.await.unwrap();
+                stopped.send(()).unwrap();
+            },
+            resource,
+        );
+        let waiter = tokio::spawn(cleanup);
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        assert!(path.exists());
+        assert!(stop_start.try_recv().is_err());
+        release_job.send(()).unwrap();
+        stop_start.await.unwrap();
+        assert!(path.exists());
+        release_stop.send(()).unwrap();
+        stop_done.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while path.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }

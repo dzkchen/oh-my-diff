@@ -4,6 +4,10 @@ git-cliff = "2.14.2"
 "aqua:mozilla/sccache" = "0.19.0"
 node = "24.22.1"
 
+[tasks."check:changed"]
+description = "Run portable checks and changed test files; --list previews, --base REF changes the comparison"
+run = "python3 scripts/check_changed.py"
+
 [tasks."dev:check"]
 description = "Check selected Rust crates: dev:check NAME CRATE [CRATE...]"
 usage = '''
@@ -12,10 +16,20 @@ arg "<packages>" var=#true help="Cargo package names"
 '''
 run = "python3 .github/scripts/build.py dev-check {{ usage.name | quote }}{% for package in usage.packages %} {{ package | quote }}{% endfor %}"
 
+[tasks."dev:setup"]
+description = "Prepare a scratch tree and its verified V8 prebuilt: dev:setup NAME"
+usage = 'arg "<name>" help="Scratch tree name"'
+run = "python3 .github/scripts/build.py dev-setup {{ usage.name | quote }}"
+
 [tasks."dev:build"]
 description = "Build the runnable debug app: dev:build NAME"
 usage = 'arg "<name>" help="Scratch tree name"'
 run = "python3 .github/scripts/build.py dev-build {{ usage.name | quote }}"
+
+[tasks."dev:mods"]
+description = "Build only the debug mod engine and runner: dev:mods NAME"
+usage = 'arg "<name>" help="Scratch tree name"'
+run = "python3 .github/scripts/build.py dev-mods {{ usage.name | quote }}"
 
 [tasks."dev:storage"]
 description = "Show scratch-tree target sizes"

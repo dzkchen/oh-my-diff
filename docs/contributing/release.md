@@ -1,7 +1,7 @@
 # Cut a release
 
-The maintainer uses these steps to publish, sign or withdraw an OMD release. Nightly prereleases publish
-automatically; see
+The maintainer prepares a release pull request, merges it, then pushes a tag to publish. The tag workflow can reuse
+a successful release dry run on the same commit. Nightly prereleases publish automatically; see
 [How CI checks a change](ci.md#nightly-builds).
 
 ## Before you start
@@ -16,6 +16,9 @@ automatically; see
 The release version is in `runtime/release.lock.json`. Release notes and `CHANGELOG.md` come from
 `release/changelog.json`. `VERSION` below is the release version without the `v`, such as `1.3.0`.
 
+For one full validation, skip the optional dry run and let the tag validate and publish. If you want to check the
+package before publishing, dry-run after the squash merge so the tag can reuse that exact commit's result.
+
 1. Open the release pull request:
 
    ```sh
@@ -29,27 +32,36 @@ The release version is in `runtime/release.lock.json`. Release notes and `CHANGE
    python3 scripts/release.py render
    ```
 
-2. Optional: dry-run the release workflow. It validates and packages, then prints the publish commands. Only a tag
-   run signs, so a branch never gets the signing key:
+2. If more pull requests merged to `main` since, run `mise run release -- VERSION` again. It merges `main` into the
+   release branch and adds their lines to the entry. Edit and render again.
+3. Squash merge the pull request. Keep its `chore(release): VERSION` title: the tagging command finds that commit on
+   `main`.
+4. Optional: dry-run the merged release before publishing:
 
    ```sh
-   gh workflow run release.yml --ref release/vVERSION -f version=VERSION
+   gh workflow run release.yml --ref main -f version=VERSION
+   gh run list --workflow release.yml --branch main --event workflow_dispatch --limit 3
+   gh run watch RUN_ID --exit-status
    ```
 
-3. If more pull requests merged to `main` since, run `mise run release -- VERSION` again. It merges `main` into the
-   release branch and adds their lines to the entry. Edit and render again.
-4. Merge the pull request, then tag `main` with the command below. Run it only when you mean to publish. As soon as
+   Use the ID for the run you just started. It validates, builds and tests the package, then prints the publish
+   commands without signing or publishing. Running this after the squash merge lets the tag reuse its checks and
+   package. A dry run on the release branch can help before review, but its commit differs after a squash merge,
+   so the tag must validate again. If `main` has advanced past the release commit, its dry run also cannot qualify.
+
+5. Tag the release with the command below. Run it only when you mean to publish. As soon as
    `runtime/release.lock.json` on `main` has VERSION, the command pushes the `vVERSION` tag, and the tag publishes the
-   release.
+   release. It tags the release pull request's merge commit, even if newer changes have landed on `main`.
 
    ```sh
    mise run release -- VERSION
    ```
 
-5. The tag runs `release.yml`. It checks that the tag is on `main` and that versions and changelog agree, validates,
-   then publishes a draft release and makes it live. The installer and `omd update` read the live release. An
+6. The tag runs `release.yml`. It checks that the tag is on `main` and that versions and changelog agree, reuses a
+   qualifying dry run or validates from scratch, then signs and publishes a draft release and makes it live.
+   The installer and `omd update` read the live release. An
    `-rc.N` tag is a prerelease, offered on the prerelease channel.
-6. Check that the release is live:
+7. Check that the release is live:
 
    ```sh
    gh release view vVERSION
@@ -57,11 +69,21 @@ The release version is in `runtime/release.lock.json`. Release notes and `CHANGE
 
 ## Validation time
 
-Release dry runs and tag builds reuse the native, core and lint compiler caches seeded by nightly validation.
-The shipped binaries still compile cleanly in the `build` job and undergo the same provenance, signing,
-packaging and acceptance checks. Release builds select only the seven shipped binaries; test setup selects
-only the required host and MCP fixture binaries. These changes reduce repeated compilation without reusing
-a previously packaged release or skipping validation.
+A tag reuses a release dry run only when GitHub reports success for `check`, all six validation jobs and `publish`
+in one completed attempt on `main` at the exact tagged commit. The dry run must still have one unexpired `package`
+artifact. The tag pins that artifact's ID, checks the downloaded package's commit, version and checksums, then
+signs and publishes it. The `release` environment supplies the signing key only during publication.
+
+This removes the second full build and test run after a qualifying dry run. Without one, the tag runs all checks.
+An unavailable GitHub API, a missing or expired artifact, a different commit, or an incomplete dry run falls back
+to full validation. If an artifact disappears after selection, the download fails; rerun the tag workflow so it
+can select a retained artifact or validate again. Successful nightlies do not qualify: release binaries require
+an uncached build with the release version.
+
+For a full validation, native, core and lint jobs reuse compiler caches seeded by nightly validation. The shipped
+binaries compile cleanly in the `build` job and undergo provenance, packaging and acceptance checks. Release builds
+select only the seven shipped binaries; test setup selects only the required host and MCP fixture binaries. Runner
+queues and fresh compilation still affect elapsed time; the reuse path needs a hosted run to measure its savings.
 
 ## Publish first-party mod updates
 

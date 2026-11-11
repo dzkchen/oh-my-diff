@@ -541,10 +541,13 @@ async function inert(path) {
 
 // Like the host, one valid settings file overrides mods.json; undefined means it doesn't, and YAML this can't read stops.
 async function fileSetting(store) {
+  const extensions = ['json', 'yaml', 'yml'];
+  const results = await Promise.allSettled(extensions.map(extension =>
+    readFile(join(store, 'settings', `omd_claude_cli.${extension}`), 'utf8')));
   const found = [];
-  for (const extension of ['json', 'yaml', 'yml']) {
-    try { found.push([extension, await readFile(join(store, 'settings', `omd_claude_cli.${extension}`), 'utf8')]); }
-    catch (error) { if (error.code !== 'ENOENT') return false; }
+  for (const [index, result] of results.entries()) {
+    if (result.status === 'fulfilled') found.push([extensions[index], result.value]);
+    else if (result.reason.code !== 'ENOENT') return false;
   }
   if (found.length !== 1) return undefined;
   const [[extension, text]] = found;
