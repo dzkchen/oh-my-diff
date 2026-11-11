@@ -100,6 +100,48 @@ class PullRequestChecks(unittest.TestCase):
             "plugins/omd-code-execution/plugin.json", "tests/test_package.py",
         ]))
 
+    def test_native_fingerprint_tracks_inputs_across_main_syncs(self):
+        script = Path(__file__).resolve().parents[1] / "scripts/pr_ci.py"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            git(root, "init", "-q")
+            files = ("runtime/patches/native.patch", "upstream.lock.json", "mise.toml",
+                     ".github/workflows/pr.yml", "scripts/build.py", "mods/api.d.ts", "unknown-input")
+            for name in files:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("original\n")
+            git(root, "add", ".")
+            git(root, "commit", "-qm", "base")
+            output = root / "output"
+
+            def fingerprint():
+                output.write_text("")
+                subprocess.run([sys.executable, script, "fingerprint"], cwd=root, check=True,
+                               env=os.environ | {"GITHUB_OUTPUT": str(output)})
+                return output.read_text()
+
+            initial = fingerprint()
+            for name in ("README.md", "mods/first-party/example/index.ts", "tests/test_example.py",
+                         "runtime/mods.lock.json", "runtime/plugins.lock.json", "runtime/release.lock.json"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("unrelated update\n")
+                git(root, "add", name)
+                git(root, "commit", "-qm", name)
+                self.assertEqual(fingerprint(), initial, name)
+            for name in files:
+                path = root / name
+                path.write_text("changed\n")
+                git(root, "add", name)
+                git(root, "commit", "-qm", name)
+                self.assertNotEqual(fingerprint(), initial, name)
+                git(root, "revert", "--no-edit", "HEAD")
+                self.assertEqual(fingerprint(), initial)
+            git(root, "rm", "unknown-input")
+            git(root, "commit", "-qm", "delete input")
+            self.assertNotEqual(fingerprint(), initial)
+
     def test_gate_requires_all_selected_jobs_and_valid_selection(self):
         states = ("success", "failure", "cancelled", "skipped")
         for selected, changes, portable, native in itertools.product(("true", "false", "", "invalid"), states, states, states):

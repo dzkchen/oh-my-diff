@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,20 @@ def needs_native(paths):
         or not (path.endswith(".md") or path.startswith(("docs/", "mods/first-party/", "mods/examples/", "plugins/", "tests/")))
         for path in paths
     )
+
+
+def native_fingerprint():
+    records = subprocess.check_output(["git", "ls-tree", "-r", "-z", "HEAD"]).split(b"\0")
+    digest = hashlib.sha256()
+    for record in records:
+        if not record:
+            continue
+        path = record.split(b"\t", 1)[1].decode()
+        if needs_native([path]) and path not in (
+            "runtime/mods.lock.json", "runtime/plugins.lock.json", "runtime/release.lock.json",
+        ):
+            digest.update(record + b"\0")
+    return digest.hexdigest()
 
 
 def gate(needs):
@@ -26,8 +41,12 @@ def gate(needs):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("select", "gate"))
+    parser.add_argument("command", choices=("select", "gate", "fingerprint"))
     args = parser.parse_args()
+    if args.command == "fingerprint":
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+            output.write(f"key=native-success-v1-macos-15-{native_fingerprint()}\n")
+        return
     if args.command == "gate":
         results = json.loads(os.environ["PR_NEEDS"])
         print(json.dumps(results, indent=2))

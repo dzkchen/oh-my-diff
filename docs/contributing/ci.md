@@ -22,7 +22,7 @@ cache when native inputs change. A documentation-only push does not rebuild Rust
 
 There is no workflow-level path filter, so documentation pull requests also report `PR gate`. The gate requires
 successful selection and portable checks, and successful native checks when they're selected. Only an
-intentionally unselected native job may be skipped. `main` requires `PR gate` with an up-to-date branch.
+intentionally unselected or exactly reused native job may be skipped. `main` requires `PR gate` with an up-to-date branch.
 
 ### When native checks run
 
@@ -33,7 +33,10 @@ selects it, Markdown copies included, to detect patch drift.
 
 For a pull request, the selection compares the merge commit with its first parent. A main push compares against
 the commit before the push, including every pushed commit. The merge queue supplies its base commit. The
-selection examines both paths of a rename. A new push to a pull request checks the entire merged diff again.
+selection examines both paths of a rename. A new push to a pull request selects checks from the entire merged diff again. Before starting native work,
+CI looks for a successful validation with exactly the same native inputs. A hit skips native work; portable
+checks and a fresh `PR gate` still run. Updating a branch with unrelated main changes can therefore reuse
+its previous native validation while keeping the up-to-date branch requirement.
 
 The native job runs on macOS. It replays the patch and fails on drift, runs Rustfmt, and compiles `codex-cli`,
 `codex-exec` and all crates tested by the nightly, including their test targets. Native tests run only in the nightly

@@ -3,6 +3,24 @@
 GitHub workflows cache Cargo downloads, the V8 prebuilt and compiled crates. This page explains the cache keys,
 which jobs save them and how restores work. For the checks, see [How CI checks a change](ci.md).
 
+## Successful native validation
+
+The PR workflow caches a small success marker only after patch replay, drift, Rustfmt and native compilation
+pass. The lookup requires an exact key; there are no prefix fallback keys. Portable checks run every time.
+
+The key hashes Git tree entries (paths, modes and content IDs) for all native-selected inputs, including the
+native patch and mirrors, upstream pin, API, dependency locks, build scripts, tool configuration and workflows.
+Unknown paths invalidate reuse. Documentation, first-party mod sources, examples, plugins and host-free tests
+follow the selector's existing exclusions. The mod, plugin and release metadata locks are excluded from this
+native fingerprint; portable checks validate them on every run. Changing any included input forces fresh native
+validation, even if it arrived through a merge from main.
+
+The marker is separate from the compiler cache and contains no binaries. GitHub's branch cache scope applies:
+PRs can reuse their own markers or main's; unrelated PR caches are not shared. Missing or evicted markers cause
+a fresh run. Existing green runs from before this mechanism do not have markers and cannot be reused. The
+`macos-15` runner and workflow configuration are part of the key; hosted runner image updates are not pinned.
+This reuse does not qualify release artifacts or replace nightly tests.
+
 ## Download caches
 
 PR, main-branch, nightly and release jobs share Cargo download and V8 cache keys.
@@ -26,7 +44,7 @@ wrapper. Linked binaries and procedural macros still require compilation.
 
 Native checks on `main` save the shared lint cache when its key is absent, making it available to new PRs without
 waiting for a passing nightly. PRs can save their own baseline for later pushes. GitHub scopes those caches to the
-PR; other PRs and main-branch jobs cannot restore them. Patch replay, drift, formatting and compile checks still
+PR; other PRs and main-branch jobs cannot restore them. When there is no exact success marker, patch replay, drift, formatting and compile checks still
 run. Newer pushes cancel superseded checks.
 
 Each job uses a local `SCCACHE_DIR`, restored and saved through `actions/cache`, rather than sccache's GitHub backend.
