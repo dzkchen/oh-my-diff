@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.167.0",
-  "commit": "086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a"
+  "tag": "rust-v0.167.1",
+  "commit": "0a94398fa60c4fac0e7659e4213a0a36e613dd46"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -1798,6 +1798,7 @@
   "features.in_app_voice",
   "features.incremental_exec_tools",
   "features.incremental_tools",
+  "features.incremental_tools_legacy",
   "features.instant_interrupt",
   "features.interrupt_on_cancel",
   "features.item_ids",
