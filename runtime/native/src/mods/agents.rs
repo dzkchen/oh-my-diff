@@ -4,10 +4,28 @@ use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::turn_input::TurnInputRequest;
 use codex_protocol::user_input::UserInput;
+use futures_util::StreamExt;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 const AGENT_LIMIT: usize = 16;
+
+// Keeps teardown alive after its waiter is cancelled and publishes in input order.
+fn teardown_in_order<F, T>(
+    pending: Vec<F>,
+    mut publish: impl FnMut(T) + Send + 'static,
+) -> tokio::task::JoinHandle<()>
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut pending = futures_util::stream::iter(pending).buffered(AGENT_LIMIT);
+        while let Some(completed) = pending.next().await {
+            publish(completed);
+        }
+    })
+}
 
 pub(super) fn classify_error(
     code: &Option<codex_protocol::protocol::CodexErrorInfo>,
@@ -191,6 +209,122 @@ fn integration_receipt(
 #[cfg(test)]
 mod history_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn teardown_overlaps_slots_and_retains_locks_until_ordered_publication() {
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let (published, mut publications) = tokio::sync::mpsc::unbounded_channel();
+        struct Resource(
+            usize,
+            tokio::sync::mpsc::UnboundedSender<(&'static str, usize)>,
+        );
+        impl Drop for Resource {
+            fn drop(&mut self) {
+                let _ = self.1.send(("removed", self.0));
+            }
+        }
+        let slots = (0..3)
+            .map(|_| Arc::new(tokio::sync::Mutex::new(())))
+            .collect::<Vec<_>>();
+        let mut releases = Vec::new();
+        let mut pending = Vec::new();
+        for (index, slot) in slots.iter().cloned().enumerate() {
+            let (release, wait) = tokio::sync::oneshot::channel();
+            releases.push(release);
+            let started = started.clone();
+            let resource = Resource(index, published.clone());
+            pending.push(async move {
+                let guard = slot.lock_owned().await;
+                started.send(index).unwrap();
+                wait.await.unwrap();
+                (index, guard, resource)
+            });
+        }
+        let cleanup = teardown_in_order(pending, move |(index, guard, resource)| {
+            drop(resource);
+            published.send(("stopped", index)).unwrap();
+            drop(guard);
+        });
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(5), starts.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        releases.pop().unwrap().send(()).unwrap();
+        releases.pop().unwrap().send(()).unwrap();
+        tokio::task::yield_now().await;
+        assert!(publications.try_recv().is_err());
+        assert!(slots.iter().all(|slot| slot.try_lock().is_err()));
+        releases.pop().unwrap().send(()).unwrap();
+        cleanup.await.unwrap();
+        for index in 0..3 {
+            assert_eq!(publications.recv().await, Some(("removed", index)));
+            assert_eq!(publications.recv().await, Some(("stopped", index)));
+        }
+        assert!(slots.iter().all(|slot| slot.try_lock().is_ok()));
+    }
+
+    #[tokio::test]
+    async fn teardown_survives_a_cancelled_waiter_and_retains_owned_resources() {
+        let resource = tempfile::tempdir().unwrap();
+        let path = resource.path().to_path_buf();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let (started, start) = tokio::sync::oneshot::channel();
+        let (published, publication) = tokio::sync::oneshot::channel();
+        let mut published = Some(published);
+        let cleanup = teardown_in_order(
+            vec![async move {
+                started.send(()).unwrap();
+                wait.await.unwrap();
+                resource
+            }],
+            move |resource| {
+                assert!(resource.path().exists());
+                drop(resource);
+                published.take().unwrap().send(()).unwrap();
+            },
+        );
+        let waiter = tokio::spawn(cleanup);
+        start.await.unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        assert!(path.exists());
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), publication)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn teardown_bounds_work_in_flight() {
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let pending = (0..AGENT_LIMIT + 2)
+            .map(|index| {
+                let started = started.clone();
+                let gate = gate.clone();
+                async move {
+                    started.send(index).unwrap();
+                    gate.acquire().await.unwrap().forget();
+                }
+            })
+            .collect();
+        let cleanup = teardown_in_order(pending, |_| {});
+        for index in 0..AGENT_LIMIT {
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(5), starts.recv())
+                    .await
+                    .unwrap(),
+                Some(index)
+            );
+        }
+        assert!(starts.try_recv().is_err());
+        gate.add_permits(AGENT_LIMIT + 2);
+        cleanup.await.unwrap();
+    }
 
     #[test]
     fn mailbox_skips_results_a_waiter_returned_and_holds_failures_until_release() {
@@ -569,7 +703,7 @@ mod history_tests {
 type AgentSlot = Arc<tokio::sync::Mutex<Agent>>;
 
 pub(super) struct Agents {
-    records: tokio::sync::Mutex<BTreeMap<String, AgentSlot>>,
+    records: Arc<tokio::sync::Mutex<BTreeMap<String, AgentSlot>>>,
     spawning: Arc<std::sync::atomic::AtomicUsize>,
     snapshots: Mutex<snapshots::Snapshots>,
     notifier: Notifier,
@@ -584,6 +718,18 @@ struct Notifier {
 }
 
 impl Notifier {
+    fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
+        if let (Some(core), Some(thread)) = (
+            self.core.upgrade(),
+            handle.strip_prefix(&format!("mod-{}-", agent.mod_id)),
+        ) && let Some(record) = core
+            .inventory
+            .end(thread, "cancelled", Some(reason.to_owned()))
+        {
+            inventory::notify(&self.runtime, &core.inventory, "end", record);
+        }
+    }
+
     fn agent_end(&self, mod_id: String, generation: u64, payload: Value, lead: Lead) {
         let handle = tokio::runtime::Handle::current();
         let notifier = self.clone();
@@ -1059,13 +1205,21 @@ impl Agent {
                 .is_some_and(Result::is_ok))
     }
 
-    async fn shutdown(&mut self) {
-        if let Some(job) = self.job.take() {
+    async fn shutdown(&mut self) -> Option<Workspace> {
+        let job = self.job.take();
+        if let Some(job) = &job {
             job.abort();
-            let _ = job.await;
         }
-        execution::stop_worker(&self.thread, &self.task, &self.worker, !self.consumed).await;
-        self.workspace.take();
+        let cleanup = execution::stop_dropped(
+            &self.runtime,
+            self.thread.clone(),
+            self.task.clone(),
+            self.worker.clone(),
+            !self.consumed,
+            job,
+            self.workspace.take(),
+        );
+        cleanup.await.ok().flatten()
     }
 }
 
@@ -1253,7 +1407,7 @@ impl Agents {
         host: Arc<Host>,
     ) -> Self {
         Self {
-            records: tokio::sync::Mutex::new(BTreeMap::new()),
+            records: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             spawning: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             snapshots: Mutex::new(snapshots::Snapshots::default()),
             notifier: Notifier {
@@ -1362,12 +1516,14 @@ impl Agents {
         if let Ok(mut snapshots) = self.snapshots.lock() {
             snapshots.remove_owner(mod_id, generation);
         }
-        self.cleanup_where(|agent| agent.mod_id == mod_id && agent.generation == generation)
+        let mod_id = mod_id.to_owned();
+        self.cleanup_where(move |agent| agent.mod_id == mod_id && agent.generation == generation)
             .await;
     }
 
     pub(super) async fn cleanup_session(&self, session: &Session) {
-        self.cleanup_where(|agent| Arc::ptr_eq(&agent.task, &session.task))
+        let task = session.task.clone();
+        self.cleanup_where(move |agent| Arc::ptr_eq(&agent.task, &task))
             .await;
     }
 
@@ -1672,30 +1828,55 @@ impl Agents {
         Ok((snapshot, digest))
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "Remove and shut down a handle without releasing it to a concurrent call"
-    )]
-    async fn cleanup_where(&self, selected: impl Fn(&Agent) -> bool) {
-        for (id, slot) in self.slots().await {
-            let mut agent = slot.lock().await;
-            if selected(&agent) && self.remove(&id, &slot).await {
-                agent.shutdown().await;
-                self.stopped(&id, &agent, "stopped with its mod or session");
-            }
+    async fn cleanup_where(&self, selected: impl Fn(&Agent) -> bool + Send + Sync + 'static) {
+        let selected = Arc::new(selected);
+        let pending: Vec<_> = self
+            .slots()
+            .await
+            .into_iter()
+            .map(|(id, slot)| {
+                let records = self.records.clone();
+                let selected = selected.clone();
+                async move {
+                    let mut agent = slot.clone().lock_owned().await;
+                    if !selected(&agent) {
+                        return None;
+                    }
+                    let removed = {
+                        let mut records = records.lock().await;
+                        if records
+                            .get(&id)
+                            .is_some_and(|current| Arc::ptr_eq(current, &slot))
+                        {
+                            records.remove(&id);
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if !removed {
+                        return None;
+                    }
+                    let workspace = agent.shutdown().await;
+                    Some((id, agent, workspace))
+                }
+            })
+            .collect();
+        if pending.is_empty() {
+            return;
         }
+        let notifier = self.notifier.clone();
+        let cleanup = teardown_in_order(pending, move |completed| {
+            if let Some((id, agent, workspace)) = completed {
+                drop(workspace);
+                notifier.stopped(&id, &agent, "stopped with its mod or session");
+            }
+        });
+        let _ = cleanup.await;
     }
 
     fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
-        if let (Some(core), Some(thread)) = (
-            self.notifier.core.upgrade(),
-            handle.strip_prefix(&format!("mod-{}-", agent.mod_id)),
-        ) && let Some(record) = core
-            .inventory
-            .end(thread, "cancelled", Some(reason.to_owned()))
-        {
-            inventory::notify(&self.notifier.runtime, &core.inventory, "end", record);
-        }
+        self.notifier.stopped(handle, agent, reason);
     }
 
     async fn integrate(
@@ -1941,7 +2122,7 @@ impl Agents {
                 } else {
                     mailbox.delivered().unwrap_or(json!(false))
                 };
-                agent.shutdown().await;
+                drop(agent.shutdown().await);
                 if let Some(thread) = handle
                     .handle
                     .strip_prefix(&format!("mod-{}-", agent.mod_id))
@@ -2291,7 +2472,7 @@ impl Agents {
                     }
                 }
                 Err(reason) => {
-                    agent.shutdown().await;
+                    drop(agent.shutdown().await);
                     self.stopped(&handle, &agent, reason);
                     drop(agent);
                     self.remove(&handle, &slot).await;

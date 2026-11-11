@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.0.patch",
-    "sha256": "8f652dd41261cb1f441291d8eda5ad091d6218f0191bdd4afe90b8f95852ae63"
+    "sha256": "0910b763f6376ccf61cc3ef36423fe9ba2b3f9a2caba24dabb35f2a9ae51ad6c"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -491,7 +491,7 @@
     },
     "codex-rs/core/src/agent/control_tests.rs": {
       "before": "37700e5581e69f54e20470e39859bb7848f6b5c55ac365a639a361a20d549352",
-      "after": "15776908cbd5914cfec375a310bd3b8a140dd261601fe747730a9c37e29fff5f"
+      "after": "0e88ad5b27e92415f94fb9c7c519dfa36e4d26e93fc72ef1e730dc288ec40d0e"
     },
     "codex-rs/core/src/agent/history.rs": {
       "before": "1dfdd35aa899c9a30c97216e86886b8095f0a9382b6fee822ed32af7f1bb1d71",
@@ -671,7 +671,7 @@
     },
     "codex-rs/core/src/session/mod.rs": {
       "before": "c04716274b5ecfc91730908bf25159bc6498a368d10352a0fc311aae7182df62",
-      "after": "5a2cb54de93ef5b3219e2a2f17f27393d7acf1a1863784de3bbeae2cfc18aebc"
+      "after": "ae49ba48726a6a9c0f08e0450779c3fdbd5d37c9c36ef7cb6ca7ea0d2fa0ad44"
     },
     "codex-rs/core/src/session/persisted_text.rs": {
       "before": null,
@@ -680,6 +680,10 @@
     "codex-rs/core/src/session/persisted_text_tests.rs": {
       "before": null,
       "after": "09bbfd07fdcab341e03268fab04edc351c35081fa2bd84d1f12476de04d8d0c2"
+    },
+    "codex-rs/core/src/session/prompt_expansion_tests.rs": {
+      "before": null,
+      "after": "0c437c459cbdfba0c52086502ee241ff6b2d621eed159d1540cb7a24fc3f4610"
     },
     "codex-rs/core/src/session/realtime_history.rs": {
       "before": "1da2adeb9021aefc58f3f6a4e492285d5b6de56d8bfa1906676651f94c552f9c",
@@ -1239,7 +1243,7 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "665b115fb451cb5fcf281cb1aeba14f89d5592dc9913c09b0c074e87c2b4f1ad"
+      "after": "a3faabdba92231497f7dc762e6a2d49057b3af3a57e380701aa0c5362411ea07"
     },
     "codex-rs/ext/omd/src/generic_host.rs": {
       "before": null,
@@ -1271,7 +1275,7 @@
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
-      "after": "8bc412021680cc97ae38526451ec8bfe92df808b6f71a7660b582da1fd6238ac"
+      "after": "512008a007a2b5a55595ed89d7762e697f1e69bdadce743cf257af58decf6d4d"
     },
     "codex-rs/ext/omd/src/mods/autonomy.rs": {
       "before": null,
@@ -1355,7 +1359,7 @@
     },
     "codex-rs/ext/omd/src/mods/services.rs": {
       "before": null,
-      "after": "2d545264bf3bde253b6dee74a5d14ad9365a9cb17c0c48ff38215ec04a14af91"
+      "after": "0e50ef4ff9ac3a2669803bbdf55388f38ca54c0834ac1c534c3ffc99af9e0924"
     },
     "codex-rs/ext/omd/src/mods/snapshots.rs": {
       "before": null,

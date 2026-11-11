@@ -136,11 +136,11 @@
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
         "index.ts": "ae8b9427a7dfef0b85cf8dfd1a08ffaa5504fac59fa483098bc7f7d82a93f88a",
         "mod.json": "d1fe1b52156e1a467905e70c6339155629b600086ae0f1bc7d797e0bd7c9c240",
-        "setup.mjs": "2a6cbd2dd9f88cedc1cb641a08d7363f71557a6cc855ceb2f119ff283f232f0d",
-        "transport.mjs": "e8d98a29092a668d6bf816d4468a97a8602f7bb7e37fc2a77ddb3a8b264fb8d3"
+        "setup.mjs": "37f0b1dc81b0b51bf4349ecfd77207c5b55fb187f80e666817b3d5ebf770020c",
+        "transport.mjs": "4f85584f8e53141d39e8520baf1b6864d571f18c25140b27389699a547903e33"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "2ce2e7f2ab4b9166aa8b3c5093606573bbf8e9b6d82b54c9c1f37a99be943a5a",
+      "package_sha256": "bac6ca9c692f8506d205e4bbeaa8a1b0f4d5b4603ebcc93645bf18a4add47d06",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.3"
     },
@@ -181,10 +181,10 @@
         "index.ts": "665d79af2c07e6031d43544edac25f2389bcd8b53ee1c8c88b9584be8f834329",
         "mod.json": "041d4da7f1e9bb3e0d2f6764c4de475139f79c29670e6bf9157a84540485c0fa",
         "setup.mjs": "f5000fdab138b690618fbacf2e1aa1f851df311179b284026156f23c8b67eecb",
-        "transport.mjs": "db0cfef98a3cfa42540b268bbb707f2ecf50194576fa6135e25168e31fac59ef"
+        "transport.mjs": "b2379b26f457204f1943eef9814bbd31016014b8648668553091e8ab18b3b13f"
       },
       "id": "omd_cursor",
-      "package_sha256": "769cca2c4984b8cd37036995d73274f42858c836c9e764ef5590b58107399d80",
+      "package_sha256": "42b8d229fbfcd66bf207be5952d2ba7c3f868548f039a70ca12e7f472826f5a0",
       "source": "mods/first-party/omd_cursor",
       "version": "1.0.1"
     },
@@ -523,12 +523,12 @@
       ],
       "extension_type": "mod",
       "files": {
-        "github.mjs": "122f3888832bbc37f2f8c69452baedfa6ff5b41eaacbb99d8491d329d2d4083f",
+        "github.mjs": "b5d4ac6ca5721fd1977cf3ed8e928599e5c76afbbdbd3c18d28916e13969c7d6",
         "index.ts": "6cb0593dba4681719153498b77fad8f53878a036617f498504fd6f62fdd43968",
         "mod.json": "ed5195224a971b874abdf60096b99f5b9de7e31c04caa4193d7d135a5f3af399"
       },
       "id": "omd_monitor",
-      "package_sha256": "cd8b4cc0e56270d77ed71d9e9e71936e4f02dec280532f6487329e464ab4c314",
+      "package_sha256": "5cb8fd7d50661f445bd7c88b3f900c9fc57801e93ee5c2f5aa28ad724063f269",
       "source": "mods/first-party/omd_monitor",
       "version": "1.0.1"
     },

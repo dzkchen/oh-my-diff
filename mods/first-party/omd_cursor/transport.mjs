@@ -237,10 +237,13 @@ export class Router {
     if (this.sdk) return;
     const root = process.env.OMD_SERVICE_ROOT;
     if (!root || !this.route.sdk?.startsWith('/') || this.route.sdk.split('/').includes('..')) throw new Error('cursor_sdk_snapshot_unavailable');
-    const sdk = await loadSdk(`${root}${this.route.sdk}`);
-    await mkdir(join(this.route.data, 'workspace'), { recursive: true, mode: 0o700 });
+    const [sdk, , state] = await Promise.all([
+      loadSdk(`${root}${this.route.sdk}`),
+      mkdir(join(this.route.data, 'workspace'), { recursive: true, mode: 0o700 }),
+      readFile(this.statePath, 'utf8').then(JSON.parse).catch(() => undefined),
+    ]);
     this.store = new sdk.JsonlLocalAgentStore(join(this.route.data, 'agents', this.account.name));
-    try { this.state = JSON.parse(await readFile(this.statePath, 'utf8')); } catch {}
+    if (state !== undefined) this.state = state;
     this.sdk = sdk;
   }
   // Cursor's built-in tools, ambient settings and MCP servers stay off; the agent works in an empty private directory so nothing of the repository leaves except through OMD tools.

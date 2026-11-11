@@ -21963,10 +21963,10 @@ index 024a0893c9c4255f1d1aa758937c8d566902fba1..f15c274b6c683d78a31101107212f989
              residency_slot.commit(new_thread.thread_id);
          }
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
-index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8cece4bec8 100644
+index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..76b6c862faccd35245e2c52ae90e6d29ff41e657 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
 +++ b/codex-rs/core/src/agent/control_tests.rs
-@@ -1119,6 +1119,175 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
+@@ -1119,6 +1119,179 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
      ));
  }
 
@@ -21995,7 +21995,11 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
 +        (self.3.load(std::sync::atomic::Ordering::Acquire)
 +            && name == "ext/reviewer"
 +            && turn_store
-+                .and_then(|store| store.get::<codex_protocol::turn_input::TerminalOwner>())
++                .and_then(
++                    codex_extension_api::ExtensionData::get::<
++                        codex_protocol::turn_input::TerminalOwner,
++                    >,
++                )
 +                .as_deref()
 +                == Some(&self.2))
 +        .then(|| codex_extension_api::ContributedAgentRole {
@@ -22142,7 +22146,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
  #[tokio::test]
  async fn ensure_v2_agent_loaded_reloads_registered_unloaded_agent() {
      check_v2_agent_reload(V2ReloadRoute::Sender).await;
-@@ -2422,58 +2591,61 @@ async fn spawn_agent_fork_from_paginated_parent_uses_model_context_prefix(
+@@ -2422,58 +2595,61 @@ async fn spawn_agent_fork_from_paginated_parent_uses_model_context_prefix(
          .await;
      parent_thread
          .session
@@ -22252,7 +22256,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
          .await;
 
      let child_thread_id = harness
-@@ -2710,6 +2882,7 @@ async fn spawn_agent_fork_sanitizes_inherited_compaction_metadata() {
+@@ -2710,6 +2886,7 @@ async fn spawn_agent_fork_sanitizes_inherited_compaction_metadata() {
              root_turn_id: Some("root-turn".to_string()),
          }),
          previous_turn_settings: Some(codex_history::PreviousTurnSettings {
@@ -22260,7 +22264,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
              model: "parent-model".into(),
              comp_hash: None,
              cyber_access_program: None,
-@@ -2733,24 +2906,29 @@ async fn spawn_agent_fork_sanitizes_inherited_compaction_metadata() {
+@@ -2733,24 +2910,29 @@ async fn spawn_agent_fork_sanitizes_inherited_compaction_metadata() {
      let parent_spawn_call_id = "spawn-call-token-usage".to_string();
      parent_thread
          .session
@@ -22308,7 +22312,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
          .await;
 
      let child_thread_id = harness
-@@ -3035,10 +3213,13 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
+@@ -3035,10 +3217,13 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
      let parent_reference_context_item = turn_context.to_turn_context_item();
      parent_thread
          .session
@@ -22326,7 +22330,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
          .await;
      parent_thread
          .session
-@@ -3416,34 +3597,37 @@ async fn spawn_agent_fork_strips_parent_usage_hints_from_compacted_history(marke
+@@ -3416,34 +3601,37 @@ async fn spawn_agent_fork_strips_parent_usage_hints_from_compacted_history(marke
      retained_context.record_sender_user_messages(delivery.metadata.as_ref().unwrap());
      parent_thread
          .session
@@ -22392,7 +22396,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
          .await;
      parent_thread
          .session
-@@ -3636,37 +3820,40 @@ async fn spawn_agent_full_fork_restores_instructions_after_compaction_discards_p
+@@ -3636,37 +3824,40 @@ async fn spawn_agent_full_fork_restores_instructions_after_compaction_discards_p
          .await;
      parent_thread
          .session
@@ -22464,7 +22468,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
          .await;
      parent_thread
          .session
-@@ -3862,6 +4049,7 @@ async fn spawn_agent_full_fork_legacy_compaction_rebuilds_child_instructions_onc
+@@ -3862,6 +4053,7 @@ async fn spawn_agent_full_fork_legacy_compaction_rebuilds_child_instructions_onc
                      last_started_turn_id: None,
                      turn_attribution: None,
                      previous_turn_settings: Some(codex_history::PreviousTurnSettings {
@@ -22472,7 +22476,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
                          model: "parent-model".into(),
                          comp_hash: None,
                          cyber_access_program: None,
-@@ -3921,7 +4109,7 @@ async fn spawn_agent_full_fork_legacy_compaction_rebuilds_child_instructions_onc
+@@ -3921,7 +4113,7 @@ async fn spawn_agent_full_fork_legacy_compaction_rebuilds_child_instructions_onc
          )));
          parent_thread
              .session
@@ -22481,7 +22485,7 @@ index 87247661d2703c1c8c9b5a9bbcbc649a56732b4e..d11e1614ffbd55db9f92a01eae7c4e8c
              .await;
          parent_thread
              .session
-@@ -6166,3 +6354,166 @@ async fn resume_agent_from_rollout_skips_descendants_when_parent_resume_fails()
+@@ -6166,3 +6358,166 @@ async fn resume_agent_from_rollout_skips_descendants_when_parent_resume_fails()
          .await
          .expect("tree shutdown after partial subtree resume should succeed");
  }
@@ -26505,7 +26509,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33db8503f4 100644
+index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..1882f4a0ec941cbbd4e0baf5320ac25e3918afda 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -171,6 +171,7 @@ use codex_protocol::request_permissions::PermissionGrantScope;
@@ -26532,7 +26536,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
  #[cfg(test)]
  use self::handlers::submission_dispatch_span;
  use self::handlers::submission_loop;
-@@ -572,10 +575,59 @@ pub(crate) fn resolve_multi_agent_version(
+@@ -572,10 +575,132 @@ pub(crate) fn resolve_multi_agent_version(
 
  pub(crate) const INITIAL_SUBMIT_ID: &str = "";
  pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
@@ -26572,6 +26576,79 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
 +    }
 +}
 +
++async fn prompt_expansion_items<F, Fut>(
++    input: &[codex_protocol::user_input::UserInput],
++    read: F,
++) -> Vec<serde_json::Value>
++where
++    F: Fn(PathBuf) -> Fut,
++    Fut: std::future::Future<Output = std::io::Result<Vec<u8>>>,
++{
++    use codex_protocol::user_input::UserInput;
++    let read = &read;
++    let mut expansions = std::pin::pin!(
++        futures::stream::iter(0..input.len())
++            .map(|index| async move {
++                use sha2::Digest;
++                let item = &input[index];
++                let digest = |bytes: &[u8]| format!("{:x}", sha2::Sha256::digest(bytes));
++                let mut items = Vec::new();
++                match item {
++                    UserInput::Skill { name, path } => {
++                        let content = read(path.clone()).await.unwrap_or_default();
++                        items.push(serde_json::json!({"kind": "skill", "name": name,
++                        "source": path.display().to_string(), "sha256": digest(&content)}));
++                    }
++                    UserInput::Mention { name, path } => {
++                        items.push(
++                            serde_json::json!({"kind": "mention", "name": name, "source": path}),
++                        );
++                    }
++                    UserInput::LocalImage { path, .. } => {
++                        items.push(
++                        serde_json::json!({"kind": "image", "source": path.display().to_string()}),
++                    );
++                    }
++                    UserInput::Text {
++                        text,
++                        text_elements,
++                    } => {
++                        for element in text_elements {
++                            let range = element.byte_range.start..element.byte_range.end;
++                            let Some(content) = text.get(range.clone()) else {
++                                continue;
++                            };
++                            let kind = if element
++                                .placeholder(text)
++                                .is_some_and(|placeholder| placeholder.starts_with("[Image"))
++                            {
++                                "image"
++                            } else {
++                                "paste"
++                            };
++                            items.push(serde_json::json!({"kind": kind, "start": range.start,
++                            "end": range.end, "bytes": content.len(),
++                            "sha256": digest(content.as_bytes())}));
++                        }
++                    }
++                    _ => {}
++                }
++
++                items
++            })
++            .buffered(4)
++    );
++    let mut items = Vec::new();
++    while let Some(expansion) = expansions.next().await {
++        items.extend(expansion);
++    }
++    items
++}
++
++#[cfg(test)]
++#[path = "prompt_expansion_tests.rs"]
++mod prompt_expansion_tests;
++
  impl Session {
 +    fn retain_workspace_paths(
 +        &self,
@@ -26592,7 +26669,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
      /// Spawn and initialize a new session.
      /// Hide the concrete startup future from callers while keeping initialization lazy.
      #[inline(never)]
-@@ -833,7 +885,14 @@ impl Session {
+@@ -833,7 +958,14 @@ impl Session {
          // 2. conversation history => session_meta.base_instructions
          // 3. rendered instructions_template for current model
          let model_info = models_manager
@@ -26608,7 +26685,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              .await;
          let auth = auth_manager.auth_cached();
          // Forked subagents keep their parent's activation with the copied history.
-@@ -1205,6 +1264,22 @@ impl SessionIo {
+@@ -1205,6 +1337,22 @@ impl SessionIo {
          Ok(())
      }
 
@@ -26631,7 +26708,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
      pub(crate) async fn next_event(&self) -> CodexResult<Event> {
          let event = self
              .rx_event
-@@ -1586,6 +1661,99 @@ impl Session {
+@@ -1586,6 +1734,55 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -26641,51 +26718,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
 +        turn_context: &TurnContext,
 +        input: &[codex_protocol::user_input::UserInput],
 +    ) {
-+        use codex_protocol::user_input::UserInput;
-+        use sha2::Digest;
-+        let digest = |bytes: &[u8]| format!("{:x}", sha2::Sha256::digest(bytes));
-+        let mut items = Vec::new();
-+        for item in input {
-+            match item {
-+                UserInput::Skill { name, path } => {
-+                    let content = tokio::fs::read(path).await.unwrap_or_default();
-+                    items.push(serde_json::json!({"kind": "skill", "name": name,
-+                        "source": path.display().to_string(), "sha256": digest(&content)}));
-+                }
-+                UserInput::Mention { name, path } => {
-+                    items
-+                        .push(serde_json::json!({"kind": "mention", "name": name, "source": path}));
-+                }
-+                UserInput::LocalImage { path, .. } => {
-+                    items.push(
-+                        serde_json::json!({"kind": "image", "source": path.display().to_string()}),
-+                    );
-+                }
-+                UserInput::Text {
-+                    text,
-+                    text_elements,
-+                } => {
-+                    for element in text_elements {
-+                        let range = element.byte_range.start..element.byte_range.end;
-+                        let Some(content) = text.get(range.clone()) else {
-+                            continue;
-+                        };
-+                        let kind = if element
-+                            .placeholder(text)
-+                            .is_some_and(|placeholder| placeholder.starts_with("[Image"))
-+                        {
-+                            "image"
-+                        } else {
-+                            "paste"
-+                        };
-+                        items.push(serde_json::json!({"kind": kind, "start": range.start,
-+                            "end": range.end, "bytes": content.len(),
-+                            "sha256": digest(content.as_bytes())}));
-+                    }
-+                }
-+                _ => {}
-+            }
-+        }
++        let items = prompt_expansion_items(input, tokio::fs::read).await;
 +        if items.is_empty() {
 +            return;
 +        }
@@ -26731,7 +26764,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage()
-@@ -1764,12 +1932,15 @@ impl Session {
+@@ -1764,12 +1961,15 @@ impl Session {
                  });
                  // Persist changed effective settings even when no turn follows the resume.
                  if persisted_settings != Some(&current_settings) {
@@ -26753,7 +26786,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
                      .await;
                  }
 
-@@ -1821,7 +1992,7 @@ impl Session {
+@@ -1821,7 +2021,7 @@ impl Session {
                          rollout_items.push(thread_settings_applied);
                      }
                  }
@@ -26762,7 +26795,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
                  if self.preserve_parent_tool_declarations() {
                      let notice = DeveloperInstructions::new(
                          "<mcp_tools>\nMCP tools are unavailable for this request.\n</mcp_tools>",
-@@ -2043,7 +2214,7 @@ impl Session {
+@@ -2043,7 +2243,7 @@ impl Session {
          &self,
          updates: SessionSettingsUpdate,
      ) -> ConstraintResult<SessionSettingsCommit> {
@@ -26771,7 +26804,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              unreachable!("unconditional settings updates must commit");
          };
          Ok(commit)
-@@ -2059,6 +2230,7 @@ impl Session {
+@@ -2059,6 +2259,7 @@ impl Session {
      async fn update_settings_if(
          &self,
          updates: SessionSettingsUpdate,
@@ -26779,7 +26812,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          should_commit: impl FnOnce(&SessionConfiguration, &SessionConfiguration) -> bool + Send,
      ) -> ConstraintResult<Option<SessionSettingsCommit>> {
          let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
-@@ -2070,20 +2242,39 @@ impl Session {
+@@ -2070,20 +2271,39 @@ impl Session {
              permission_profile_changed,
              mcp_inputs_changed,
              credential_masking_warning,
@@ -26827,7 +26860,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
 
              let credential_masking_warning = updated
                  .original_config_do_not_use
-@@ -2106,6 +2297,11 @@ impl Session {
+@@ -2106,6 +2326,11 @@ impl Session {
              let root_service_tier_changed = updated.parent_thread_id.is_none()
                  && state.session_configuration.step_settings.service_tier
                      != updated.step_settings.service_tier;
@@ -26839,7 +26872,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              let mcp_inputs_changed = self.mcp_inputs_differ(&state.session_configuration, &updated);
              if mcp_inputs_changed {
                  self.mark_mcp_runtime_dirty();
-@@ -2148,6 +2344,7 @@ impl Session {
+@@ -2148,6 +2373,7 @@ impl Session {
                  permission_profile_changed,
                  mcp_inputs_changed,
                  credential_masking_warning,
@@ -26847,7 +26880,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              )
          };
          if windows_sandbox_changed {
-@@ -2157,7 +2354,11 @@ impl Session {
+@@ -2157,7 +2383,11 @@ impl Session {
                  commit.configuration.windows_sandbox_level,
              );
          }
@@ -26860,7 +26893,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          if permission_profile_changed {
              self.refresh_managed_network_proxy_for_current_permission_profile()
                  .await;
-@@ -2172,6 +2373,17 @@ impl Session {
+@@ -2172,6 +2402,17 @@ impl Session {
              })
              .await;
          }
@@ -26878,7 +26911,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          if mcp_inputs_changed {
              self.schedule_mcp_prewarm();
          }
-@@ -2195,6 +2407,69 @@ impl Session {
+@@ -2195,6 +2436,69 @@ impl Session {
          self.resume_config_snapshot().await.0
      }
 
@@ -26948,7 +26981,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
      pub(crate) async fn resume_config_snapshot(&self) -> (ThreadConfigSnapshot, Option<String>) {
          let configuration = self.state.lock().await.session_configuration.clone();
          let selected_service_tier = configuration.step_settings.service_tier.clone();
-@@ -2300,6 +2575,11 @@ impl Session {
+@@ -2300,6 +2604,11 @@ impl Session {
                  .resolve_model_info(
                      self.services.models_manager.as_ref(),
                      &configuration.model_info_overrides,
@@ -26960,7 +26993,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
                  )
                  .await;
              if let Some(effort) = config
-@@ -2386,6 +2666,7 @@ impl Session {
+@@ -2386,6 +2695,7 @@ impl Session {
          &self,
          previous_config: Option<&Config>,
          new_config: Option<&Config>,
@@ -26968,7 +27001,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
      ) {
          let (Some(previous_config), Some(new_config)) = (previous_config, new_config) else {
              return;
-@@ -2399,6 +2680,7 @@ impl Session {
+@@ -2399,6 +2709,7 @@ impl Session {
                  &self.services.thread_extension_data,
                  previous_config,
                  new_config,
@@ -26976,7 +27009,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              );
          }
      }
-@@ -2592,9 +2874,12 @@ impl Session {
+@@ -2592,9 +2903,12 @@ impl Session {
                  .analytics_events_client
                  .track_guardian_session_event(self.thread_id, &event);
          }
@@ -26990,16 +27023,16 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          self.maybe_mirror_event_text_to_realtime(&legacy_source)
              .await;
          self.maybe_clear_realtime_handoff_for_event(&legacy_source)
-@@ -2609,8 +2894,141 @@ impl Session {
+@@ -2609,10 +2923,143 @@ impl Session {
                  id: turn_context.sub_id.clone(),
                  msg: legacy,
              };
 -            self.send_event_raw(legacy_event).await;
 +            self.send_event_raw_with_persistence(Some(turn_context), legacy_event, true)
 +                .await;
-+        }
-+    }
-+
+         }
+     }
+
 +    async fn maybe_forward_pending_request_to_parent(
 +        &self,
 +        turn_context: &TurnContext,
@@ -27095,7 +27128,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
 +        };
 +        if parent.as_ref() != Some(author) {
 +            return;
-         }
++        }
 +        let turn_state = self
 +            .active_turn
 +            .lock()
@@ -27130,10 +27163,12 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
 +                acceptance_order,
 +            })
 +            .ok();
-     }
-
++    }
++
      /// Forwards terminal turn events from spawned MultiAgentV2 children to their direct parent.
-@@ -2745,7 +3163,7 @@ impl Session {
+     async fn maybe_notify_parent_of_terminal_turn(
+         &self,
+@@ -2745,7 +3192,7 @@ impl Session {
      }
 
      pub(crate) async fn send_event_raw(&self, event: Event) {
@@ -27142,7 +27177,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              .await;
      }
 
-@@ -2759,10 +3177,16 @@ impl Session {
+@@ -2759,10 +3206,16 @@ impl Session {
                  true
              }
          };
@@ -27161,7 +27196,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          let flush_guardian_completion = persist
              && matches!(event.msg, EventMsg::TurnComplete(_))
              && self.is_private_guardian_reviewer().await;
-@@ -2788,20 +3212,25 @@ impl Session {
+@@ -2788,20 +3241,25 @@ impl Session {
              None => (None, None),
          };
          if let Some(effects) = before_event
@@ -27190,7 +27225,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          {
              warn!("failed to persist realtime history: {error}");
          }
-@@ -3471,7 +3900,11 @@ impl Session {
+@@ -3471,7 +3929,11 @@ impl Session {
              match active.as_mut() {
                  Some(at) => {
                      let mut ts = at.turn_state.lock().await;
@@ -27203,7 +27238,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
                  }
                  None => None,
              }
-@@ -3880,6 +4313,10 @@ impl Session {
+@@ -3880,6 +4342,10 @@ impl Session {
          let policy: codex_utils_output_truncation::TruncationPolicy =
              model_info.truncation_policy.into();
          for envelope in &mut items {
@@ -27214,7 +27249,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              if matches!(
                  envelope.item,
                  ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
-@@ -3990,7 +4427,9 @@ impl Session {
+@@ -3990,7 +4456,9 @@ impl Session {
              .map(RolloutItem::EventMsg)
              .chain(items.into_iter().map(RolloutItem::ResponseItem))
              .collect::<Vec<_>>();
@@ -27225,7 +27260,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          drop(settings_guard);
          if persisted && let Some(revision) = mcp_revision {
              self.services
-@@ -4036,8 +4475,11 @@ impl Session {
+@@ -4036,8 +4504,11 @@ impl Session {
              .set_world_state_baseline(world_state_snapshot);
          // Record the patch after the context it describes is present in model history.
          if let Some(world_state_item) = world_state_item {
@@ -27239,7 +27274,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          }
          Ok(Arc::new(world_state))
      }
-@@ -4173,6 +4615,7 @@ impl Session {
+@@ -4173,6 +4644,7 @@ impl Session {
          let inherited_environments = inherited_environments.unwrap_or_else(|| environments.clone());
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -27247,7 +27282,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -4180,6 +4623,27 @@ impl Session {
+@@ -4180,6 +4652,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -27275,7 +27310,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4411,12 +4875,15 @@ impl Session {
+@@ -4411,12 +4904,15 @@ impl Session {
          if let Some(delivery) = &communication.delivery {
              delivery.consumed(self.thread_id);
          }
@@ -27297,7 +27332,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          .await;
          drop(boundary);
          self.send_raw_response_items(turn_context, items).await;
-@@ -4495,6 +4962,7 @@ impl Session {
+@@ -4495,6 +4991,7 @@ impl Session {
 
      pub(crate) async fn replace_compacted_history<'a>(
          &self,
@@ -27305,7 +27340,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          mut items: Vec<ResponseItemEnvelope>,
          reference_context_item: TurnContextItem,
          mut world_state_baseline: WorldStateSnapshot,
-@@ -4521,10 +4989,19 @@ impl Session {
+@@ -4521,10 +5018,19 @@ impl Session {
                  ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
              )
          }) {
@@ -27329,7 +27364,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          }
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
-@@ -4669,7 +5146,9 @@ impl Session {
+@@ -4669,7 +5175,9 @@ impl Session {
              // The frozen turn context must not override current settings in persisted metadata.
              RolloutItem::EventMsg(thread_settings::applied_event(self).await),
          ];
@@ -27340,7 +27375,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              && let Some(revision) = mcp_revision
          {
              self.services
-@@ -4754,6 +5233,10 @@ impl Session {
+@@ -4754,6 +5262,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -27351,7 +27386,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4763,6 +5246,7 @@ impl Session {
+@@ -4763,6 +5275,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -27359,7 +27394,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
                  })
                  .await
              {
-@@ -4851,6 +5335,10 @@ impl Session {
+@@ -4851,6 +5364,10 @@ impl Session {
                  }
              }
          }
@@ -27370,7 +27405,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4860,6 +5348,7 @@ impl Session {
+@@ -4860,6 +5377,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -27378,7 +27413,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
                  })
                  .await
              {
-@@ -5053,9 +5542,19 @@ impl Session {
+@@ -5053,9 +5571,19 @@ impl Session {
      }
 
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
@@ -27400,7 +27435,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          {
              error!("failed to record rollout items: {e:#}");
              return false;
-@@ -5065,7 +5564,12 @@ impl Session {
+@@ -5065,7 +5593,12 @@ impl Session {
 
      pub(crate) async fn clone_history(&self) -> ContextManager {
          let state = self.state.lock().await;
@@ -27414,7 +27449,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
      }
 
      /// Captures the history lifetime without exposing mutable session state.
-@@ -5160,6 +5664,7 @@ impl Session {
+@@ -5160,6 +5693,7 @@ impl Session {
                  .collect();
          let turn_context_item = step_context.to_turn_context_item();
          self.replace_compacted_history(
@@ -27422,7 +27457,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
              context_items,
              turn_context_item,
              world_state_snapshot,
-@@ -5259,8 +5764,11 @@ impl Session {
+@@ -5259,8 +5793,11 @@ impl Session {
          }
          // Persist state only after any model-visible context generated from it.
          if let Some(world_state_item) = world_state_item {
@@ -27436,7 +27471,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
          }
          // A snapshot-only change does not require a duplicate TurnContext record.
          if only_world_state_changed {
-@@ -5282,7 +5790,8 @@ impl Session {
+@@ -5282,7 +5819,8 @@ impl Session {
                  thread_settings::applied_event(self).await,
              ));
          }
@@ -27446,7 +27481,7 @@ index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33
 
          // Advance the persisted-settings baseline even when this turn emitted no model-visible
          // context items.
-@@ -5378,7 +5887,7 @@ impl Session {
+@@ -5378,7 +5916,7 @@ impl Session {
              response_id.to_string(),
              usage,
          );
@@ -64926,6 +64961,195 @@ index 0000000000000000000000000000000000000000..651ab67f8c6dc1b5e25eeee75f21f809
 +        .expect("an interrupted append is still stored");
 +    assert!(interrupted < stored.find("later sentinel").expect("later message stored"));
 +}
+diff --git a/codex-rs/core/src/session/prompt_expansion_tests.rs b/codex-rs/core/src/session/prompt_expansion_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..00d3ceb2ab60f30ee560b3736d15b46ad8413ce8
+--- /dev/null
++++ b/codex-rs/core/src/session/prompt_expansion_tests.rs
+@@ -0,0 +1,183 @@
++use super::prompt_expansion_items;
++use codex_protocol::user_input::TextElement;
++use codex_protocol::user_input::UserInput;
++use pretty_assertions::assert_eq;
++use serde_json::json;
++use std::path::PathBuf;
++use std::sync::Arc;
++use std::sync::Mutex;
++
++fn skill(index: usize) -> UserInput {
++    UserInput::Skill {
++        name: format!("skill-{index}"),
++        path: PathBuf::from(index.to_string()),
++    }
++}
++
++#[tokio::test]
++async fn prompt_expansion_reads_overlap_with_a_bound_and_preserve_order() {
++    let input = (0..6).map(skill).collect::<Vec<_>>();
++    let gates = (0..6)
++        .map(|_| tokio::sync::Semaphore::new(0))
++        .collect::<Vec<_>>();
++    let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
++    let mut expansion = Box::pin(prompt_expansion_items(&input, |path| {
++        let index: usize = path.to_str().unwrap().parse().unwrap();
++        let gate = &gates[index];
++        let started = &started;
++        async move {
++            started.send(index).unwrap();
++            gate.acquire().await.unwrap().forget();
++            Ok(index.to_string().into_bytes())
++        }
++    }));
++    assert!(futures::poll!(expansion.as_mut()).is_pending());
++    for index in 0..4 {
++        assert_eq!(starts.try_recv().unwrap(), index);
++    }
++    assert!(starts.try_recv().is_err());
++    for index in (1..4).rev() {
++        gates[index].add_permits(1);
++        assert!(futures::poll!(expansion.as_mut()).is_pending());
++    }
++    assert!(starts.try_recv().is_err());
++    gates[0].add_permits(1);
++    assert!(futures::poll!(expansion.as_mut()).is_pending());
++    assert_eq!(starts.try_recv().unwrap(), 4);
++    assert_eq!(starts.try_recv().unwrap(), 5);
++    assert!(starts.try_recv().is_err());
++    gates[5].add_permits(1);
++    assert!(futures::poll!(expansion.as_mut()).is_pending());
++    gates[4].add_permits(1);
++    let items = expansion.await;
++    assert_eq!(items.len(), 6);
++    for (index, item) in items.iter().enumerate() {
++        assert_eq!(item["name"], format!("skill-{index}"));
++        assert_eq!(item["source"], index.to_string());
++    }
++}
++
++#[tokio::test]
++async fn prompt_expansion_preserves_mixed_metadata_and_read_errors() {
++    let input = vec![
++        skill(0),
++        UserInput::Mention {
++            name: "docs".into(),
++            path: "plugin://docs".into(),
++        },
++        UserInput::Text {
++            text: "abcé[Image]".into(),
++            text_elements: vec![
++                TextElement::new((0..3).into(), None),
++                TextElement::new((3..4).into(), None),
++                TextElement::new((5..12).into(), None),
++                TextElement::new((50..60).into(), None),
++            ],
++        },
++        UserInput::LocalImage {
++            path: PathBuf::from("picture.png"),
++            detail: None,
++        },
++        UserInput::LocalAudio {
++            path: PathBuf::from("audio.wav"),
++        },
++        skill(1),
++        skill(0),
++    ];
++    let reads = Mutex::new(Vec::new());
++    let items = prompt_expansion_items(&input, |path| {
++        reads.lock().unwrap().push(path.clone());
++        std::future::ready(if path == std::path::Path::new("1") {
++            Err(std::io::Error::from(std::io::ErrorKind::NotFound))
++        } else {
++            Ok(b"abc".to_vec())
++        })
++    })
++    .await;
++    let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
++    let empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
++    assert_eq!(
++        items,
++        vec![
++            json!({"kind": "skill", "name": "skill-0", "source": "0", "sha256": abc}),
++            json!({"kind": "mention", "name": "docs", "source": "plugin://docs"}),
++            json!({"kind": "paste", "start": 0, "end": 3, "bytes": 3, "sha256": abc}),
++            json!({"kind": "image", "start": 5, "end": 12, "bytes": 7,
++                "sha256": "dfb293375a25989e87b1df7d6175aaac91af34bc16b83c0dc790eef8dffd6d35"}),
++            json!({"kind": "image", "source": "picture.png"}),
++            json!({"kind": "skill", "name": "skill-1", "source": "1", "sha256": empty}),
++            json!({"kind": "skill", "name": "skill-0", "source": "0", "sha256": abc}),
++        ]
++    );
++    assert_eq!(
++        *reads.lock().unwrap(),
++        vec![PathBuf::from("0"), PathBuf::from("1"), PathBuf::from("0")]
++    );
++}
++
++type PromptObservations = Arc<Mutex<Vec<(usize, Vec<serde_json::Value>)>>>;
++
++struct PromptObserver {
++    ordinal: usize,
++    observed: PromptObservations,
++}
++
++impl codex_extension_api::TurnLifecycleContributor for PromptObserver {
++    fn on_prompt_expanded<'a>(
++        &'a self,
++        input: codex_extension_api::PromptExpandedInput<'a>,
++    ) -> codex_extension_api::ExtensionFuture<'a, ()> {
++        Box::pin(async move {
++            if self.ordinal == 0 {
++                tokio::task::yield_now().await;
++            }
++            self.observed
++                .lock()
++                .unwrap()
++                .push((self.ordinal, input.items.to_vec()));
++        })
++    }
++}
++
++#[tokio::test]
++async fn prompt_expansion_notifies_contributors_in_order_with_complete_items() {
++    let (mut session, turn) = super::tests::make_session_and_context().await;
++    let observed = Arc::new(Mutex::new(Vec::new()));
++    let mut extensions = codex_extension_api::ExtensionRegistryBuilder::new();
++    for ordinal in 0..2 {
++        extensions.turn_lifecycle_contributor(Arc::new(PromptObserver {
++            ordinal,
++            observed: Arc::clone(&observed),
++        }));
++    }
++    session.services.extensions = Arc::new(extensions.build());
++    let directory = tempfile::tempdir().unwrap();
++    let path = directory.path().join("SKILL.md");
++    tokio::fs::write(&path, b"abc").await.unwrap();
++    session.notify_prompt_expanded(&turn, &[]).await;
++    assert!(observed.lock().unwrap().is_empty());
++    session
++        .notify_prompt_expanded(
++            &turn,
++            &[
++                UserInput::Skill {
++                    name: "example".into(),
++                    path: path.clone(),
++                },
++                UserInput::Mention {
++                    name: "docs".into(),
++                    path: "plugin://docs".into(),
++                },
++            ],
++        )
++        .await;
++    let expected = vec![
++        json!({"kind": "skill", "name": "example", "source": path.display().to_string(),
++            "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}),
++        json!({"kind": "mention", "name": "docs", "source": "plugin://docs"}),
++    ];
++    assert_eq!(
++        *observed.lock().unwrap(),
++        vec![(0, expected.clone()), (1, expected)]
++    );
++}
 diff --git a/codex-rs/core/src/tools/approval_gate.rs b/codex-rs/core/src/tools/approval_gate.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..ef1e2065a4b5ce9eeaa9f331c642bed590e64eab
@@ -76916,10 +77140,10 @@ index 0000000000000000000000000000000000000000..4f7fc6d92b9d7e33558b38d37fc51b4e
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..53fbcbf9f5e3b8bdb8593cfcdaed3c4382f6bbaa
+index 0000000000000000000000000000000000000000..6a814dea7d00d8938ca1062b26fee9e81b68db7e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,636 @@
+@@ -0,0 +1,701 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -76997,23 +77221,39 @@ index 0000000000000000000000000000000000000000..53fbcbf9f5e3b8bdb8593cfcdaed3c43
 +    }
 +}
 +
-+/// `stop_worker` for `Drop`, on the runtime that owns the thread: awaits `job` first and drops `keep` last.
-+pub(super) fn stop_dropped(
++/// `stop_worker` for `Drop`, on the runtime that owns the thread: awaits `job` first and returns `keep` after shutdown.
++pub(super) fn stop_dropped<K: Send + 'static>(
 +    runtime: &tokio::runtime::Handle,
 +    thread: Arc<codex_core::CodexThread>,
 +    task: Arc<Task>,
 +    worker: String,
 +    discard: bool,
 +    job: Option<tokio::task::JoinHandle<()>>,
-+    keep: impl Send + 'static,
-+) {
++    keep: K,
++) -> tokio::task::JoinHandle<K> {
++    owned_shutdown(
++        runtime,
++        job,
++        async move {
++            stop_worker(&thread, &task, &worker, discard).await;
++        },
++        keep,
++    )
++}
++
++fn owned_shutdown<K: Send + 'static>(
++    runtime: &tokio::runtime::Handle,
++    job: Option<tokio::task::JoinHandle<()>>,
++    stop: impl std::future::Future<Output = ()> + Send + 'static,
++    keep: K,
++) -> tokio::task::JoinHandle<K> {
 +    runtime.spawn(async move {
 +        if let Some(job) = job {
 +            let _ = job.await;
 +        }
-+        stop_worker(&thread, &task, &worker, discard).await;
-+        drop(keep);
-+    });
++        stop.await;
++        keep
++    })
 +}
 +
 +pub(super) fn intersect(
@@ -77554,6 +77794,55 @@ index 0000000000000000000000000000000000000000..53fbcbf9f5e3b8bdb8593cfcdaed3c43
 +            .unwrap();
 +            assert_eq!(status.success(), granted);
 +        }
++    }
++}
++
++#[cfg(test)]
++mod shutdown_tests {
++    use super::*;
++
++    #[tokio::test]
++    async fn owned_shutdown_finishes_after_its_waiter_is_cancelled() {
++        let resource = tempfile::tempdir().unwrap();
++        let path = resource.path().to_path_buf();
++        let (release_job, wait_job) = std::sync::mpsc::channel();
++        let (job_started, job_start) = tokio::sync::oneshot::channel();
++        let job = tokio::task::spawn_blocking(move || {
++            job_started.send(()).unwrap();
++            let _ = wait_job.recv();
++        });
++        job_start.await.unwrap();
++        job.abort();
++        let (stop_started, mut stop_start) = tokio::sync::oneshot::channel();
++        let (release_stop, wait_stop) = tokio::sync::oneshot::channel();
++        let (stopped, stop_done) = tokio::sync::oneshot::channel();
++        let cleanup = owned_shutdown(
++            &tokio::runtime::Handle::current(),
++            Some(job),
++            async move {
++                stop_started.send(()).unwrap();
++                wait_stop.await.unwrap();
++                stopped.send(()).unwrap();
++            },
++            resource,
++        );
++        let waiter = tokio::spawn(cleanup);
++        waiter.abort();
++        assert!(waiter.await.unwrap_err().is_cancelled());
++        assert!(path.exists());
++        assert!(stop_start.try_recv().is_err());
++        release_job.send(()).unwrap();
++        stop_start.await.unwrap();
++        assert!(path.exists());
++        release_stop.send(()).unwrap();
++        stop_done.await.unwrap();
++        tokio::time::timeout(Duration::from_secs(5), async {
++            while path.exists() {
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .unwrap();
 +    }
 +}
 diff --git a/codex-rs/ext/omd/src/generic_host.rs b/codex-rs/ext/omd/src/generic_host.rs
@@ -85491,20 +85780,38 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa82800e0d8
+index 0000000000000000000000000000000000000000..078e5b4e8c13d18fb7a7e967245e8a5a7d03df52
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,3050 @@
+@@ -0,0 +1,3231 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::AgentStatus;
 +use codex_protocol::protocol::EventMsg;
 +use codex_protocol::turn_input::TurnInputRequest;
 +use codex_protocol::user_input::UserInput;
++use futures_util::StreamExt;
 +use std::collections::BTreeSet;
 +use std::time::Duration;
 +
 +const AGENT_LIMIT: usize = 16;
++
++// Keeps teardown alive after its waiter is cancelled and publishes in input order.
++fn teardown_in_order<F, T>(
++    pending: Vec<F>,
++    mut publish: impl FnMut(T) + Send + 'static,
++) -> tokio::task::JoinHandle<()>
++where
++    F: std::future::Future<Output = T> + Send + 'static,
++    T: Send + 'static,
++{
++    tokio::spawn(async move {
++        let mut pending = futures_util::stream::iter(pending).buffered(AGENT_LIMIT);
++        while let Some(completed) = pending.next().await {
++            publish(completed);
++        }
++    })
++}
 +
 +pub(super) fn classify_error(
 +    code: &Option<codex_protocol::protocol::CodexErrorInfo>,
@@ -85688,6 +85995,122 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +#[cfg(test)]
 +mod history_tests {
 +    use super::*;
++
++    #[tokio::test]
++    async fn teardown_overlaps_slots_and_retains_locks_until_ordered_publication() {
++        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
++        let (published, mut publications) = tokio::sync::mpsc::unbounded_channel();
++        struct Resource(
++            usize,
++            tokio::sync::mpsc::UnboundedSender<(&'static str, usize)>,
++        );
++        impl Drop for Resource {
++            fn drop(&mut self) {
++                let _ = self.1.send(("removed", self.0));
++            }
++        }
++        let slots = (0..3)
++            .map(|_| Arc::new(tokio::sync::Mutex::new(())))
++            .collect::<Vec<_>>();
++        let mut releases = Vec::new();
++        let mut pending = Vec::new();
++        for (index, slot) in slots.iter().cloned().enumerate() {
++            let (release, wait) = tokio::sync::oneshot::channel();
++            releases.push(release);
++            let started = started.clone();
++            let resource = Resource(index, published.clone());
++            pending.push(async move {
++                let guard = slot.lock_owned().await;
++                started.send(index).unwrap();
++                wait.await.unwrap();
++                (index, guard, resource)
++            });
++        }
++        let cleanup = teardown_in_order(pending, move |(index, guard, resource)| {
++            drop(resource);
++            published.send(("stopped", index)).unwrap();
++            drop(guard);
++        });
++        for _ in 0..3 {
++            tokio::time::timeout(Duration::from_secs(5), starts.recv())
++                .await
++                .unwrap()
++                .unwrap();
++        }
++        releases.pop().unwrap().send(()).unwrap();
++        releases.pop().unwrap().send(()).unwrap();
++        tokio::task::yield_now().await;
++        assert!(publications.try_recv().is_err());
++        assert!(slots.iter().all(|slot| slot.try_lock().is_err()));
++        releases.pop().unwrap().send(()).unwrap();
++        cleanup.await.unwrap();
++        for index in 0..3 {
++            assert_eq!(publications.recv().await, Some(("removed", index)));
++            assert_eq!(publications.recv().await, Some(("stopped", index)));
++        }
++        assert!(slots.iter().all(|slot| slot.try_lock().is_ok()));
++    }
++
++    #[tokio::test]
++    async fn teardown_survives_a_cancelled_waiter_and_retains_owned_resources() {
++        let resource = tempfile::tempdir().unwrap();
++        let path = resource.path().to_path_buf();
++        let (release, wait) = tokio::sync::oneshot::channel();
++        let (started, start) = tokio::sync::oneshot::channel();
++        let (published, publication) = tokio::sync::oneshot::channel();
++        let mut published = Some(published);
++        let cleanup = teardown_in_order(
++            vec![async move {
++                started.send(()).unwrap();
++                wait.await.unwrap();
++                resource
++            }],
++            move |resource| {
++                assert!(resource.path().exists());
++                drop(resource);
++                published.take().unwrap().send(()).unwrap();
++            },
++        );
++        let waiter = tokio::spawn(cleanup);
++        start.await.unwrap();
++        waiter.abort();
++        assert!(waiter.await.unwrap_err().is_cancelled());
++        assert!(path.exists());
++        release.send(()).unwrap();
++        tokio::time::timeout(Duration::from_secs(5), publication)
++            .await
++            .unwrap()
++            .unwrap();
++        assert!(!path.exists());
++    }
++
++    #[tokio::test]
++    async fn teardown_bounds_work_in_flight() {
++        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
++        let gate = Arc::new(tokio::sync::Semaphore::new(0));
++        let pending = (0..AGENT_LIMIT + 2)
++            .map(|index| {
++                let started = started.clone();
++                let gate = gate.clone();
++                async move {
++                    started.send(index).unwrap();
++                    gate.acquire().await.unwrap().forget();
++                }
++            })
++            .collect();
++        let cleanup = teardown_in_order(pending, |_| {});
++        for index in 0..AGENT_LIMIT {
++            assert_eq!(
++                tokio::time::timeout(Duration::from_secs(5), starts.recv())
++                    .await
++                    .unwrap(),
++                Some(index)
++            );
++        }
++        assert!(starts.try_recv().is_err());
++        gate.add_permits(AGENT_LIMIT + 2);
++        cleanup.await.unwrap();
++    }
 +
 +    #[test]
 +    fn mailbox_skips_results_a_waiter_returned_and_holds_failures_until_release() {
@@ -86066,7 +86489,7 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +type AgentSlot = Arc<tokio::sync::Mutex<Agent>>;
 +
 +pub(super) struct Agents {
-+    records: tokio::sync::Mutex<BTreeMap<String, AgentSlot>>,
++    records: Arc<tokio::sync::Mutex<BTreeMap<String, AgentSlot>>>,
 +    spawning: Arc<std::sync::atomic::AtomicUsize>,
 +    snapshots: Mutex<snapshots::Snapshots>,
 +    notifier: Notifier,
@@ -86081,6 +86504,18 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +}
 +
 +impl Notifier {
++    fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
++        if let (Some(core), Some(thread)) = (
++            self.core.upgrade(),
++            handle.strip_prefix(&format!("mod-{}-", agent.mod_id)),
++        ) && let Some(record) = core
++            .inventory
++            .end(thread, "cancelled", Some(reason.to_owned()))
++        {
++            inventory::notify(&self.runtime, &core.inventory, "end", record);
++        }
++    }
++
 +    fn agent_end(&self, mod_id: String, generation: u64, payload: Value, lead: Lead) {
 +        let handle = tokio::runtime::Handle::current();
 +        let notifier = self.clone();
@@ -86556,13 +86991,21 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +                .is_some_and(Result::is_ok))
 +    }
 +
-+    async fn shutdown(&mut self) {
-+        if let Some(job) = self.job.take() {
++    async fn shutdown(&mut self) -> Option<Workspace> {
++        let job = self.job.take();
++        if let Some(job) = &job {
 +            job.abort();
-+            let _ = job.await;
 +        }
-+        execution::stop_worker(&self.thread, &self.task, &self.worker, !self.consumed).await;
-+        self.workspace.take();
++        let cleanup = execution::stop_dropped(
++            &self.runtime,
++            self.thread.clone(),
++            self.task.clone(),
++            self.worker.clone(),
++            !self.consumed,
++            job,
++            self.workspace.take(),
++        );
++        cleanup.await.ok().flatten()
 +    }
 +}
 +
@@ -86750,7 +87193,7 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +        host: Arc<Host>,
 +    ) -> Self {
 +        Self {
-+            records: tokio::sync::Mutex::new(BTreeMap::new()),
++            records: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
 +            spawning: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
 +            snapshots: Mutex::new(snapshots::Snapshots::default()),
 +            notifier: Notifier {
@@ -86859,12 +87302,14 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +        if let Ok(mut snapshots) = self.snapshots.lock() {
 +            snapshots.remove_owner(mod_id, generation);
 +        }
-+        self.cleanup_where(|agent| agent.mod_id == mod_id && agent.generation == generation)
++        let mod_id = mod_id.to_owned();
++        self.cleanup_where(move |agent| agent.mod_id == mod_id && agent.generation == generation)
 +            .await;
 +    }
 +
 +    pub(super) async fn cleanup_session(&self, session: &Session) {
-+        self.cleanup_where(|agent| Arc::ptr_eq(&agent.task, &session.task))
++        let task = session.task.clone();
++        self.cleanup_where(move |agent| Arc::ptr_eq(&agent.task, &task))
 +            .await;
 +    }
 +
@@ -87169,30 +87614,55 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +        Ok((snapshot, digest))
 +    }
 +
-+    #[expect(
-+        clippy::await_holding_invalid_type,
-+        reason = "Remove and shut down a handle without releasing it to a concurrent call"
-+    )]
-+    async fn cleanup_where(&self, selected: impl Fn(&Agent) -> bool) {
-+        for (id, slot) in self.slots().await {
-+            let mut agent = slot.lock().await;
-+            if selected(&agent) && self.remove(&id, &slot).await {
-+                agent.shutdown().await;
-+                self.stopped(&id, &agent, "stopped with its mod or session");
-+            }
++    async fn cleanup_where(&self, selected: impl Fn(&Agent) -> bool + Send + Sync + 'static) {
++        let selected = Arc::new(selected);
++        let pending: Vec<_> = self
++            .slots()
++            .await
++            .into_iter()
++            .map(|(id, slot)| {
++                let records = self.records.clone();
++                let selected = selected.clone();
++                async move {
++                    let mut agent = slot.clone().lock_owned().await;
++                    if !selected(&agent) {
++                        return None;
++                    }
++                    let removed = {
++                        let mut records = records.lock().await;
++                        if records
++                            .get(&id)
++                            .is_some_and(|current| Arc::ptr_eq(current, &slot))
++                        {
++                            records.remove(&id);
++                            true
++                        } else {
++                            false
++                        }
++                    };
++                    if !removed {
++                        return None;
++                    }
++                    let workspace = agent.shutdown().await;
++                    Some((id, agent, workspace))
++                }
++            })
++            .collect();
++        if pending.is_empty() {
++            return;
 +        }
++        let notifier = self.notifier.clone();
++        let cleanup = teardown_in_order(pending, move |completed| {
++            if let Some((id, agent, workspace)) = completed {
++                drop(workspace);
++                notifier.stopped(&id, &agent, "stopped with its mod or session");
++            }
++        });
++        let _ = cleanup.await;
 +    }
 +
 +    fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
-+        if let (Some(core), Some(thread)) = (
-+            self.notifier.core.upgrade(),
-+            handle.strip_prefix(&format!("mod-{}-", agent.mod_id)),
-+        ) && let Some(record) = core
-+            .inventory
-+            .end(thread, "cancelled", Some(reason.to_owned()))
-+        {
-+            inventory::notify(&self.notifier.runtime, &core.inventory, "end", record);
-+        }
++        self.notifier.stopped(handle, agent, reason);
 +    }
 +
 +    async fn integrate(
@@ -87438,7 +87908,7 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +                } else {
 +                    mailbox.delivered().unwrap_or(json!(false))
 +                };
-+                agent.shutdown().await;
++                drop(agent.shutdown().await);
 +                if let Some(thread) = handle
 +                    .handle
 +                    .strip_prefix(&format!("mod-{}-", agent.mod_id))
@@ -87788,7 +88258,7 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +                    }
 +                }
 +                Err(reason) => {
-+                    agent.shutdown().await;
++                    drop(agent.shutdown().await);
 +                    self.stopped(&handle, &agent, reason);
 +                    drop(agent);
 +                    self.remove(&handle, &slot).await;
@@ -102947,10 +103417,10 @@ index 0000000000000000000000000000000000000000..f4ec1db7bc05c39f15521baa37c8e6d1
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc26c08870de1f120b0d982657fb43924f552447
+index 0000000000000000000000000000000000000000..0fb29a96be70d3c9487b14193eabcdeac8208ebd
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1097 @@
+@@ -0,0 +1,1167 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -103102,6 +103572,17 @@ index 0000000000000000000000000000000000000000..bc26c08870de1f120b0d982657fb4392
 +    }
 +}
 +
++async fn stop_services(services: Vec<Service>) {
++    for service in &services {
++        if let Some(job) = &service.job {
++            job.abort();
++        }
++    }
++    for service in services {
++        service.stop().await;
++    }
++}
++
 +impl Services {
 +    pub(super) fn new(terminal_owner: Option<String>) -> Self {
 +        Self {
@@ -103121,9 +103602,7 @@ index 0000000000000000000000000000000000000000..bc26c08870de1f120b0d982657fb4392
 +            })
 +            .map(|(_, service)| service)
 +            .collect::<Vec<_>>();
-+        for service in stale {
-+            service.stop().await;
-+        }
++        stop_services(stale).await;
 +        drop(records);
 +    }
 +
@@ -103137,9 +103616,7 @@ index 0000000000000000000000000000000000000000..bc26c08870de1f120b0d982657fb4392
 +                .map(|(_, agent)| agent)
 +                .collect::<Vec<_>>()
 +        };
-+        for agent in owned {
-+            agent.stop().await;
-+        }
++        stop_services(owned).await;
 +    }
 +
 +    pub(super) async fn cleanup_session(&self, session: &Session) {
@@ -103154,9 +103631,7 @@ index 0000000000000000000000000000000000000000..bc26c08870de1f120b0d982657fb4392
 +                .filter_map(|key| records.remove(&key))
 +                .collect::<Vec<_>>()
 +        };
-+        for service in owned {
-+            service.stop().await;
-+        }
++        stop_services(owned).await;
 +    }
 +
 +    async fn publish_models(
@@ -103953,6 +104428,71 @@ index 0000000000000000000000000000000000000000..bc26c08870de1f120b0d982657fb4392
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[tokio::test]
++    async fn service_cleanup_aborts_all_jobs_before_waiting_for_the_first() {
++        let root = tempfile::tempdir().unwrap();
++        let task = Arc::new(
++            Task::create(
++                codex_omd::Limits {
++                    requests: 3,
++                    exposure_microusd: 100,
++                    seconds: 30,
++                    concurrent_workers: 2,
++                    max_depth: 2,
++                },
++                root.path().join("evidence"),
++            )
++            .unwrap(),
++        );
++        let (release, wait) = std::sync::mpsc::channel();
++        let (started, start) = tokio::sync::oneshot::channel();
++        let first = tokio::task::spawn_blocking(move || {
++            started.send(()).unwrap();
++            let _ = wait.recv();
++            Ok(Value::Null)
++        });
++        start.await.unwrap();
++        struct Cancelled(Option<tokio::sync::oneshot::Sender<()>>);
++        impl Drop for Cancelled {
++            fn drop(&mut self) {
++                if let Some(sender) = self.0.take() {
++                    let _ = sender.send(());
++                }
++            }
++        }
++        let (cancelled, cancellation) = tokio::sync::oneshot::channel();
++        let guard = Cancelled(Some(cancelled));
++        let second = tokio::spawn(async move {
++            let _guard = guard;
++            std::future::pending::<()>().await;
++            Ok(Value::Null)
++        });
++        let service = |job| Service {
++            terminal_owner: None,
++            mod_id: "m".into(),
++            generation: 1,
++            started_at_ms: 0,
++            route: None,
++            job: Some(job),
++            task: task.clone(),
++            worker: "worker".into(),
++            _gateway: None,
++            _snapshot: tempfile::tempdir().unwrap(),
++        };
++        let first = service(first);
++        let snapshot = first._snapshot.path().to_path_buf();
++        let cleanup = tokio::spawn(stop_services(vec![first, service(second)]));
++        tokio::time::timeout(Duration::from_secs(5), cancellation)
++            .await
++            .unwrap()
++            .unwrap();
++        assert!(!cleanup.is_finished());
++        assert!(snapshot.exists());
++        release.send(()).unwrap();
++        cleanup.await.unwrap();
++        assert!(!snapshot.exists());
++    }
 +
 +    #[test]
 +    fn loopback_provider_grants_define_their_provider() {
