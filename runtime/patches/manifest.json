@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.1.patch",
-    "sha256": "01c88712844fb1c9d9c62614dc1df481af5f4ae11414a0465aecfb2c372ae56f"
+    "sha256": "5c2908d12af971bf624a22d8a1f938a91f2046bb32f56c6cba21bbae2d1e3d07"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -667,11 +667,11 @@
     },
     "codex-rs/core/src/session/mcp.rs": {
       "before": "2c0a4e33375896e3f7804fc8860a375215815ab4f41dc2cc8200dbe2ab1e916f",
-      "after": "ed5ff70e98f3595f02b851e5b38c15ebb9e40d0cf912877045c03a7a9e1a70d7"
+      "after": "dfce1ff4b9b961d44a6b4dda9c288ed3dbaade74351062b937a9a73b6509a459"
     },
     "codex-rs/core/src/session/mcp_tests.rs": {
       "before": "d21c647a06e241a13f6ff9927eb34d8428f7cf967072b1374241748b9c6f0e86",
-      "after": "b58093dd11d381384694b5508f54fa645b82241238a4f9d7f2b3286e4a3f278f"
+      "after": "d6bd6734a3f362ab6f54457feca7408e08e34e5b461cd9d0cef10609d8973ac8"
     },
     "codex-rs/core/src/session/mod.rs": {
       "before": "c04716274b5ecfc91730908bf25159bc6498a368d10352a0fc311aae7182df62",
@@ -1263,7 +1263,7 @@
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
-      "after": "94a242cc3f5df2b4852170882064fb9347d3f77bdc2c8c66512570840ea0998b"
+      "after": "5f7721b9979fe5aa43810670b50897a0d6f71a2ae0fd6e777e2a699722b2d13f"
     },
     "codex-rs/ext/omd/src/model_windows.rs": {
       "before": null,
@@ -1271,7 +1271,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "10f11b16305e42f02c2d70cc493486272d988b4eba0b3018cc84252aefca19e1"
+      "after": "1d8ff29b3ebcedaa5520406d52f44984b0d61389e13e2273749aa2a5553e3981"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -2939,7 +2939,7 @@
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,
-      "after": "b0705319416483b4b1215eb66fbf8c1a3ec16f81aed15de85089af788b49dca2"
+      "after": "e76c75ac6b67b34156c188ee0e33cb1b363aca0ec2fe8361ba28dfd69851341d"
     },
     "codex-rs/tui/src/mod_surface.rs": {
       "before": null,
