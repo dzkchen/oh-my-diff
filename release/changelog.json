@@ -6,20 +6,28 @@
     "summary": "Codex 0.167.1, shareable theme scenes, and more reliable status, cache and background work.",
     "sections": [
       {
+        "label": "New",
+        "items": [
+          "Themes: import, share, remove and restore scene files, including the bundled scenes; Aurora, Koi and Prismatic Flow join the collection"
+        ]
+      },
+      {
         "label": "Changed",
         "items": [
-          "Improve statusline, cache lifetimes and failure reporting. (#535)",
-          "Preserve turn ownership, persistence ordering and context isolation. (#541)",
-          "Add shareable scenes and removable bundled collection. (#537)",
-          "Overlap independent async work and make teardown cancellation-safe. (#542)",
-          "Streamline local checks and release validation. (#540)",
-          "Advance the Codex pin to 0.167.1 and preserve owner-snapshot render retries with context cancellation coverage. (#550)"
+          "Upstream: Codex 0.167.1",
+          "Statusline: inherit your Codex layout, keep unsaved editor drafts, preview segment changes immediately and keep mod failure alerts visible in narrow terminals",
+          "Background work: independent provider setup, model discovery, PR checks, skill reads and worker shutdowns can run together"
         ]
       },
       {
         "label": "Fixed",
         "items": [
-          "Prepare 1.5.2 and parse installer status (#551)"
+          "Statusline: show context remaining consistently with Codex, hide its duplicate context indicator and refresh only the sources used by visible segments",
+          "Usage and caching: expire stale long-cache observations consistently across usage details, idle compaction and observation masking",
+          "Turns: reject late Cursor tool callbacks and superseded runs, preserve saved message order and keep redaction and usage data in their owning thread",
+          "Preview: retry failed watched-file renders; keep terminal views updating when owner snapshots advance and discard work from an earlier conversation",
+          "Tools: show grouped failure details and detect failures in piped verification commands",
+          "Mods: explain failed, overridden and pending changes in plain language; the first automatic timeout action names omd_auto_continue and explains how to turn it off"
         ]
       }
     ],
