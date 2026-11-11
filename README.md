@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Codex starts with the OMD logo over a fire, /theme switches to a jellyfish scene, /mods lists the mods, a force-push is blocked by a mod, and a /standup command from the same mod writes a standup from git log" width="100%">
+  <img src="docs/demo.gif" alt="Codex with a theme scene, /mods, a mod blocking a force-push, and the same mod's /standup command" width="100%">
 </p>
 
 You still run `codex`, with your settings, sign-in and sessions, and you can go back to plain Codex at any time with
@@ -40,7 +40,7 @@ A mod is a small TypeScript program. It can add a slash command, give the model 
 draw a status line, panel or dialog, or react when the agent runs a tool. Before a mod runs, OMD shows its source,
 license and the permissions it asks for. You control which mods run, subject to any administrator policy.
 
-The mod in the demo blocks force-pushes and adds `/standup`:
+This mod, from the demo, blocks force-pushes and adds a `/standup` command:
 
 ```ts
 import type { ModAPI } from '@oh-my-diff/mod-api';
@@ -63,11 +63,11 @@ The full mod, with its `mod.json`, is in [`mods/examples/repo_rules`](mods/examp
 
 OMD+ comes with these, among others:
 
-- **[Themes](mods/first-party/omd_theme/README.md)**: animated scenes behind the conversation, picked with `/theme`.
 - **[Grouped tool lines](mods/first-party/omd_tool_lines/README.md)**: adjacent shell commands collapse into one row; open it for the full output.
 - **[Status line](mods/first-party/omd_statusline/README.md)**: configurable, edited with `/statusline`.
 - **[Privacy](mods/first-party/omd_privacy/README.md)**: redacts text that matches its secret and personal-data rules in requests sent to the model. Web search, transcripts and logs aren't covered (off; turn on in `/mods`).
 - **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request (off; turn on in `/mods`).
+- **[Themes](mods/first-party/omd_theme/README.md)**: animated scenes behind the conversation, picked with `/theme` (off; turn on in `/mods`).
 - **[Auto-continue](mods/first-party/omd_auto_continue/README.md)**: off until you turn it on; an unanswered approval or question no longer stalls the turn.
 
 Experimental mods add other providers, a workspace dock, `/undo` and language-server feedback. The
