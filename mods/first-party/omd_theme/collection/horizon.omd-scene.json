@@ -1,0 +1,28 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "horizon",
+  "name": "Event horizon",
+  "detail": "Fine amber bands bend around a black core above a bright, thin accretion disk.",
+  "sky": [
+    "#010107",
+    "#010107"
+  ],
+  "palette": {
+    "tint": [
+      "#29170e",
+      "#130c0c"
+    ],
+    "accent": "#ffba65"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "orbit",
+      "colors": [
+        "#bb3525",
+        "#ffd991"
+      ]
+    }
+  ]
+}

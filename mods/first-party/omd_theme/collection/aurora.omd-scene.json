@@ -1,0 +1,38 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "aurora",
+  "name": "Aurora",
+  "detail": "Northern lights ripple over a snowy ridge; they flare when a turn finishes, and stir faster while one runs.",
+  "sky": [
+    "#01040d",
+    "#041026",
+    "#0a1d33",
+    "#10283a"
+  ],
+  "palette": {
+    "tint": [
+      "#0b2a2c",
+      "#071822"
+    ],
+    "accent": "#9dffcf"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "curtains",
+      "colors": [
+        "#2dff9a",
+        "#d2ffe6",
+        "#2fd8d0",
+        "#c0fff8",
+        "#9a6bff",
+        "#e6d6ff",
+        "#dce6ff",
+        "#0b1626",
+        "#c9e4ff",
+        "#050a14"
+      ]
+    }
+  ]
+}
