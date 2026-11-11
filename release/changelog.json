@@ -1,5 +1,42 @@
 [
   {
+    "version": "1.5.2",
+    "date": "2026-11-11",
+    "title": "Oh My Diff 1.5.2",
+    "summary": "Codex 0.167.1, shareable theme scenes, and more reliable status, cache and background work.",
+    "sections": [
+      {
+        "label": "Changed",
+        "items": [
+          "Improve statusline, cache lifetimes and failure reporting. (#535)",
+          "Preserve turn ownership, persistence ordering and context isolation. (#541)",
+          "Add shareable scenes and removable bundled collection. (#537)",
+          "Overlap independent async work and make teardown cancellation-safe. (#542)",
+          "Streamline local checks and release validation. (#540)",
+          "Advance the Codex pin to 0.167.1 and preserve owner-snapshot render retries with context cancellation coverage. (#550)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Prepare 1.5.2 and parse installer status (#551)"
+        ]
+      }
+    ],
+    "commits": [
+      "8883547",
+      "753817b",
+      "e341563",
+      "28ba64f",
+      "6c1859b",
+      "a84798d",
+      "93bf661",
+      "bc8b9ed",
+      "66630e3",
+      "b22e6f1"
+    ]
+  },
+  {
     "version": "1.5.1",
     "date": "2026-11-11",
     "title": "Oh My Diff 1.5.1",

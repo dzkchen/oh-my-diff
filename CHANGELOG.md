@@ -2,6 +2,23 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.2) — 2026-11-11
+
+Codex 0.167.1, shareable theme scenes, and more reliable status, cache and background work.
+
+### Changed
+
+- Improve statusline, cache lifetimes and failure reporting. (#535)
+- Preserve turn ownership, persistence ordering and context isolation. (#541)
+- Add shareable scenes and removable bundled collection. (#537)
+- Overlap independent async work and make teardown cancellation-safe. (#542)
+- Streamline local checks and release validation. (#540)
+- Advance the Codex pin to 0.167.1 and preserve owner-snapshot render retries with context cancellation coverage. (#550)
+
+### Fixed
+
+- Prepare 1.5.2 and parse installer status (#551)
+
 ## [1.5.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.1) — 2026-11-11
 
 Claude models work with tools again, /update opens with mod updates waiting, and /mods shows one row per mod.
