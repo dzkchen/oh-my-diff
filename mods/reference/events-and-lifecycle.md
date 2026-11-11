@@ -1,7 +1,7 @@
 # Events and lifecycle
 
-Use it when a mod reacts to host events: which events exist and what they contain, channels between mods, timers and
-the `api.time` helpers, how background callbacks are delivered, lifecycle events and the classic hook names.
+Use this page when a mod reacts to host events: which events exist and what they contain, channels between mods, timers
+and the `api.time` helpers, how background callbacks are delivered, lifecycle events and the classic hook names.
 
 Mod API `1.0.0`: frozen, except the events and fields marked experimental. Platform: every OMD host (Apple Silicon
 macOS).

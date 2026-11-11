@@ -1,8 +1,8 @@
 # Model requests and streams (`model_turn_interception_v1`)
 
-Use it when a mod rewrites, reroutes, answers or watches model requests and their response streams. The policy
-stage that runs on the exact bytes sent is [Final-request policy](final-request-policy.md). A mod that calls a
-model itself uses [One-shot model calls and forks](model-calls.md).
+Use `model_turn_interception_v1` when a mod rewrites, reroutes, answers or watches model requests and their response
+streams. The policy stage that runs on the exact bytes sent is [Final-request policy](final-request-policy.md). A mod
+that calls a model itself uses [One-shot model calls and forks](model-calls.md).
 
 Mod API `1.0.0`: the `model_request` and `response_stream` interceptors and the `model_response` event are frozen.
 Platform: Apple Silicon macOS. OMD's tests cover only the configured fixture providers, not live routes.
@@ -56,7 +56,7 @@ replaced whole.
 - Protected sections (permissions, approved prefixes and network rules, managed developer instructions,
   collaboration mode, guardian policy, user answers) and tool outputs cannot be changed, dropped or moved, and no
   section crosses a protected one.
-- Native policy is enforced independently of this text.
+- The host enforces native policy independently of section text.
 
 ## `model_request` `next` and synthetic responses
 

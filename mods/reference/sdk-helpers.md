@@ -1,6 +1,6 @@
 # SDK helpers (`sdk_helpers_v1`)
 
-Use it when a mod wants the small helpers the runner adds to `api`, such as `api.session()`, `api.fs`,
+Use this page when a mod wants the small helpers the runner adds to `api`, such as `api.session()`, `api.fs`,
 `api.classify` and `api.usage`, or looks up another `api` member. The timer helpers `api.time.*` are in
 [Events and lifecycle](events-and-lifecycle.md#apitime-helpers).
 

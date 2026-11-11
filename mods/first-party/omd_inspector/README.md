@@ -1,7 +1,8 @@
 # omd_inspector
 
-Shows whether the session runs OMD, its install profile, mod counts, task and worker limits, and paid API cost.
-It also shows the workflow contract: the task checks that [`omd_workflow`](../omd_workflow/README.md) enforces. It's experimental, and no install profile includes it.
+Shows whether the session runs OMD, its install profile, mod counts, task and worker limits, and paid API cost. It also
+shows the workflow contract: the task checks that [`omd_workflow`](../omd_workflow/README.md) enforces. It's
+experimental, and no install profile includes it.
 
 ## Turn it on
 

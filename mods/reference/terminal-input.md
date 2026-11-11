@@ -1,6 +1,6 @@
 # Terminal input
 
-Use it when a mod takes keys, pastes or pointer events, binds keys, moves focus between regions and controls,
+Use this page when a mod takes keys, pastes or pointer events, binds keys, moves focus between regions and controls,
 reacts to `component_event`, guards focus changes with `component_change`, or draws with component modules.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
@@ -56,12 +56,12 @@ Leaving the component:
 - [Key contexts](#focus-regions-key-contexts-and-help-terminal_focus_v1) of the component's site owner that name
   its site get each key before the component does.
 
-Input callbacks run in the terminal process with read-only workspace access. The view redraws as soon as one
-changes the mod's state. To write, the input callback publishes an event with
-[`events.publish`](events-and-lifecycle.md#eventspublish) to the mod's `channel` handler, which runs with the
-session's access. Terminal-side callbacks, such as slash commands and input, run beside the session. That event can
-reach the `channel` handler before the input callback's own `api.state` write is saved.
-[Handle keys in a terminal view](../../docs/mod-authors/handle-keys.md) shows the save pattern.
+Input callbacks run in the terminal process with read-only workspace access. The view redraws as soon as one changes the
+mod's state. To write, the input callback publishes an event with
+[`events.publish`](events-and-lifecycle.md#eventspublish) to the mod's `channel` handler, which runs with the session's
+access. Terminal-side callbacks, such as slash commands and input, run beside the session. The published event can reach
+the `channel` handler before the input callback's own `api.state` write is saved. [Handle keys in a terminal
+view](../../docs/mod-authors/handle-keys.md) shows the save pattern.
 
 The mod stores the buffer, cursor and selection and draws them as spans. A `document` with `keys` set keeps its scroll
 across content changes and scrolls to `selected`. A paste into a focused `terminal` component goes to the PTY, bracketed
@@ -160,11 +160,10 @@ Focus, keys, paste or mouse resume full-rate drawing. Resize and returning from 
 focused; an approval, question or finished turn ends display idle in a focused terminal. Background detection needs
 a terminal that reports focus events. The conversation stays loaded and the session process keeps running.
 
-With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
-`view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.
-It fires once per thread change, not on each redraw. Delivery is asynchronous and queued events for an obsolete
-thread context are dropped. Use it to initialize thread-scoped UI state; `start` and `resume` still describe the lead
-thread's lifecycle.
+With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends `view {phase: 'opened', view:
+'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent. It fires once per thread
+change, not on each redraw. Delivery is asynchronous and queued events for an obsolete thread context are dropped. Use
+the event to initialize thread-scoped UI state; `start` and `resume` still describe the lead thread's lifecycle.
 
 Each `component_event` names its `component` and `kind`:
 
@@ -231,7 +230,7 @@ Handlers answer:
 - `{scroll: n}` to clamp the offset.
 
 They run while the terminal handles the gesture, so they get no host operations and run under the
-[terminal chain budget](interceptors.md#terminal-chain-budget). When it runs out the change applies unchanged.
+[terminal chain budget](interceptors.md#terminal-chain-budget). When the budget runs out, the change applies unchanged.
 
 ## Component modules (`component_modules_v1`)
 
@@ -292,11 +291,11 @@ post in the same frame replaces it; 64 KiB).
 ### Component modules for external clients
 
 External clients read a node's tree with [`omd/render`](omd-client-protocol.md#omdrender)
-`{slot: 'module', props: {component, columns?, rows?}}`. Each client gets its own instance of the node. It is sized
+`{slot: 'module', props: {component, columns?, rows?}}`. Each client gets its own instance of the node, sized
 by `columns` and `rows`, or as last rendered. The default is 80 columns and 0 rows. `effective.next_ms` in the result
 says when the next tick is due. The client sends key and pointer events through `omd/client/event`.
 
-Their posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
+Client posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
 host operations as `component_event` hooks, for terminal and client posts alike. A post is delivered only while the
 thread it was posted in is still current and its instance is still mounted. Detaching unmounts the client's instances
 and drops their undelivered posts.

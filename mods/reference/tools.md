@@ -1,6 +1,6 @@
 # Tools
 
-Use it when a mod runs or checks a model-visible tool, keeps a tool's complete output, adds feedback to tool
+Use this page when a mod runs or checks a model-visible tool, keeps a tool's complete output, adds feedback to tool
 output, merges a batch of calls, shapes the model's tool list or defines tools at run time. How a `tool`
 interceptor chain runs is in [Interceptors](interceptors.md); the tool-specific inputs and answers are below.
 
@@ -190,7 +190,7 @@ The input is:
 - `server` names an MCP tool's server.
 
 Lists are bounded like `tool_specs`: 512 tools, 4096-character descriptions, and a `parameters` schema over 16 KiB
-is `null`. It fails with `tools_unavailable` before the thread's first turn builds its tools.
+is `null`. `tools.list` fails with `tools_unavailable` before the thread's first turn builds its tools.
 
 The host keeps the latest lead-thread snapshot in the store as `tool-inventory.json`, rewritten only when it
 changes, and `omd-mod declarations STORE` renders it as `tool-types.d.ts`.

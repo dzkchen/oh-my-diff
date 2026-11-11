@@ -1,6 +1,6 @@
 # Workspace files
 
-Use it when a mod reads, lists or changes workspace files, guards a change with expected fingerprints, reacts to
+Use this page when a mod reads, lists or changes workspace files, guards a change with expected fingerprints, reacts to
 file changes, watches for external edits or freezes the workspace in a snapshot. Running a command against the
 workspace is in [Running commands](running-commands.md).
 

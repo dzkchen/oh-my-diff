@@ -1,8 +1,8 @@
 # omd_loop_guard
 
-Warns the agent when the same tool call and arguments return the same error three times, or the same output four
-times. It adds one note to that result asking the model to change the command or approach. It never blocks the call. It's experimental, and no install profile
-includes it.
+Warns the agent when the same tool call and arguments return the same error three times, or the same output four times.
+It adds one note to that result asking the model to change the command or approach. It never blocks the call. It's
+experimental, and no install profile includes it.
 
 ## Turn it on
 
@@ -24,8 +24,8 @@ headless run can't show the trust dialog, so a mod that isn't trusted yet stays 
   rerunning a test after changing code is never a loop. A `>` inside quotes isn't a redirect, and output captured in
   an absolute path or a `.txt`, `.log` or `.out` file isn't an edit.
 - Counts reset at the start of every turn, so polling the same command in a later turn is not a loop.
-- Each repeated result gets one note, at the third identical error or the fourth identical output. The output note says to wait longer between checks if the
-  agent is waiting for a change.
+- Each repeated result gets one note, at the third identical error or the fourth identical
+  output. The output note says to wait longer between checks if the agent is waiting for a change.
 - `write_stdin`, `wait` and `update_plan` are never counted, since polling the same way is expected, but a held note
   is still added to their output.
 

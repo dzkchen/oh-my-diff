@@ -1,8 +1,9 @@
 # Graphics
 
-Use it when a mod shows pictures or draws pixels and cells: the `image` component and its renderers, image sampling,
-rasters and `terminal.blit`, the underlay, and processes that feed a raster frames or raw pixel buffers. Which renderer
-a terminal or client offers is in the [`terminal` event `client`](terminal-operations.md#terminal-event-client).
+Use this page when a mod shows pictures or draws pixels and cells: the `image` component and its renderers, image
+sampling, rasters and `terminal.blit`, the underlay, and processes that feed a raster frames or raw pixel buffers. Which
+renderer a terminal or client offers is in the [`terminal` event
+`client`](terminal-operations.md#terminal-event-client).
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](stability-and-migration.md#experimental-entries-in-the-registry)); rasters and `terminal.blit` are

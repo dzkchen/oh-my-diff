@@ -1,8 +1,8 @@
 # Stability and migration
 
-Use it when you need to know which API entries keep their shape, which may change in any release, and what changed
-after `1.0.0`. The conformance registry, `mods/conformance/contract.json`, is the source of truth for every status
-on this page.
+Use this page when you need to know which API entries keep their shape, which may change in any release, and what
+changed after `1.0.0`. The conformance registry, `mods/conformance/contract.json`, is the source of truth for every
+status on this page.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](#experimental-entries-in-the-registry)). Runs on Apple Silicon macOS.

@@ -3,14 +3,14 @@
 On 43 coding tasks with two attempts each, Codex with four experimental Oh My Diff (OMD) mods and one plugin
 component cost an estimated 25% less than stock Codex (95% CI 19% to 31%). The run showed no measurable change in
 pass rate or wall time.
-The [results table](#results) gives the costs, token counts, timings and confidence intervals.
+See the [results table](#results) for the costs, token counts, timings and confidence intervals.
 
 Both arms used Codex `0.166.0` on a single Apple Silicon Mac on 2026-11-01. The results
-come from one run of one model on 43 tasks and should be read as an indication of direction, not as a release
+come from one run of one model on 43 tasks, so treat them as an indication of direction rather than a release
 measurement. The mods were experimental at the time. OMD+ now includes `omd_observation_mask`, turned off, and no
 install profile includes the other three.
 
-## The harness is everything around the model
+## The mods and what they change
 
 A coding agent's harness is the code between the model and the work: what each request contains, how tool results
 are returned and when a turn may end. Codex's harness resends every earlier tool output on every request, allows a
@@ -75,7 +75,7 @@ length predicts the provider's count to within 34 tokens (one standard deviation
 that excess is the text the mod inserted. A later 23-run round, in which the host retained each thread's snapshot,
 shows a similar excess (242 tokens) with snapshots averaging 656 bytes.
 
-`omd_verify_stop` had a different problem. SWE-bench checkouts have no installed dependencies and no network access,
+`omd_verify_stop` needed a different fix. SWE-bench checkouts have no installed dependencies and no network access,
 so a test often could not run at all. The mod nevertheless asked the agent to verify, and three tasks took about twice
 as many tool calls with no improvement. I changed the mod so that a failed check reporting a missing module, a
 missing command or a network error marks the turn as blocked, and the mod does not continue it. The second round
@@ -122,7 +122,7 @@ The $2.08 saved came in roughly equal parts from uncached input, cached input an
 changed, from 0.896 to 0.892 on terminal tasks and from 0.926 to 0.914 on SWE-bench, so the mods arm sent less without
 breaking the cache. Reasoning tokens fell the most, from 40.6K to 15.7K, a reduction of 61%.
 
-## Attribution to individual mods is unknown
+## Contribution of each mod
 
 I tested all five components together, so I can't tell how much each contributed. The traces show which
 mods acted. `omd_verify_stop` and the output-budget component acted often. `omd_observation_mask` and `omd_edit_guard`
@@ -132,13 +132,13 @@ The reduction in tool calls is consistent with `omd_env_bootstrap` answering the
 a workspace. The snapshot was present in every run's first request, but no run omitted it, so its share of the saving
 is unknown.
 
-The traces also revealed costs that no mod addressed. About 5% of requests in both arms lost the provider's cache
+The traces also showed costs that no mod addressed. About 5% of requests in both arms lost the provider's cache
 down to the shared 12K-token prefix partway through a run. Those requests accounted for about 21% of cost, and the
 provider's cache is outside a mod's control.
 
 ## Changes after the run
 
-Three findings from the traces led to code changes after the final run. None of them was measured here:
+After the final run I made three code changes based on the traces. None was measured here:
 
 - 196 of the 290 edits in the benchmark were shell commands that wrote files, which `omd_edit_guard` did not observe.
   It now also checks files changed by a shell command.

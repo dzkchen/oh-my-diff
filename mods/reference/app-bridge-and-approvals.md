@@ -1,6 +1,6 @@
 # App bridge and approvals
 
-Use it when a mod sends app-server methods with `app.request`, answers a pending server request with
+Use this page when a mod sends app-server methods with `app.request`, answers a pending server request with
 `app.respond`, or takes part in approvals through `approval` middleware. The capability each method class needs is
 in [Capabilities](capabilities.md); interceptors in general are in [Interceptors](interceptors.md).
 

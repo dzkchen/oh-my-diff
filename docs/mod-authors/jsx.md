@@ -15,7 +15,7 @@ rm mod.test.json debug.test.json
 ```
 
 The `rm` removes the scaffold's tests, which call `/hello`, a command this page replaces.
-[See what it builds](#see-what-it-builds) writes a new `mod.test.json`. Without TypeScript, commands fail with
+You write a new `mod.test.json` in [See what it builds](#see-what-it-builds). Without TypeScript, commands fail with
 `jsx_requires_typescript`. The scaffold's `tsconfig.json` already has the JSX settings.
 
 ## Write the entry point as `index.tsx`

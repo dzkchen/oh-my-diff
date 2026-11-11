@@ -1,6 +1,6 @@
 # Plugin components and shell commands
 
-Use it when a plugin contains a mod component or when you run a mod's exported shell command with `omd COMMAND`.
+Use this page when a plugin contains a mod component or when you run a mod's exported shell command with `omd COMMAND`.
 To bundle a mod in a plugin step by step, see
 [Bundle a mod in a plugin](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/bundle-in-a-plugin.md).
 

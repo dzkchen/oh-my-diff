@@ -1,6 +1,6 @@
 # Administrator policy and managed deployment
 
-Use it when an organization restricts which mods run, pins and deploys packages with `package-sync`, or recovers
+Use this page when an organization restricts which mods run, pins and deploys packages with `package-sync`, or recovers
 from a managed failure. Storing the policy in the broker needs [protected authority](protected-authority.md).
 
 Policy `schema` 1, read by the host on Apple Silicon macOS; it isn't part of the mod API.
@@ -19,8 +19,8 @@ Support/OhMyDiff/policy.json`.
 - A policy file or folder that isn't owned by root or is writable by anyone else fails with
   `managed_policy_untrusted` and no mod loads until it is fixed.
 
-OMD never contacts a vendor for policy and there is no remote disable: restrictions are an organization's own
-decision, made on the machine.
+OMD never contacts a vendor for policy and has no remote disable. The organization sets restrictions on the
+machine.
 
 ## Policy fields
 

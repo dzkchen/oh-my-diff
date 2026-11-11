@@ -49,7 +49,7 @@ It has no settings.
 - It moves only while the amount changes, and no animation runs while idle. With reduced motion it stays still.
 - The fire's width is capped at 96 columns, and the band's fuse box is at most 64 columns wide.
 - Accounts without rate limits show no plan bars.
-- For budgets and breakdowns, see `omd_usage`. They can run together.
+- For budgets and breakdowns, see `omd_usage`; both mods can run at once.
 
 ### Differences from upstream
 

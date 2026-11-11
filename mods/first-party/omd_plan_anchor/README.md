@@ -43,6 +43,6 @@ plan, so an old task's steps are never repeated.
   12K uncached input tokens). The mod doesn't add the tool itself for that reason.
 - Capabilities `interception`, `lifecycle` and `store`.
 - The reminder is part of the tool result, so it is recorded in the conversation and later requests reuse the cached
-  prefix. A request section can't do this: inserted sections join an early context message and would change the
-  cached prefix every time the plan changes.
+  prefix. A request section would instead join an early context message and change the cached prefix every time the
+  plan changes.
 - Only the model's own calls get the reminder; code-mode cells don't. Each thread keeps its own plan.

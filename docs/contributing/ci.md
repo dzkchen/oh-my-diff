@@ -31,12 +31,12 @@ mod examples, first-party packages, plugins, or the Python and Node `tests/`. An
 unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Every `runtime/` change
 selects it, Markdown copies included, to detect patch drift.
 
-For a pull request, the selection compares the merge commit with its first parent. A main push compares against
-the commit before the push, including every pushed commit. The merge queue supplies its base commit. The
-selection examines both paths of a rename. A new push to a pull request selects checks from the entire merged diff again. Before starting native work,
-CI looks for a successful validation with exactly the same native inputs. A hit skips native work; portable
-checks and a fresh `PR gate` still run. Updating a branch with unrelated main changes can therefore reuse
-its previous native validation while keeping the up-to-date branch requirement.
+For a pull request, the selection compares the merge commit with its first parent. A main push compares against the
+commit before the push, including every pushed commit. The merge queue supplies its base commit. The selection examines
+both paths of a rename. A new push to a pull request selects checks from the entire merged diff again. Before starting
+native work, CI looks for a successful validation with exactly the same native inputs. A hit skips native work; portable
+checks and a fresh `PR gate` still run. Updating a branch with unrelated main changes can therefore reuse its previous
+native validation while keeping the up-to-date branch requirement.
 
 The native job runs on macOS. It replays the patch and fails on drift, runs Rustfmt, and compiles `codex-cli`,
 `codex-exec` and all crates tested by the nightly, including their test targets. Native tests run only in the nightly
@@ -63,8 +63,8 @@ one process per test with one retry. Doc tests run under `cargo test`. Helper bu
 same `-p` packages, the suite's crates plus the helper packages, and narrow the test run with a nextest filter.
 Doctests currently select only the suite crates, so their dependency features can differ. Helper setup selects
 the required host and MCP fixture binaries explicitly; release builds select only the seven binaries in the
-package, avoiding extra diagnostic binaries. Jobs work under `/Users/runner/omd`, not `/tmp`, which a sandboxed
-command may write.
+package, avoiding extra diagnostic binaries. Jobs work under `/Users/runner/omd` rather than `/tmp`, because sandboxed
+commands may write to `/tmp`.
 
 The `package` artifact (7 days) contains the archive, `omd-release.json`, `provenance.json`, `install.sh`, a source
 tarball and `SHA256SUMS`. Each job's logs are in `validation-report-JOB` (14 days). The `package` report contains
@@ -73,6 +73,9 @@ tarball and `SHA256SUMS`. Each job's logs are in `validation-report-JOB` (14 day
 The nightly also runs the tests that `mise run mods:test` lists but leaves to other runners:
 `python3 -m unittest discover -s tests`, Cargo in the patched scratch tree and
 `python3 scripts/mod_host_check.py --scenarios`.
+
+Upstream Codex acceptance binaries are pinned in `upstream-binaries.lock.json`. When advancing Codex, retain pins
+needed by the previous release and add the GitHub release asset SHA-256 for the new tag. CI checks it before extraction.
 
 ## Nightly builds
 
@@ -99,6 +102,3 @@ no dependency license or scheduled vulnerability checks.
 - [CI caching](ci-caching.md): the download and compile caches, for maintainers changing the workflows
 - [Change the patched Codex code](runtime.md)
 - [tests/README.md](../../tests/README.md): how tests are discovered and which runner runs each kind
-
-Upstream Codex acceptance binaries are pinned in `upstream-binaries.lock.json`. When advancing Codex, retain pins
-needed by the previous release and add the GitHub release asset SHA-256 for the new tag. CI checks it before extraction.

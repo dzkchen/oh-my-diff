@@ -35,7 +35,7 @@ Set `mode` to `continue` in `/mods` and enable `omd_continue`; OMD+ doesn't enab
 nothing. `/hidden_outputs` says so until a `/continue` has run in the thread. Ordinary requests then keep new outputs in full.
 A successful `/continue [note]` hides an eligible batch only after the estimated cache lifetime has elapsed.
 `/continue --compact [note]` requests the same masking without a cache estimate. It still obeys `keep_recent`,
-`min_bytes` and `batch_bytes`; it does not call a summarizing model or native `/compact`.
+`min_bytes` and `batch_bytes`, and it doesn't call a summarizing model or native `/compact`.
 
 Only outputs whose saved originals pass a read check during the successful `/continue` command can be newly hidden
 in this mode. At most 16 unmasked originals from the latest history view are checked per continuation; the following model request
@@ -46,17 +46,17 @@ The mod sends the same placeholders on later requests; another continuation is n
 Resuming a thread preserves stored placeholders, but drops a pending continuation that had not
 reached its first model request.
 
-Cache lifetime is an estimate, not a cache probe. On a ChatGPT plan, with local providers and when the lifetime is
-unknown there is no estimate, so only `/continue --compact` hides outputs, and `/hidden_outputs` says so. `auto` uses a provider-reported lifetime, retaining it on reads
-for the same provider, route, credential and model. For OpenAI API responses with cache activity it otherwise uses
-30 minutes. OpenAI subscription and unpriced responses, local providers, and unknown lifetimes are skipped.
-An explicit `cache_ttl_minutes` overrides the estimate except for local providers. `720` is OpenAI's 12-hour cache:
-reads keep the estimated expiry or extend it to 30 minutes after the read, whichever is later, as in
-`omd_idle_compact`. Model/provider/route changes
-that differ from the observed response skip automatic masking. Compaction clears the estimate.
+Cache lifetime is an estimate; the mod doesn't probe the cache. On a ChatGPT plan, with local providers and when the
+lifetime is unknown there is no estimate, so only `/continue --compact` hides outputs, and `/hidden_outputs` says so.
+`auto` uses a provider-reported lifetime, retaining it on reads for the same provider, route, credential and model. For
+OpenAI API responses with cache activity it otherwise uses 30 minutes. OpenAI subscription and unpriced responses, local
+providers, and unknown lifetimes are skipped. An explicit `cache_ttl_minutes` overrides the estimate except for local
+providers. `720` is OpenAI's 12-hour cache: reads keep the estimated expiry or extend it to 30 minutes after the read,
+whichever is later, as in `omd_idle_compact`. Model/provider/route changes that differ from the observed response skip
+automatic masking. Compaction clears the estimate.
 
-Keep `omd_idle_compact` disabled if you want context reduction only through `/continue`: its separate timer can
-still compact the conversation. This mode does not prepare a summary in the background or guarantee lower cost.
+To reduce context only through `/continue`, keep `omd_idle_compact` disabled: its separate timer can
+still compact the conversation. This mode doesn't prepare a summary in the background or guarantee lower cost.
 
 ### What it hides
 

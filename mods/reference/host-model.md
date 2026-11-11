@@ -1,6 +1,6 @@
 # Host model
 
-Use it when you need the rules every host operation and callback follows: one host per process, callback
+Use this page when you need the rules every host operation and callback follows: one host per process, callback
 admission, budgets and contexts, composition order, registration limits, the fault limit and the runner
 environment. For when to write a mod instead of a skill, hook or plugin, see
 [How OMD works](https://github.com/dzkchen/oh-my-diff/blob/main/docs/how-omd-works.md).

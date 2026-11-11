@@ -1,6 +1,6 @@
 # Authoring
 
-Use it when you look up an author command, the TypeScript test helpers, the `mod.test.json` format, JSX
+Use this page when you look up an author command, the TypeScript test helpers, the `mod.test.json` format, JSX
 compilation, multi-file packages, diagnostics or the cost report. For the step-by-step author loop, see
 [Write your first mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/first-mod.md). For
 packaging and publishing, see [Packaging](packaging.md).
@@ -189,7 +189,7 @@ Interceptor assertions over an `intercept` step's value:
 | `assertShortCircuit` | The mod answered, so the core never ran |
 | `assertFailure(chain, mod, /reason/)` | The mod's link in the chain failed with that reason (skipped, kept, caught or rejected) |
 
-### What tests don't prove
+### Limits of scenario tests
 
 Mounting and interacting run the mod's `terminal` event and callbacks on fixture data. They show what a mod returns
 and how it reacts, not how a terminal or an attached client draws or delivers it. A supported-client claim needs the

@@ -1,7 +1,7 @@
 # omd_cursor
 
-Lets a session use Cursor models through your Cursor account and the official
-[Cursor TypeScript SDK](https://cursor.com/docs/sdk/typescript). It's experimental, and no install profile includes it. It isn't yet
+Lets a session use Cursor models through your Cursor account and the official [Cursor TypeScript
+SDK](https://cursor.com/docs/sdk/typescript). It's experimental, and no install profile includes it. It isn't yet
 verified on a live Cursor account.
 
 ## Turn it on

@@ -1,8 +1,7 @@
 # omd_edit_guard
 
 Checks changed files for syntax errors after each edit. When a check fails, it adds the error, file and line to the
-tool output so the model can fix it on its next step.
-It's experimental, and no install profile includes it.
+tool output so the model can fix it on its next step. It's experimental, and no install profile includes it.
 
 ## Turn it on
 

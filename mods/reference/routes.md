@@ -1,7 +1,7 @@
 # Routes
 
-Use it when a mod chooses, adds or writes model routes, settles provider-billed requests, reads the ledger, or runs
-a provider service. Route credentials and origins are in [Credentials](credentials.md); intercepting a single
+Use this page when a mod chooses, adds or writes model routes, settles provider-billed requests, reads the ledger, or
+runs a provider service. Route credentials and origins are in [Credentials](credentials.md); intercepting a single
 request is in [Model requests and streams](model-requests.md).
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
@@ -321,6 +321,6 @@ this mod didn't start in its current generation.
 
 ### Streaming providers
 
-Mod-owned model providers need no additional primitive: a `services` grant with a `route` runs a loopback server
-that Codex uses as a Responses provider, which streams normally. `max_request_bytes` in `host.json` bounds request
+A `services` grant with a `route` runs a loopback server that Codex uses as a Responses provider, which streams
+normally, so mod-owned model providers need no additional primitive. `max_request_bytes` in `host.json` bounds request
 size and has no host maximum, so a provider's context window is configuration.

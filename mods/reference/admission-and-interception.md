@@ -1,6 +1,6 @@
 # Admission and interception
 
-Use it when a policy mod controls which other packages load, withholds host namespaces from them, or watches and
+Use this page when a policy mod controls which other packages load, withholds host namespaces from them, or watches and
 intercepts other mods' host operations. The interceptor chain itself (order, `required`, `next`) is described in
 [Interceptors](interceptors.md#apiintercept).
 

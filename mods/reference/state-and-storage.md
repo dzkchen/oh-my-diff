@@ -1,6 +1,6 @@
 # State and storage
 
-Use it when a mod keeps data: `store.*` records, evidence and binary evidence, `api.state` and where it lives,
+Use this page when a mod keeps data: `store.*` records, evidence and binary evidence, `api.state` and where it lives,
 state migration, session UI state and the reactive helpers over `api.state`. It also defines the session directory
 and repository the other pages refer to.
 
@@ -38,7 +38,7 @@ store.export {scope?, cursor?} → {schema, owner, scope, generation, entries, c
 store.reset {expected_generation, scope?} → {generation}
 ```
 
-They operate on a per-mod namespace. `store.list`, `store.export` and `store.reset` are experimental.
+These operations act on a per-mod namespace. `store.list`, `store.export` and `store.reset` are experimental.
 
 | Argument | Meaning |
 | --- | --- |

@@ -1,11 +1,11 @@
 # External clients
 
-Use it when you build or review a renderer other than the terminal, such as a desktop window, an editor webview or a
-text console. A client attaches to a running session over JSON-RPC to Codex's app server (see
-[Transports and auth](#transports-and-auth)) and draws the same composed mod view. Oh My Diff ships no desktop or editor
-client of its own; a mod ships its adapter (see [Client adapters](#client-adapters)). The exact messages are in the
-[`omd-client/1` protocol](omd-client-protocol.md), and the steps to build one are in
-[Build an external client](../../docs/mod-authors/build-a-client.md).
+Use this page when you build or review a renderer other than the terminal, such as a desktop window, an editor webview
+or a text console. A client attaches to a running session over JSON-RPC to Codex's app server (see [Transports and
+auth](#transports-and-auth)) and draws the same composed mod view. Oh My Diff ships no desktop or editor client of its
+own; a mod ships its adapter (see [Client adapters](#client-adapters)). The exact messages are in the [`omd-client/1`
+protocol](omd-client-protocol.md), and the steps to build one are in [Build an external
+client](../../docs/mod-authors/build-a-client.md).
 
 In Mod API `1.0.0` the `omd/*` methods are experimental and need the `experimentalApi` opt-in
 ([Initialize and errors](omd-client-protocol.md#initialize-and-errors)). The host runs on Apple Silicon macOS, and
@@ -39,9 +39,9 @@ the client SDK runs in browsers and Node.
 
 ## Client adapters
 
-A client adapter is the part of a mod that starts the client's UI process. The mod ships the adapter. It starts the
-UI process with `process.start` from a native callback, such as a `channel` handler that a command publishes to. The
-adapter starts it in one of two ways:
+A client adapter is the part of a mod that starts the client's UI process, with `process.start` from a native
+callback such as a `channel` handler that a command publishes to. The mod ships the adapter, which starts the process
+in one of two ways:
 
 - Unsandboxed, with `{sandbox: 'none'}`, which needs the `os` capability with the program in `os_access.programs`
   (for example `node`).

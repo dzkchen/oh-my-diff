@@ -70,7 +70,7 @@ To launch a session on a profile from the shell, use `omd-package profiles --mod
 
 ## Needs and limits
 
-- Node.js 22.18 or later is required for setup and the profile router. Missing Node produces installation guidance.
+- Node.js 22.18 or later is required for setup and the profile router. Without Node, setup shows installation guidance.
 - Claude and Cursor use their own provider mods, account stores and discovered model catalogs. Cursor may bill
   beyond included usage. Live account entitlement and provider availability still depend on the provider.
 - ChatGPT uses the current native Codex model when available, otherwise a catalog model. Subscription setup never

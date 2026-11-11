@@ -1,6 +1,7 @@
 # omd_continue
 
-Resumes interrupted work in the current session with `/continue [note]`. It's experimental, and no install profile includes it.
+Resumes interrupted work in the current session with `/continue [note]`. It's experimental, and no install
+profile includes it.
 
 ## Turn it on
 

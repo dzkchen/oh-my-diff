@@ -59,10 +59,10 @@ Change settings in `/mods`.
   capabilities are `commands`, `tools`, `sessions`, `sessions_tools`, `exec`, `fs.read`, `agents`, `model`, `context`,
   `contracts`, `lifecycle`, `outputs`, `terminal` and `store` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
-- Advice is a second opinion, not an approval. Review and verify yourself.
+- Advice is a second opinion and never an approval. Review and verify it yourself.
 - Partial advice is marked incomplete with the provider's stop reason when available.
-- The prompt is capped at 8 KB. Keys, tokens and credentials are redacted first, but that is a pattern filter, not a
-  guarantee.
+- The prompt is capped at 8 KB. Keys, tokens and credentials are redacted first, but the filter matches patterns and can
+  miss some.
 - The conversation section contains the newest complete history records that fit in 2.5 KB. It never cuts a record off.
   When the newest record alone is larger, the section says so instead.
 - A finding whose quoted evidence isn't found is dropped.

@@ -1,7 +1,7 @@
 # Glossary
 
-Use it when a reference page uses a term you don't know, or uses a word such as "grant", "store" or "managed" that
-means more than one thing. Each entry gives the meaning used in this reference and links to the page that describes
+Use this page when a reference page uses a term you don't know, or uses a word such as "grant", "store" or "managed"
+that means more than one thing. Each entry gives the meaning used in this reference and links to the page that describes
 it.
 
 ## Mods and the host

@@ -1,6 +1,7 @@
 # omd_model_picker
 
-Shows the `/model` and reasoning-effort pickers as compact lists with your current choice marked. It's experimental, and no install profile includes it.
+Shows the `/model` and reasoning-effort pickers as compact lists with your current choice marked. It's experimental, and
+no install profile includes it.
 
 ## Turn it on
 

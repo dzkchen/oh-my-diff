@@ -40,7 +40,7 @@ Rust tests are beside the code in `*_tests.rs` files.
 Any other value fails to start. The `direct` recovery state (`omd-package activate direct`) sets
 `OMD_MODE=upstream_direct`.
 
-## The host has no features
+## Features live in mods
 
 Every feature is a TypeScript mod in [`mods/first-party`](../mods/first-party) over the
 [public API](../mods/reference/README.md). With no mods on, `codex` behaves like upstream.

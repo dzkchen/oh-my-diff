@@ -1,7 +1,7 @@
 # Render hooks (`render_hooks_v1`)
 
-Use it when a mod restyles, wraps, replaces or hides a native terminal component such as a tool call, a message or
-a built-in list. How interceptor chains run in general is in [Interceptors](interceptors.md).
+Use this page when a mod restyles, wraps, replaces or hides a native terminal component such as a tool call, a message
+or a built-in list. How interceptor chains run in general is in [Interceptors](interceptors.md).
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](stability-and-migration.md#experimental-entries-in-the-registry)). Render hooks need the `terminal`
@@ -34,8 +34,8 @@ props the hook before it passed on.
 
 ## Render components
 
-Each native component a hook can match, with its `id` and props. The Rewritable column names the props a hook can
-change in the `e` it passes to `next`. Rewrites to other props have no effect.
+These are the native components a hook can match, with each `id` and its props. The Rewritable column names the props a
+hook can change in the `e` it passes to `next`. Rewrites to other props have no effect.
 
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |

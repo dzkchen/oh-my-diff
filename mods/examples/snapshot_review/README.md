@@ -65,7 +65,7 @@ Change settings in `/mods`.
 ## Needs and limits
 
 - It needs a model route named `inspector`.
-- It's a local demonstration, not a check of model quality or a real provider.
+- It demonstrates the flow locally. It doesn't test model quality or a real provider.
 
 ## More
 

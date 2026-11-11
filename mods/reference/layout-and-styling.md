@@ -1,6 +1,6 @@
 # Layout and styling
 
-Use it when a mod places and styles what it draws: the startup presentation, layout trees, the component types,
+Use this page when a mod places and styles what it draws: the startup presentation, layout trees, the component types,
 region sizing, overlays, the box model, text styles, surface paint and the view limits. Keys, focus and pointer
 input are in [Terminal input](terminal-input.md); images and rasters are in [Graphics](graphics.md).
 
@@ -265,8 +265,7 @@ keeps comments and strings that open above it.
 The feature also adds optional `min_width` and `max_width` (1–500 columns) on `box` and `pane`.
 
 The host draws a box with width bounds only when the site's inner width fits it, and header height counts only drawn
-boxes. Header
-rows are never spaced by the comfortable density.
+boxes. The comfortable density never spaces header rows.
 
 ## Surface paint
 

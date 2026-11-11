@@ -1,9 +1,9 @@
 # Commands, configuration and composer
 
-Use it when a mod adds or wraps slash commands, reads or writes configuration, removes built-in controls, or takes
-part in the composer: `@` completion, drafts, suggestions, key interception and file mentions. `api.command`
-itself is listed in [SDK helpers](sdk-helpers.md#other-api-members) and its registration limits in
-[Host model](host-model.md#registration-limits).
+Use this page when a mod adds or wraps slash commands, reads or writes configuration, removes built-in controls, or
+takes part in the composer: `@` completion, drafts, suggestions, key interception and file mentions. `api.command`
+itself is listed in [SDK helpers](sdk-helpers.md#other-api-members) and its registration limits in [Host
+model](host-model.md#registration-limits).
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](stability-and-migration.md#experimental-entries-in-the-registry)). Composer and command operations
