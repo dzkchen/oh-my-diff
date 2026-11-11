@@ -3,6 +3,7 @@
   "id": "omd_idle_compact",
   "version": "1.0.2",
   "api": "1.0.0",
+  "assets": ["cache_ttl.ts"],
   "state_version": 1,
   "state_scope": "thread",
   "description": "Compacts a long idle conversation just before its prompt cache expires, so you resume on a summary; automatic",
@@ -12,7 +13,7 @@
   "subscriptions": {
     "app": ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput", "mcpServer/elicitation/request"]
   },
-  "compatibility": {"required_features": ["app_v1", "events_v1", "lifecycle_events_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1"]},
+  "compatibility": {"required_features": ["app_v1", "events_v1", "lifecycle_events_v1", "package_imports_v1", "package_text_assets_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {
