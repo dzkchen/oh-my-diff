@@ -3,7 +3,7 @@
 Build and test Oh My Diff (OMD) mods in a scratch store. Ask the user before installing one in their real store.
 Follow the [work order](#work-in-this-order) below and use the [mod author guides](#guides-to-follow) for examples.
 
-Everything here is for mod API `1.0.0` on Codex `0.167.0`, Apple Silicon macOS. Only that API version loads, so check
+Everything here is for mod API `1.0.0` on Codex `0.167.1`, Apple Silicon macOS. Only that API version loads, so check
 `api` in a mod's `mod.json` before you reuse older code. Tool versions are in [Support](support.md).
 
 ## Rules

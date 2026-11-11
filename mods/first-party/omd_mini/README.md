@@ -74,7 +74,7 @@ It has no settings.
   when the mod is off, and in `direct` mode (plain Codex with no mods, see
   [Troubleshooting](../../../docs/troubleshooting.md#a-mod-breaks-codex)).
 - A switched run drops the first run's prompt, images, `--worktree`, `--no-alt-screen` and resume selectors, and any
-  option Codex `0.167.0` doesn't have.
+  option Codex `0.167.1` doesn't have.
 - The status line updates when a notification arrives, not every second. Codex's own working indicator counts time
   during a turn.
 - Earlier scrollback is never repainted, so a theme or template change applies to new output only.
