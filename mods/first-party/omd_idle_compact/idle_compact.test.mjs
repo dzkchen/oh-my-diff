@@ -5,12 +5,13 @@ import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
+const assets = { 'cache_ttl.ts': { text: readFileSync(new URL('./cache_ttl.ts', import.meta.url), 'utf8'), sha256: '0'.repeat(64) } };
 const NOW = 1_800_000_000_000;
 const MINUTE = 60_000;
 
 function run(event, payload, state, { settings = {}, now = NOW, answer = () => ({}), schedule = args => args } = {}) {
   const calls = [];
-  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
+  const output = callback({ source, filename: 'index.ts', entrypoint: 'index.ts', assets, api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
     virtual_time_ms: now, hook_budget_ms: 2000 }, call => {
     calls.push(call);
     if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.167.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };

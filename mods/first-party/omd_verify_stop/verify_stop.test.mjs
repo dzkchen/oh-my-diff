@@ -123,3 +123,13 @@ test('an edit made by an interpreter script counts as an edit', () => {
   assert.equal(stop(state).stopped, false);
   for (const cmd of [`python3 - <<'EOF'\nprint(1)\nEOF`, `python3 -c "import sys; sys.stdout.write('x')"`, `node -e "process.stdout.write('x')"`, `python3 -c "open('/tmp/repro.py','w').write('x')"`]) assert.equal(stop(feed(shell(cmd, exited(0)))).stopped, true, cmd);
 });
+
+test('a piped check proves nothing without pipefail, and mocha, rspec and phpunit failures are recognized', () => {
+  const edited = () => feed(patch('*** Update File: a.js'));
+  for (const cmd of ['npx mocha | tail', 'npx mocha 2>&1 | tail -5', 'bash -lc "npx mocha | tail"', 'set +e && npx mocha | tail', 'npx mocha | tail && set -o pipefail && true']) assert.equal(stop(run('tool_output', '', shell(cmd, exited(0, 'ok')), edited()).state).stopped, false, cmd);
+  for (const cmd of ['set -o pipefail && npx mocha | tail', 'set -euo pipefail; npx mocha | tail', 'bash -lc "set -eo pipefail; npx mocha | tail"', 'npx mocha > out.log', 'ls | wc -l && npx mocha']) assert.equal(stop(run('tool_output', '', shell(cmd, exited(0, 'ok')), edited()).state).stopped, true, cmd);
+  for (const [cmd, text] of [['npx mocha | tail', '  3 passing\n  1 failing'], ['bundle exec rspec | tail', '2 examples, 1 failure'], ['rspec | tail', '3 examples, 2 failures'], ['vendor/bin/phpunit | tail', 'FAILURES!\nTests: 5, Assertions: 4, Failures: 1.']]) {
+    assert.match(stop(run('tool_output', '', shell(cmd, exited(0, text)), edited()).state).value.continue, /The last check failed/, cmd);
+  }
+  for (const text of ['3 passing\n0 failing', '3 examples, 0 failures', 'OK (5 tests, 5 assertions)']) assert.equal(stop(run('tool_output', '', shell('npx mocha | tail', exited(0, text)), edited()).state).stopped, false, text);
+});

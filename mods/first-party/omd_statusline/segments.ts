@@ -1,6 +1,12 @@
 import type { Json, TerminalSpan, TerminalTone } from '../../api.d.ts';
 
 export const SEGMENTS = ['model', 'effort', 'tier', 'profile', 'provider', 'workspace', 'context', 'tokens', 'cache', 'cost', 'limits', 'git', 'changes', 'pr', 'ci', 'session', 'tools', 'agents', 'plan', 'cwd', 'omd'] as const;
+export const LABELS: Record<typeof SEGMENTS[number], string> = {
+  model: 'Model name', effort: 'Reasoning effort', tier: 'Processing tier, such as Fast', profile: 'Config profile', provider: 'Model provider and billing',
+  workspace: 'ChatGPT workspace', context: 'Context window left', tokens: 'Tokens sent and received', cache: 'Prompt cache hits', cost: 'Session cost',
+  limits: 'Usage limits and resets', git: 'Git branch', changes: 'Uncommitted line changes', pr: 'Pull request', ci: 'CI checks', session: 'Thread id and time',
+  tools: 'Running tools', agents: 'Running agents', plan: 'Plan progress', cwd: 'Working directory', omd: 'Mods on, and an alert when one failed',
+};
 export const PRESETS = {
   compact: 'model tier context limits cost cache git omd',
   detailed: 'model effort tier provider context tokens cache cost limits; git changes pr ci session tools agents plan omd',
@@ -10,11 +16,11 @@ const TONES: TerminalTone[] = ['normal', 'accent', 'success', 'attention', 'fail
 const MAX_LINES = 4;
 
 export type Settings = {
-  placement: 'below' | 'above'; preset: 'compact' | 'detailed' | 'custom'; layout: string; hidden: string; glyphs: 'unicode' | 'ascii'; bars: boolean;
+  placement: 'below' | 'above'; preset: 'auto' | 'compact' | 'detailed' | 'custom'; layout: string; hidden: string; glyphs: 'unicode' | 'ascii'; bars: boolean;
   thresholds: string; tones: string; github: boolean; refresh_s: number; scripts: string;
 };
 export const DEFAULTS: Settings = {
-  placement: 'below', preset: 'compact', layout: PRESETS.detailed, hidden: '', glyphs: 'unicode', bars: true,
+  placement: 'below', preset: 'auto', layout: PRESETS.detailed, hidden: '', glyphs: 'unicode', bars: true,
   thresholds: 'context=70,90 limits=70,90 cost=5,20', tones: '', github: true, refresh_s: 60, scripts: '',
 };
 export type Script = { id: string; command: string[]; interval_s: number; timeout_ms: number };
@@ -39,7 +45,7 @@ export type Data = {
   seen: Record<string, [number, number, number, number, number, Charge, number]>;
   limits: { minutes: number | null; used: number; resets: number | null }[]; credits: string | null;
   tools: Record<string, number>; agents: Record<string, string>; plan: { done: number; total: number; step: string | null } | null;
-  git: Git | null; github: Github; scripts: Record<string, ScriptResult>; tick: number; beat: number | null; armed: string | null; viewport: { columns: number; rows: number } | null; mods: Mods | null;
+  git: Git | null; github: Github; scripts: Record<string, ScriptResult>; tick: number; beat: number | null; armed: string | null; due: Record<string, number>; timer: number | null; seed: string | null; viewport: { columns: number; rows: number } | null; mods: Mods | null;
   pending: { from: string[]; to: Settings; turns: number } | null;
 };
 export const EMPTY: Data = {
@@ -47,7 +53,7 @@ export const EMPTY: Data = {
   context: { used: null, window: null, compactions: 0, at: null, compacted: null, reverted: null, switched: false },
   tokens: { input: 0, output: 0, reasoning: 0, cached: 0, write: 0, requests: 0 }, cache: { ratio: null, expires: null },
   cost: { billed: 0, estimate: 0, included: 0, pending: 0, unknown: 0 }, seen: {}, limits: [], credits: null, tools: {}, agents: {}, plan: null,
-  git: null, github: { key: null, status: 'idle', at: null, next: 0, failures: 0, pr: null, ci: null, detail: null }, scripts: {}, tick: 0, beat: null, armed: null, viewport: null, mods: null, pending: null,
+  git: null, github: { key: null, status: 'idle', at: null, next: 0, failures: 0, pr: null, ci: null, detail: null }, scripts: {}, tick: 0, beat: null, armed: null, due: {}, timer: null, seed: null, viewport: null, mods: null, pending: null,
 };
 
 export const visible = (value: string, limit = 160) => value.replace(/[\u0000-\u001f\u007f-\u009f\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '').slice(0, limit);
@@ -78,7 +84,7 @@ export function settings(raw: Readonly<Record<string, Json>>, fallback: Settings
   const text = (value: Json) => typeof value === 'string' && value.length <= 2048;
   return {
     placement: pick('placement', value => value === 'below' || value === 'above'),
-    preset: pick('preset', value => value === 'compact' || value === 'detailed' || value === 'custom'),
+    preset: pick('preset', value => value === 'auto' || value === 'compact' || value === 'detailed' || value === 'custom'),
     layout: pick('layout', text), hidden: pick('hidden', text), thresholds: pick('thresholds', text), tones: pick('tones', text), scripts: pick('scripts', text),
     glyphs: pick('glyphs', value => value === 'unicode' || value === 'ascii'),
     bars: pick('bars', value => typeof value === 'boolean'), github: pick('github', value => typeof value === 'boolean'),
@@ -103,10 +109,19 @@ export function scripts(text: string): { scripts: Script[]; error: string | null
   return { scripts: list, error: parsed.length > 4 ? 'at most 4 scripts run' : null };
 }
 
-export function layout(config: Settings, known: string[] = []): string[][] {
+const CODEX = new Map(Object.entries({
+  model: 'model', 'model-name': 'model', 'model-with-reasoning': 'model effort tier', reasoning: 'effort', 'fast-mode': 'tier', provider: 'provider', 'model-provider': 'provider',
+  profile: 'profile', 'current-dir': 'cwd', 'project-name': 'cwd', project: 'cwd', 'project-root': 'cwd', 'git-branch': 'git', 'branch-changes': 'changes',
+  'pull-request-number': 'pr', 'context-remaining': 'context', 'context-used': 'context', 'context-usage': 'context', 'context-window-size': 'context',
+  'five-hour-limit': 'limits', 'weekly-limit': 'limits', 'used-tokens': 'tokens', 'total-input-tokens': 'tokens', 'total-output-tokens': 'tokens',
+  'thread-credits': 'cost', 'estimated-thread-cost': 'cost', 'thread-id': 'session', 'session-id': 'session', 'task-progress': 'plan',
+}));
+export const fromCodex = (items: unknown[]) => [...new Set([...items.flatMap(item => typeof item === 'string' ? CODEX.get(item)?.split(' ') ?? [] : []), 'context', 'omd'])].join(' ');
+
+export function layout(config: Settings, known: string[] = [], seed: string | null = null): string[][] {
   const hidden = new Set(config.hidden.split(/\s+/).filter(Boolean));
   const valid = (id: string) => (SEGMENTS as readonly string[]).includes(id) || id.startsWith('script:') && known.includes(id.slice(7));
-  const source = config.preset === 'custom' ? config.layout : PRESETS[config.preset];
+  const source = config.preset === 'custom' ? config.layout : config.preset === 'auto' ? seed ?? PRESETS.compact : PRESETS[config.preset];
   return source.split(';').map(line => [...new Set(line.split(/\s+/).filter(id => id && valid(id) && !hidden.has(id)))].slice(0, 16)).filter(line => line.length).slice(0, MAX_LINES);
 }
 
@@ -136,6 +151,7 @@ export const githubKey = (git: Git | null) => git?.remote && git.branch ? `${git
 type Part = TerminalSpan[] | null;
 type Env = { data: Data; config: Settings; now: number; ascii: boolean; limits: Record<string, [number, number]>; cwd: string | null; settled: number | null; mods: Mods | null; single: boolean };
 
+const BASELINE_TOKENS = 12_000;
 const level = (env: Env, name: string, value: number): TerminalTone => {
   const [warn, alert] = env.limits[name] ?? [Infinity, Infinity];
   return value >= alert ? 'failure' : value >= warn ? 'attention' : 'success';
@@ -166,10 +182,10 @@ const parts: Record<string, (env: Env) => Part> = {
     if (used === null) return null;
     const stale = switched || at !== null && (compacted !== null && compacted > at || reverted !== null && reverted > at);
     const mark = compactions ? [{ text: env.ascii ? ` c${compactions}` : ` ⟳${compactions}`, tone: 'muted' as const }] : [];
-    if (!window) return [{ text: `${stale ? '~' : ''}${count(used)} ctx`, tone: stale ? 'muted' : 'normal' }, ...mark];
-    const ratio = used / window;
-    const tone = stale ? 'muted' : level(env, 'context', ratio * 100);
-    return [...bar(env, ratio, tone), { text: `${stale ? '~' : ''}${Math.round(ratio * 100)}%`, tone }, { text: ` ${count(Math.max(0, window - used))} left`, tone: 'muted' }, ...mark];
+    if (!window) return [{ text: `${stale ? '~' : ''}${count(used)} used`, tone: stale ? 'muted' : 'normal' }, ...mark];
+    const left = window <= BASELINE_TOKENS ? 0 : Math.round(Math.min(1, Math.max(0, (window - Math.max(used, BASELINE_TOKENS)) / (window - BASELINE_TOKENS))) * 100);
+    const tone = stale ? 'muted' : level(env, 'context', 100 - left);
+    return [...bar(env, left / 100, tone), { text: `${stale ? '~' : ''}${count(Math.max(0, window - used))} left`, tone }, { text: ` (${left}%)`, tone: 'muted' }, ...mark];
   },
   tokens: ({ data, ascii }) => data.tokens.requests ? [{ text: ascii ? `in ${count(data.tokens.input)} out ${count(data.tokens.output)}` : `↑${count(data.tokens.input)} ↓${count(data.tokens.output)}` },
     ...data.tokens.reasoning ? [{ text: ` r${count(data.tokens.reasoning)}`, tone: 'muted' as const }] : [], ...data.tokens.cached ? [{ text: ` c${count(data.tokens.cached)}`, tone: 'muted' as const }] : []] : null,
@@ -239,8 +255,11 @@ const parts: Record<string, (env: Env) => Part> = {
   },
   plan: ({ data }) => data.plan ? [{ text: `plan ${data.plan.done}/${data.plan.total}`, tone: data.plan.done === data.plan.total ? 'success' : 'normal' }, ...data.plan.step ? [{ text: ` ${clip(data.plan.step, 32)}`, tone: 'muted' as const }] : []] : null,
   cwd: ({ cwd }) => cwd ? [{ text: cwd.split('/').filter(Boolean).at(-1) ?? '/', tone: 'muted' }] : null,
-  omd: ({ mods }) => mods ? [{ text: `${mods.active} mod${mods.active === 1 ? '' : 's'} on`, tone: 'muted' },
-    ...mods.failed ? [{ text: ` ${mods.failed} failed · /omd`, tone: 'failure' as const }] : []] : null,
+  omd: ({ mods }) => {
+    if (!mods) return null;
+    const on = `${mods.active} mod${mods.active === 1 ? '' : 's'} on`;
+    return mods.failed ? [{ text: `${mods.failed} failed · /omd`, tone: 'failure' }, { text: ` (${on})`, tone: 'muted' }] : [{ text: on, tone: 'muted' }];
+  },
 };
 
 const script = (env: Env, id: string, spec: string | undefined): Part => {
@@ -253,31 +272,35 @@ const script = (env: Env, id: string, spec: string | undefined): Part => {
 export function render(data: Data, config: Settings, input: { now: number; columns: number; cwd: string | null; settled: number | null }): TerminalSpan[][] {
   const configured = scripts(config.scripts).scripts;
   const specs = Object.fromEntries(configured.map(item => [item.id, JSON.stringify(item)]));
-  const rows = layout(config, configured.map(item => item.id));
+  const rows = layout(config, configured.map(item => item.id), data.seed);
   const env: Env = { data, config, now: input.now, ascii: config.glyphs === 'ascii', limits: { ...thresholds(DEFAULTS.thresholds), ...thresholds(config.thresholds) },
     cwd: input.cwd, settled: input.settled, mods: data.mods, single: rows.length === 1 };
   const custom = tones(config.tones);
   const separator: TerminalSpan = { text: env.ascii ? ' | ' : ' · ', tone: 'muted' };
   const columns = Math.max(10, input.columns);
   return rows.map(ids => {
-    const pieces = ids.map(id => {
+    const pieces = ids.flatMap(id => {
       const spans = id.startsWith('script:') ? script(env, id.slice(7), specs[id.slice(7)]) : parts[id](env);
       const tone = custom[id];
-      return spans?.length ? spans.map(item => ({ ...item, text: visible(item.text, 256), ...tone && !item.tone ? { tone } : {} })) : null;
-    }).filter((spans): spans is TerminalSpan[] => spans !== null);
-    const join = (list: TerminalSpan[][]) => list.flatMap((spans, index) => index ? [separator, ...spans] : spans);
-    while (pieces.length > 1 && width(join(pieces).map(item => item.text).join('')) > columns) pieces.pop();
+      return spans?.length ? [{ id, spans: spans.map(item => ({ ...item, text: visible(item.text, 256), ...tone && !item.tone ? { tone } : {} })) }] : [];
+    });
+    const join = () => pieces.flatMap((piece, index) => index ? [separator, ...piece.spans] : piece.spans);
+    const alert = (id: string) => id === 'omd' && !!env.mods?.failed;
+    pieces.sort((a, b) => Number(alert(a.id)) - Number(alert(b.id)));
+    const wide = () => width(join().map(item => item.text).join('')) > columns;
+    while (pieces.length > 1 && wide()) pieces.splice(pieces.map(piece => alert(piece.id)).lastIndexOf(false), 1);
+    if (wide() && alert(pieces[0].id)) pieces[0].spans = pieces[0].spans.slice(0, 1);
     let room = columns;
-    return pack(join(pieces).map(item => {
+    const drawn = join().map(item => {
       const text = room > 0 ? clip(item.text, room) : '';
       room -= width(text);
       return { ...item, text };
-    }).filter(item => item.text));
+    }).filter(item => item.text);
+    return pack(drawn, alert(pieces.at(-1)?.id ?? '') ? Math.min(drawn.length, pieces.at(-1)!.spans.length) : 0);
   }).filter(line => line.length);
 }
 
 const MAX_SPANS = 12;
-// The view refuses a span over 256 bytes, so merged spans are split there.
 const SPAN_BYTES = 256;
 const utf8 = new TextEncoder();
 const cut = (text: string) => text.slice(0, utf8.encodeInto(text, new Uint8Array(SPAN_BYTES)).read);
@@ -292,13 +315,33 @@ const split = (item: TerminalSpan): TerminalSpan[] => {
   return [...parts, { ...item, text: rest }];
 };
 const style = (item: TerminalSpan) => JSON.stringify([item.tone ?? 'normal', item.bold, item.italic, item.underline, item.fg, item.bg, item.link]);
-export function pack(spans: TerminalSpan[]): TerminalSpan[] {
+export function pack(spans: TerminalSpan[], keep = 0): TerminalSpan[] {
+  const tail = spans.slice(spans.length - keep);
   const merged: TerminalSpan[] = [];
-  for (const item of spans) {
+  for (const item of spans.slice(0, spans.length - keep)) {
     const last = merged.at(-1);
     if (last && style(last) === style(item)) merged[merged.length - 1] = { ...last, text: last.text + item.text };
     else merged.push(item);
   }
   const parts = merged.flatMap(split);
-  return parts.length <= MAX_SPANS ? parts : [...parts.slice(0, MAX_SPANS - 1), { text: cut(parts.slice(MAX_SPANS - 1).map(item => item.text).join('')), tone: 'muted' }];
+  const room = MAX_SPANS - tail.length;
+  return [...parts.length <= room ? parts : [...parts.slice(0, room - 1), { text: cut(parts.slice(room - 1).map(item => item.text).join('')), tone: 'muted' as const }], ...tail];
+}
+
+export function preview(data: Data, config: Settings, now: number, cwd: string): Data {
+  const sample: Partial<Data> = {
+    thread: '019a7c2e-sample', started: now - 1_500_000, profile: 'work', workspace: 'Acme',
+    model: { requested: 'gpt-6.1-sol', served: 'gpt-6.1-sol', effort: 'high', provider: 'openai', billing: 'estimate', tier: { id: 'priority', name: 'Fast' } },
+    context: { ...EMPTY.context, used: 64_000, window: data.context.window ?? 272_000, at: now },
+    tokens: { input: 420_000, output: 18_000, reasoning: 6_000, cached: 300_000, write: 0, requests: 12 }, cache: { ratio: 0.8, expires: now + 240_000 },
+    cost: { ...EMPTY.cost, estimate: 1.24 }, limits: [{ minutes: 300, used: 35, resets: now + 7_200_000 }],
+    tools: { sample: now }, agents: { sample: 'running' }, plan: { done: 2, total: 5, step: 'Write the tests' }, mods: { installed: 6, enabled: 5, active: 5 },
+    git: { key: cwd, branch: 'main', oid: null, ahead: 1, behind: 0, staged: 1, unstaged: 2, untracked: 0, conflicts: 0, added: 42, removed: 7, worktree: null, remote: null, error: null },
+    github: { ...EMPTY.github, status: 'ok', pr: { number: 123, title: 'Sample', url: 'https://github.com/owner/repo/pull/123', state: 'OPEN', draft: false, review: 'APPROVED', merge: null },
+      ci: { state: 'SUCCESS', passed: 4, failed: 0, pending: 0, url: null } },
+    scripts: Object.fromEntries(scripts(config.scripts).scripts.map(item => [item.id, data.scripts[item.id]?.spec === JSON.stringify(item) ? data.scripts[item.id]
+      : { spec: JSON.stringify(item), at: now, status: 'ok', spans: [{ text: `${item.id} output` }] }])),
+  };
+  const empty = (key: keyof Data) => data[key] === null || JSON.stringify(data[key]) === JSON.stringify(EMPTY[key]) || key === 'context' && data.context.used === null;
+  return { ...data, ...Object.fromEntries(Object.entries(sample).filter(([key]) => key === 'scripts' || empty(key as keyof Data))) };
 }

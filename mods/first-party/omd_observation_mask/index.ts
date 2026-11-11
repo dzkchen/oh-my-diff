@@ -1,7 +1,8 @@
 import type { HistoryItem, Json, ModAPI, ResourceRef } from '../../api.d.ts';
+import { cacheLifetime } from './cache_ttl.ts';
 
 type Kept = { tool: string; reference: ResourceRef | null; bytes: number; failed_edit: boolean };
-type Cache = { identity: string; provider: string; model: string; route: string; ttl: number; expires: number };
+type Cache = { identity: string; provider: string; model: string; route: string; at: number; ttl: number; reported: boolean; expires: number };
 type State = {
   cache: Cache | null; continuation: { prompt: string; force: boolean; readable: string[] } | null;
   masked: Record<string, string>; kept: string[]; pinned: string[]; calls: Record<string, Kept>; visible: string[];
@@ -89,20 +90,11 @@ export default function activate(api: ModAPI) {
       if (response.scope.kind !== 'main' || response.scope.agent_id || response.synthetic
         || !['completed', 'incomplete'].includes(response.status)) return;
       const state = load();
-      const identity = JSON.stringify([response.provider, response.route, response.credential, response.requested_model, response.served_model]);
-      const reported = (response.usage as { omd_cache_ttl_seconds?: unknown } | null)?.omd_cache_ttl_seconds;
-      const read = (response.cache.read_tokens ?? 0) > 0;
-      const openai = response.provider === 'openai';
-      const skipped = ['ollama', 'lmstudio', 'oss'].includes(response.provider)
-        || (!minutes && openai && ['included_subscription', 'unpriced'].includes(response.cost.basis));
-      const ttl = skipped ? 0 : minutes ? minutes * 60_000
-        : typeof reported === 'number' && Number.isFinite(reported) && reported > 0 ? reported * 1000
-        : read && state.cache?.identity === identity ? state.cache.ttl
-        : openai && (read || (response.cache.write_tokens ?? 0) > 0) ? 30 * 60_000 : 0;
       const at = response.timing.started_at_ms;
-      if (state.cache && at < state.cache.expires - state.cache.ttl) return;
-      save({ ...state, cache: { identity, provider: response.provider, model: response.requested_model, route: response.route,
-        ttl: Number.isFinite(at) && at > 0 && at <= Date.now() ? ttl : 0, expires: at + ttl } });
+      if (state.cache && at < state.cache.at) return;
+      const memo = cacheLifetime(response, minutes, at, state.cache);
+      save({ ...state, cache: { ...memo, at, provider: response.provider, model: response.requested_model, route: response.route,
+        ttl: Number.isFinite(at) && at > 0 && at <= Date.now() ? memo.ttl : 0 } });
     });
     api.intercept('command', async (event, next) => {
       if (event.command !== 'continue' || event.owner !== 'omd_continue' || event.active_turn) return next(event);

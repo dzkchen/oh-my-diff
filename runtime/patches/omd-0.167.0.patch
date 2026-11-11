@@ -38735,7 +38735,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 80459f41136d4db5026f4224711d2770164a435c..4df46dc9905497150b85481809a9b3bce9052288 100644
+index 80459f41136d4db5026f4224711d2770164a435c..9d52b8b3cc7bf4c6502a48243fc4d9a09c81283c 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -238,6 +238,10 @@ mod link_hover;
@@ -38883,7 +38883,7 @@ index 80459f41136d4db5026f4224711d2770164a435c..4df46dc9905497150b85481809a9b3bc
 +        if !removed.is_empty() {
 +            self.chat_widget.refresh_features(&removed);
 +        }
-+        if crate::omd::status_line_disabled_changed() {
++        if crate::omd::disabled_surfaces_changed() {
 +            self.chat_widget.refresh_status_surfaces();
 +        } else if crate::mod_ui::notices_changed() || crate::mod_ui::status_segments_stale() {
 +            self.chat_widget.refresh_status_line();
@@ -45229,7 +45229,7 @@ index de5e68d71d35cfe0d54c9e5e46f6e30d3f535468..2b758194996498c11939df495e8ee4b7
      /// across external refreshes.
      fn selected_index(&self) -> Option<usize> {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a10f56cc3 100644
+index bcc24561d85da011a0f154310e2a21a57b13d4b3..fed60e4d8ec2fe9e5550ecf517fcdc15537ab89b 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -403,6 +403,7 @@ mod draft_state;
@@ -45248,7 +45248,31 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      /// An inline slash command and its trimmed argument text.
      ///
      /// The `TextElement` ranges are rebased into the argument string, while any pending local
-@@ -1842,12 +1844,22 @@ impl ChatComposer {
+@@ -1489,14 +1491,15 @@ impl ChatComposer {
+     }
+
+     fn right_footer_line_with_context(&self) -> Line<'static> {
+-        let mut line = if self.footer.context_window_pending {
+-            Line::default()
+-        } else {
+-            context_window_line(
+-                self.footer.context_window_percent,
+-                self.footer.context_window_used_tokens,
+-            )
+-        };
++        let mut line =
++            if self.footer.context_window_pending || crate::omd::context_indicator_disabled() {
++                Line::default()
++            } else {
++                context_window_line(
++                    self.footer.context_window_percent,
++                    self.footer.context_window_used_tokens,
++                )
++            };
+         if let Some(vim_mode) = self.vim_mode_indicator_span() {
+             line.spans.push(" | ".dim());
+             line.spans.push(vim_mode);
+@@ -1842,12 +1845,22 @@ impl ChatComposer {
      fn apply_history_entry(&mut self, entry: HistoryEntry) {
          let HistoryEntry {
              text,
@@ -45273,7 +45297,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          self.set_remote_image_urls(remote_image_urls);
          self.set_text_content_with_mention_bindings(
              text,
-@@ -1954,6 +1966,10 @@ impl ChatComposer {
+@@ -1954,6 +1967,10 @@ impl ChatComposer {
          self.draft.paste_burst.is_active()
      }
 
@@ -45284,7 +45308,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      /// Returns a delay that reliably exceeds the paste-burst timing threshold.
      ///
      /// Use this in tests to avoid boundary flakiness around the `PasteBurst` timeout.
-@@ -1964,7 +1980,9 @@ impl ChatComposer {
+@@ -1964,7 +1981,9 @@ impl ChatComposer {
      /// Integrate results from an asynchronous file search.
      pub(crate) fn on_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
          // Only apply if user is still editing a token starting with `query`.
@@ -45295,7 +45319,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
              self.current_mentions_v2_token()
          } else {
              Self::current_at_token(&self.draft.textarea)
-@@ -1976,6 +1994,19 @@ impl ChatComposer {
+@@ -1976,6 +1995,19 @@ impl ChatComposer {
          if !current_token.starts_with(&query) {
              return;
          }
@@ -45315,7 +45339,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
 
          match &mut self.popups.active {
              ActivePopup::File(popup) => {
-@@ -2021,6 +2052,9 @@ impl ChatComposer {
+@@ -2021,6 +2053,9 @@ impl ChatComposer {
          if matches!(key_event.kind, KeyEventKind::Release) {
              return (InputResult::None, false);
          }
@@ -45325,7 +45349,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
 
          if self.history_search.is_none()
              && !self.popups.active()
-@@ -2191,7 +2225,7 @@ impl ChatComposer {
+@@ -2191,7 +2226,7 @@ impl ChatComposer {
          }
          if key_event.code == KeyCode::Esc {
              let next_mode = esc_hint_mode(self.footer.mode, self.is_task_running);
@@ -45334,7 +45358,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
                  self.footer.mode = next_mode;
                  return (InputResult::None, true);
              }
-@@ -2258,7 +2292,16 @@ impl ChatComposer {
+@@ -2258,7 +2293,16 @@ impl ChatComposer {
                  };
 
                  let sel_path = sel.to_string_lossy().to_string();
@@ -45352,7 +45376,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
                      self.current_editable_at_token_range_with_options(/*allow_empty*/ false)
                  {
                      self.insert_selected_file_path(token_range, &sel_path);
-@@ -2852,11 +2895,31 @@ impl ChatComposer {
+@@ -2852,11 +2896,31 @@ impl ChatComposer {
          // local prompt arg parser treats it as a single argument. Avoid adding
          // quotes when the path already contains one to keep behavior simple.
          let needs_quotes = path.chars().any(char::is_whitespace);
@@ -45385,7 +45409,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
 
          // Replace just the active `@token` so unrelated text elements, such as
          // large-paste placeholders, remain atomic and can still expand on submit.
-@@ -2864,6 +2927,12 @@ impl ChatComposer {
+@@ -2864,6 +2928,12 @@ impl ChatComposer {
          self.draft.textarea.replace_range(token_range, &inserted);
          let inserted_range = start_idx..start_idx.saturating_add(inserted.len());
          self.draft.textarea.set_cursor(inserted_range.end);
@@ -45398,7 +45422,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          self.advance_past_completion_separator();
          self.dismiss_completed_prefixed_token('@', inserted_range, &inserted);
      }
-@@ -3235,6 +3304,7 @@ impl ChatComposer {
+@@ -3235,6 +3305,7 @@ impl ChatComposer {
                  | InputResult::Queued { .. }
                  | InputResult::Command(_)
                  | InputResult::ServiceTierCommand(_)
@@ -45406,7 +45430,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
                  | InputResult::CommandWithArgs(_, _, _)
          ) && self.config.reset_vim_on_submission
          {
-@@ -3256,6 +3326,20 @@ impl ChatComposer {
+@@ -3256,6 +3327,20 @@ impl ChatComposer {
          if let Some(result) = self.handle_parent_owned_submission() {
              return result;
          }
@@ -45427,7 +45451,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          if should_queue {
              if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
                  self.apply_paste(pasted);
-@@ -3410,6 +3494,11 @@ impl ChatComposer {
+@@ -3410,6 +3495,11 @@ impl ChatComposer {
              self.record_pending_slash_command_history();
              return Some(InputResult::None);
          }
@@ -45439,7 +45463,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          self.stage_slash_command_history(&command);
          if !matches!(command, SlashCommandItem::Builtin(cmd) if cmd.requires_dispatch_validation())
          {
-@@ -3419,6 +3508,7 @@ impl ChatComposer {
+@@ -3419,6 +3509,7 @@ impl ChatComposer {
          Some(match command {
              SlashCommandItem::Builtin(cmd) => InputResult::Command(cmd),
              SlashCommandItem::ServiceTier(command) => InputResult::ServiceTierCommand(command),
@@ -45447,7 +45471,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          })
      }
 
-@@ -3433,6 +3523,11 @@ impl ChatComposer {
+@@ -3433,6 +3524,11 @@ impl ChatComposer {
              self.record_pending_slash_command_history();
              return Some(InputResult::None);
          }
@@ -45459,7 +45483,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
 
          self.stage_slash_command_history(&command);
 
-@@ -3443,6 +3538,14 @@ impl ChatComposer {
+@@ -3443,6 +3539,14 @@ impl ChatComposer {
          );
          let trimmed_rest = inline_command.rest.trim();
          args_elements = Self::trim_text_elements(inline_command.rest, trimmed_rest, args_elements);
@@ -45474,7 +45498,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          let SlashCommandItem::Builtin(cmd) = command else {
              return None;
          };
-@@ -3477,6 +3580,18 @@ impl ChatComposer {
+@@ -3477,6 +3581,18 @@ impl ChatComposer {
          Some((trimmed_rest.to_string(), args_elements))
      }
 
@@ -45493,7 +45517,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      fn reject_slash_command_if_unavailable(&self, command: &SlashCommandItem) -> bool {
          if !self.is_task_running
              || command.available_during_task()
-@@ -3554,6 +3669,9 @@ impl ChatComposer {
+@@ -3554,6 +3670,9 @@ impl ChatComposer {
 
      /// Handle key event when no popup is visible.
      fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
@@ -45503,7 +45527,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          if let Some((result, redraw)) = self.handle_remote_image_selection_key(&key_event) {
              return (result, redraw);
          }
-@@ -3964,6 +4082,16 @@ impl ChatComposer {
+@@ -3964,6 +4083,16 @@ impl ChatComposer {
 
      pub(crate) fn sync_popups(&mut self) {
          self.sync_slash_command_elements();
@@ -45520,7 +45544,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          if self.history_search.is_some() || self.draft.textarea.vim_query().is_some() {
              if self.popups.current_file_query.is_some() {
                  self.app_event_tx
-@@ -4051,16 +4179,21 @@ impl ChatComposer {
+@@ -4051,16 +4180,21 @@ impl ChatComposer {
          self.popups.dismissed_mention_token = None;
 
          if let Some((range, token)) = file_token {
@@ -45543,7 +45567,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          if matches!(
              self.popups.active,
              ActivePopup::File(_) | ActivePopup::Skill(_) | ActivePopup::MentionV2(_)
-@@ -4133,6 +4266,78 @@ impl ChatComposer {
+@@ -4133,6 +4267,78 @@ impl ChatComposer {
          }
      }
 
@@ -45622,7 +45646,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      /// Synchronize the legacy file-search popup with the current `@` token.
      fn sync_file_search_popup(&mut self, range: Range<usize>, query: String) {
          if self
-@@ -4932,7 +5137,11 @@ impl ChatComposer {
+@@ -4932,7 +5138,11 @@ impl ChatComposer {
              selection.register(status.intersection(buf.area), changed);
              selection.register(footer_rect.intersection(buf.area), changed);
          }
@@ -45635,7 +45659,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          Block::default().style(style).render(composer_rect, buf);
          if let Some(previews) = options.image_previews {
              previews.render(
-@@ -5024,11 +5233,20 @@ impl ChatComposer {
+@@ -5024,11 +5234,20 @@ impl ChatComposer {
                          &highlights,
                      );
                  }
@@ -45657,7 +45681,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
              } else {
                  self.draft
                      .input_disabled_placeholder
-@@ -5037,8 +5255,20 @@ impl ChatComposer {
+@@ -5037,8 +5256,20 @@ impl ChatComposer {
                      .to_string()
              };
              if !textarea_rect.is_empty() {
@@ -45680,7 +45704,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
              }
          }
          // The reserved right margin indicates hidden rows without changing wrapping.
-@@ -5090,6 +5320,7 @@ impl ChatComposer {
+@@ -5090,6 +5321,7 @@ impl ChatComposer {
              self.cursor_pos_with_options(area, options),
              buf,
          );
@@ -45688,7 +45712,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
          if options.footer.is_some_and(|footer| footer.is_interactive) {
              buf.set_style(composer_rect, Style::default().dim());
          }
-@@ -9590,6 +9821,7 @@ mod tests {
+@@ -9590,6 +9822,7 @@ mod tests {
                      Some(CommandItem::ServiceTier(command)) => {
                          panic!("expected {expected} command, got service tier {command:?}")
                      }
@@ -45696,7 +45720,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
                      None => panic!("no selected command for '{input}'"),
                  },
                  _ => panic!("slash popup not active after typing '{input}'"),
-@@ -9703,6 +9935,7 @@ mod tests {
+@@ -9703,6 +9936,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -45704,7 +45728,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -9720,6 +9953,25 @@ mod tests {
+@@ -9720,6 +9954,25 @@ mod tests {
          );
      }
 
@@ -45730,7 +45754,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      #[test]
      fn kill_buffer_preserves_image_after_submit() {
          use crossterm::event::KeyCode;
-@@ -10236,6 +10488,7 @@ mod tests {
+@@ -10236,6 +10489,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected diff command, got service tier {command:?}")
              }
@@ -45738,7 +45762,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch after Tab completion, got literal submit: {text}")
              }
-@@ -10436,6 +10689,7 @@ mod tests {
+@@ -10436,6 +10690,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected mention command, got service tier {command:?}")
              }
@@ -45746,7 +45770,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -10494,6 +10748,7 @@ mod tests {
+@@ -10494,6 +10749,7 @@ mod tests {
      }
 
      #[test]
@@ -45754,7 +45778,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      fn file_completion_preserves_large_paste_placeholder_elements() {
          use crossterm::event::KeyCode;
          use crossterm::event::KeyEvent;
-@@ -10578,6 +10833,7 @@ mod tests {
+@@ -10578,6 +10834,7 @@ mod tests {
      }
 
      #[test]
@@ -45762,7 +45786,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      fn legacy_file_completion_ignores_shell_variable_to_the_right() {
          let (mut composer, _rx) = new_test_composer();
          composer.set_skill_mentions(Some(vec![test_skill_metadata("available")]));
-@@ -10604,6 +10860,7 @@ mod tests {
+@@ -10604,6 +10861,7 @@ mod tests {
      }
 
      #[test]
@@ -45770,7 +45794,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      fn adjacent_file_completion_inserts_leading_separator() {
          let (mut composer, _rx) = new_test_composer();
          configure_bound_plugin_left_of_unbound_plugin(&mut composer);
-@@ -10637,6 +10894,7 @@ mod tests {
+@@ -10637,6 +10895,7 @@ mod tests {
      }
 
      #[test]
@@ -45778,7 +45802,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      fn file_completion_preserves_separator_before_existing_suffix() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10652,6 +10910,7 @@ mod tests {
+@@ -10652,6 +10911,7 @@ mod tests {
      }
 
      #[test]
@@ -45786,7 +45810,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      fn file_completion_preserves_separator_before_sigiled_suffix() {
          for suffix in ["@next", "$next"] {
              let (mut composer, _rx) = new_test_composer();
-@@ -10664,6 +10923,7 @@ mod tests {
+@@ -10664,6 +10924,7 @@ mod tests {
      }
 
      #[test]
@@ -45794,7 +45818,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      fn file_completion_inserts_separator_before_line_break() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10679,6 +10939,7 @@ mod tests {
+@@ -10679,6 +10940,7 @@ mod tests {
      }
 
      #[test]
@@ -45802,7 +45826,7 @@ index bcc24561d85da011a0f154310e2a21a57b13d4b3..d1058320aa6c683b1b5162a9a98e070a
      fn file_completion_for_sigil_path_does_not_reopen_popup() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10701,6 +10962,202 @@ mod tests {
+@@ -10701,6 +10963,202 @@ mod tests {
          }
      }
 
@@ -119974,7 +119998,7 @@ index 0000000000000000000000000000000000000000..25eee4414860857855e717fd1cfc3011
 +}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9025a454ba25e5b830475e8fd2fbfff226c5d7b7
+index 0000000000000000000000000000000000000000..e8cd4f85605acecc395f18827c6143e4c557d081
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins.rs
 @@ -0,0 +1,279 @@
@@ -119995,7 +120019,7 @@ index 0000000000000000000000000000000000000000..9025a454ba25e5b830475e8fd2fbfff2
 +    "logout",
 +];
 +pub const PROTECTED_MODES: &[&str] = &["default"];
-+pub const SURFACES: &[&str] = &["status_line"];
++pub const SURFACES: &[&str] = &["status_line", "context_indicator"];
 +
 +pub fn builtins_snapshot(repository: &Path) -> String {
 +    let repository = repository
@@ -191741,10 +191765,10 @@ index 0000000000000000000000000000000000000000..e9b477a576c28bfaf1f484aa9fea5773
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..60b260a56329819e042ca5dd0002b36082282ef6
+index 0000000000000000000000000000000000000000..e37da71fca429cdf7e2eaea04b0e673113ee2677
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,798 @@
+@@ -0,0 +1,808 @@
 +use crate::omd::LockExt;
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
@@ -191920,7 +191944,7 @@ index 0000000000000000000000000000000000000000..60b260a56329819e042ca5dd0002b360
 +
 +static FACTS: Mutex<Option<Facts>> = Mutex::new(None);
 +static PIXEL_MODE: AtomicBool = AtomicBool::new(false);
-+static RERENDER: AtomicBool = AtomicBool::new(false);
++crate::omd::isolated_static! { RERENDER: AtomicBool = AtomicBool::new(false) }
 +static HALF: AtomicU8 = AtomicU8::new(HALF_UNKNOWN);
 +static FRACTION: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 +fn with<T>(run: impl FnOnce(&mut Facts) -> T) -> T {
@@ -192019,13 +192043,23 @@ index 0000000000000000000000000000000000000000..60b260a56329819e042ca5dd0002b360
 +}
 +
 +/// A burst of changes, such as a window drag, re-renders once per render in progress.
-+fn rerender() {
-+    if !RERENDER.swap(true, Ordering::AcqRel) {
-+        std::thread::spawn(|| {
-+            RERENDER.store(false, Ordering::Release);
-+            crate::mod_runtime::rerender();
-+        });
-+    }
++pub(crate) fn rerender() {
++    RERENDER.with(|rerender_state| {
++        if !rerender_state.swap(true, Ordering::AcqRel) {
++            #[cfg(test)]
++            let scheduled = RERENDER.capture();
++            let work = move || {
++                #[cfg(test)]
++                RERENDER.replace(scheduled);
++                RERENDER.with(|state| state.store(false, Ordering::Release));
++                crate::mod_runtime::rerender();
++            };
++            #[cfg(test)]
++            let work =
++                crate::mod_runtime::inherit_test_context(crate::mod_ui::inherit_test_state(work));
++            std::thread::spawn(work);
++        }
++    });
 +}
 +
 +/// The startup probe's cell size stands in until the window reports pixels; it sizes pictures but never enables pixel pointer reports, since it goes stale on font zoom.
@@ -200375,10 +200409,10 @@ index 0000000000000000000000000000000000000000..e91dcbc036821600f76a9ace40dd4afb
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b641286682
+index 0000000000000000000000000000000000000000..315ec52662a4d2ae17087e5caaefc92bf13dc8cb
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,2578 @@
+@@ -0,0 +1,2614 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -200458,8 +200492,12 @@ index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b6
 +    run: impl FnOnce() + Send + 'static,
 +) -> impl FnOnce() + Send + 'static {
 +    let context = ACTIVE_CONTEXT.capture();
++    let requests = RENDER_REQUEST.capture();
++    let owner_generation = OWNER_VIEW_GENERATION.capture();
 +    move || {
 +        ACTIVE_CONTEXT.replace(context);
++        RENDER_REQUEST.replace(requests);
++        OWNER_VIEW_GENERATION.replace(owner_generation);
 +        run();
 +    }
 +}
@@ -201326,7 +201364,7 @@ index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b6
 +        *EFFECTIVE_BUILTINS.locked() = builtins;
 +    }
 +    if let Ok(snapshot) = decode_owner_snapshot(value["view"].clone()) {
-+        crate::mod_ui::preview(snapshot);
++        publish_owner_snapshot(snapshot);
 +    }
 +    status
 +}
@@ -201476,6 +201514,16 @@ index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b6
 +}
 +
 +static OWNER_BOUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++crate::omd::isolated_static! { OWNER_VIEW_GENERATION: Mutex<u64> = Mutex::new(0) }
++crate::omd::isolated_static! { RENDER_REQUEST: Mutex<u64> = Mutex::new(0) }
++
++fn publish_owner_snapshot(snapshot: ModViewSnapshot) {
++    OWNER_VIEW_GENERATION.with(|owner_state| {
++        let mut generation = owner_state.locked();
++        *generation = generation.wrapping_add(1);
++        crate::mod_ui::preview(snapshot);
++    });
++}
 +
 +pub(crate) fn owner_view_active() -> bool {
 +    OWNER_BOUND.load(std::sync::atomic::Ordering::Acquire)
@@ -201503,7 +201551,7 @@ index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b6
 +    *REMOTE_STATUS.locked() = None;
 +    *EFFECTIVE_BUILTINS.locked() = codex_omd::BuiltinSnapshot::default();
 +    *CONFIGURATION_TRANSPORT.locked() = None;
-+    crate::mod_ui::preview(ModViewSnapshot::default());
++    publish_owner_snapshot(ModViewSnapshot::default());
 +    REMOTE_FRONTEND.store(remote, std::sync::atomic::Ordering::Release);
 +    *CATALOG.locked() = None;
 +}
@@ -201514,7 +201562,7 @@ index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b6
 +
 +pub(crate) fn owner_snapshot(value: Value) -> Result<(), String> {
 +    let snapshot = decode_owner_snapshot(value)?;
-+    crate::mod_ui::preview(snapshot);
++    publish_owner_snapshot(snapshot);
 +    refresh_catalog();
 +    Ok(())
 +}
@@ -201956,68 +202004,90 @@ index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b6
 +}
 +
 +fn render_for(context: ModContext, allowed: &dyn Fn() -> bool) {
-+    if !allowed() {
-+        return;
-+    }
-+    let Some(invocation) = ACTIVE_CONTEXT.with(|state| {
-+        let mut active = state.locked();
-+        (active.context.as_ref() == Some(&context)).then(|| active.join(context.clone()))
-+    }) else {
-+        return;
-+    };
-+    static REQUEST: Mutex<u64> = Mutex::new(0);
-+    let request = {
-+        let mut current = REQUEST.locked();
-+        *current = current.wrapping_add(1);
-+        *current
-+    };
-+    let active = || *REQUEST.locked() == request && current(&invocation) && allowed();
-+    let Some(paths) = crate::omd::mod_paths_for(&context.repository) else {
-+        return;
-+    };
-+    let Ok(runtime) = shared_host_active(&active) else {
-+        return;
-+    };
-+    let Some(mut snapshot) = crate::omd::view_snapshot(&paths.store.join("mod-view.json")) else {
-+        return;
-+    };
-+    snapshot.rendered_ms = codex_omd::peers::now_ms();
-+    snapshot.input["client"] = crate::mod_client::value();
-+    snapshot.input["ledger"] = serde_json::json!({
-+        "thread_id": context.thread_id.map(|id| id.to_string()),
-+        "cwd": context.repository,
-+    });
-+    {
-+        let mut runtime = runtime.locked();
-+        reload_active(&mut runtime, &active);
-+    }
-+    let input = snapshot.input.clone();
-+    let _ = codex_omd::terminal_shared(&runtime, input, active, |terminal, configuration| {
-+        let current = REQUEST.locked();
-+        if *current != request || !allowed() {
++    RENDER_REQUEST.with(|requests| {
++        if !allowed() {
 +            return;
 +        }
-+        publish_for_context(&invocation, || {
-+            snapshot.input["pty_scope"] = serde_json::json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": configuration});
-+            snapshot.revision = snapshot.revision.saturating_add(1);
-+            snapshot.view = terminal.view;
-+            snapshot.conflicts = terminal.conflicts;
-+            snapshot.contributors = terminal.contributors;
-+            snapshot.component_owners = terminal.component_owners;
-+            snapshot.layout_owner = terminal.layout_owner;
-+            snapshot.diagnostics = snapshot.native_diagnostics.clone();
-+            for diagnostic in terminal.diagnostics {
-+                if !snapshot.diagnostics.contains(&diagnostic) {
-+                    snapshot.diagnostics.push(diagnostic);
-+                }
-+            }
-+            snapshot.diagnostics.truncate(16);
-+            if crate::mod_ui::preview(snapshot) {
-+                codex_omd::client_surface::redraw();
-+            } else {
-+                crate::mod_render::reask();
-+            }
++        let Some(invocation) = ACTIVE_CONTEXT.with(|state| {
++            let mut active = state.locked();
++            (active.context.as_ref() == Some(&context)).then(|| active.join(context.clone()))
++        }) else {
++            return;
++        };
++        let request = {
++            let mut current = requests.locked();
++            *current = current.wrapping_add(1);
++            *current
++        };
++        let active = || *requests.locked() == request && current(&invocation) && allowed();
++        let Some(paths) = crate::omd::mod_paths_for(&context.repository) else {
++            return;
++        };
++        let Ok(runtime) = shared_host_active(&active) else {
++            return;
++        };
++        let (mut snapshot, owner_generation) = if owner_view_active() {
++            OWNER_VIEW_GENERATION.with(|owner_state| {
++                let generation = owner_state.locked();
++                (
++                    crate::mod_ui::shared_snapshot().as_ref().clone(),
++                    Some(*generation),
++                )
++            })
++        } else if let Some(snapshot) = crate::omd::view_snapshot(&paths.store.join("mod-view.json")) {
++            (snapshot, None)
++        } else {
++            return;
++        };
++        snapshot.rendered_ms = codex_omd::peers::now_ms();
++        snapshot.input["client"] = crate::mod_client::value();
++        snapshot.input["ledger"] = serde_json::json!({
++            "thread_id": context.thread_id.map(|id| id.to_string()),
++            "cwd": context.repository,
 +        });
++        {
++            let mut runtime = runtime.locked();
++            reload_active(&mut runtime, &active);
++        }
++        let input = snapshot.input.clone();
++        let mut retry = false;
++        let _ = codex_omd::terminal_shared(&runtime, input, active, |terminal, configuration| {
++            let current = requests.locked();
++            if *current != request || !allowed() {
++                return;
++            }
++            publish_for_context(&invocation, || {
++                OWNER_VIEW_GENERATION.with(|owner_state| {
++                    let generation = owner_state.locked();
++                    if owner_generation.is_some_and(|expected| expected != *generation) {
++                        retry = true;
++                        return;
++                    }
++                    snapshot.input["pty_scope"] = serde_json::json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": configuration});
++                    snapshot.revision = snapshot.revision.saturating_add(1);
++                    snapshot.view = terminal.view;
++                    snapshot.conflicts = terminal.conflicts;
++                    snapshot.contributors = terminal.contributors;
++                    snapshot.component_owners = terminal.component_owners;
++                    snapshot.layout_owner = terminal.layout_owner;
++                    snapshot.diagnostics = snapshot.native_diagnostics.clone();
++                    for diagnostic in terminal.diagnostics {
++                        if !snapshot.diagnostics.contains(&diagnostic) {
++                            snapshot.diagnostics.push(diagnostic);
++                        }
++                    }
++                    snapshot.diagnostics.truncate(16);
++                    if crate::mod_ui::preview(snapshot) {
++                        codex_omd::client_surface::redraw();
++                    } else {
++                        crate::mod_render::reask();
++                    }
++                });
++            });
++        });
++        if retry && active() {
++            crate::mod_client::rerender();
++        }
 +    });
 +}
 +
@@ -202959,10 +203029,10 @@ index 0000000000000000000000000000000000000000..a40c14a20c66635e9151868abb6260b6
 +}
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..93ded9275455fd148a2607a3f7a16cbc7ca84d61
+index 0000000000000000000000000000000000000000..df63b8f7dfcc1a1f4b15895b57c3c39bc3c20619
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,1640 @@
+@@ -0,0 +1,1833 @@
 +use super::*;
 +use codex_omd::ModOpenOptions;
 +use pretty_assertions::assert_eq;
@@ -204304,6 +204374,199 @@ index 0000000000000000000000000000000000000000..93ded9275455fd148a2607a3f7a16cbc
 +    );
 +    assert_eq!(b.locked().state("curator").cloned(), before);
 +    assert_eq!(a.locked().state("curator").unwrap()["owner"], "a");
++}
++
++#[test]
++#[serial_test::serial]
++fn an_owner_bound_terminal_enables_render_hooks_its_host_registers() {
++    struct Reset(Option<Arc<Mutex<ModHost>>>);
++    impl Drop for Reset {
++        fn drop(&mut self) {
++            activate_configuration(false, None, None);
++            *HOST.locked() = self.0.take();
++        }
++    }
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let package = root.join("hooked");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::json!({"schema":1,"id":"hooked","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["terminal"]}).to_string()).unwrap();
++    std::fs::write(
++        package.join("index.ts"),
++        "export default api => api.intercept('render', {match: {component: 'tool_call'}}, () => ({tree: [{type: 'text', id: 'seen', label: 'Seen', text: 'seen'}]}));",
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    let _reset = Reset(HOST.locked().take());
++    activate_configuration(false, Some("owner"), None);
++    assert!(owner_view_active());
++    let _ = try_with_host(|_, _| Some(()));
++    assert!(!crate::mod_render::enabled());
++    crate::mod_ui::refresh();
++    assert!(crate::mod_render::enabled());
++}
++
++#[test]
++#[serial_test::serial]
++fn an_owner_bound_terminal_rerenders_without_a_disk_snapshot() {
++    struct Reset(Option<Arc<Mutex<ModHost>>>);
++    impl Drop for Reset {
++        fn drop(&mut self) {
++            activate_configuration(false, None, None);
++            *HOST.locked() = self.0.take();
++        }
++    }
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let package = root.join("hooked");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::json!({"schema":1,"id":"hooked","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["terminal"]}).to_string()).unwrap();
++    std::fs::write(
++        package.join("index.ts"),
++        "export default api => api.on('terminal', e => ({title: String(e.client.columns)}));",
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    let _reset = Reset(HOST.locked().take());
++    activate_configuration(false, Some("owner"), None);
++    assert!(owner_view_active());
++    let context = ModContext {
++        thread_id: Some(ThreadId::new()),
++        repository: root,
++        policy: FileSystemSandboxPolicy::unrestricted(),
++    };
++    begin(context.clone());
++    let snapshot = ModViewSnapshot {
++        input: serde_json::json!({"event":"idle","client":{"columns":100}}),
++        ..Default::default()
++    };
++    crate::mod_ui::preview(snapshot);
++    assert!(!data.join("mod-view.json").exists());
++    render_for(context, &|| true);
++    let drawn = crate::mod_ui::shared_snapshot();
++    assert_eq!(
++        drawn.view.title,
++        Some(crate::mod_client::value()["columns"].to_string())
++    );
++}
++
++#[test]
++#[serial_test::serial]
++fn an_owner_snapshot_supersedes_a_pending_resize_render() {
++    struct Reset(Option<Arc<Mutex<ModHost>>>);
++    impl Drop for Reset {
++        fn drop(&mut self) {
++            activate_configuration(false, None, None);
++            *HOST.locked() = self.0.take();
++        }
++    }
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let package = root.join("hooked");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::json!({"schema":1,"id":"hooked","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["terminal"]}).to_string()).unwrap();
++    std::fs::write(
++        package.join("index.ts"),
++        "export default api => api.on('terminal', e => ({title: String(e.client.columns)}));",
++    )
++    .unwrap();
++    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++    store
++        .trust(
++            package.clone(),
++            inspected["sha256"].as_str().unwrap(),
++            vec!["terminal".into()],
++            "user",
++        )
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    let _reset = Reset(HOST.locked().take());
++    activate_configuration(false, Some("owner"), None);
++    let context = ModContext {
++        thread_id: Some(ThreadId::new()),
++        repository: root,
++        policy: FileSystemSandboxPolicy::unrestricted(),
++    };
++    begin(context.clone());
++    let _runtime = shared_host().unwrap();
++    let initial = serde_json::json!({
++        "epoch": 1, "revision": 40,
++        "input": {"event":"idle","client":{"columns":100}},
++        "progress": {"title":"Running", "lines":["Waiting for operation"]},
++        "native_diagnostics": ["before completion"]
++    });
++    crate::mod_ui::preview(serde_json::from_value(initial).unwrap());
++    let latest = serde_json::json!({
++        "epoch": 1, "revision": 41,
++        "input": {"event":"idle","client":{"columns":100}},
++        "activity": [{"sequence":1,"mod_id":"hooked","tool":"task","label":"Finished","status":"completed"}],
++        "native_diagnostics": ["after completion"]
++    });
++    let checks = std::sync::atomic::AtomicUsize::new(0);
++    render_for(context, &|| {
++        if checks.fetch_add(1, Ordering::SeqCst) == 1 {
++            owner_snapshot(latest.clone()).unwrap();
++            assert!(crate::mod_ui::shared_snapshot().progress.is_none());
++        }
++        true
++    });
++    assert!(checks.load(Ordering::SeqCst) > 1);
++    wait_until(
++        "the latest owner snapshot and viewport were not rendered",
++        || {
++            let drawn = crate::mod_ui::shared_snapshot();
++            drawn.progress.is_none()
++                && drawn.activity.len() == 1
++                && drawn.view.title == Some(crate::mod_client::value()["columns"].to_string())
++        },
++    );
++    drop(_runtime.locked());
++    let drawn = crate::mod_ui::shared_snapshot();
++    assert!(
++        drawn.progress.is_none(),
++        "resize restored completed native progress"
++    );
++    assert_eq!(
++        drawn.activity.len(),
++        1,
++        "resize lost native completion activity"
++    );
++    assert_eq!(
++        drawn.native_diagnostics,
++        vec!["after completion".to_owned()]
++    );
++    assert_eq!(
++        drawn.view.title,
++        Some(crate::mod_client::value()["columns"].to_string()),
++        "the current viewport must still be rendered"
++    );
 +}
 +
 +#[test]
@@ -216791,10 +217054,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..441d4139da8c667b915eac4874ac02a1377f8641
+index 0000000000000000000000000000000000000000..52545c6c6711fb9ea2812a92f63f26adf464ce97
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,967 @@
+@@ -0,0 +1,979 @@
 +use codex_omd::FileStamp;
 +
 +#[cfg(not(test))]
@@ -217181,10 +217444,22 @@ index 0000000000000000000000000000000000000000..441d4139da8c667b915eac4874ac02a1
 +    changed
 +}
 +
-+pub(crate) fn status_line_disabled_changed() -> bool {
-+    static LAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-+    let disabled = status_line_disabled();
-+    LAST.swap(disabled, std::sync::atomic::Ordering::Relaxed) != disabled
++static CONTEXT_INDICATOR_DISABLED: std::sync::atomic::AtomicBool =
++    std::sync::atomic::AtomicBool::new(false);
++
++pub(crate) fn context_indicator_disabled() -> bool {
++    CONTEXT_INDICATOR_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
++}
++
++pub(crate) fn disabled_surfaces_changed() -> bool {
++    static STATUS_LINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++    let status_line = status_line_disabled();
++    let context = builtins().surface_disabled("context_indicator");
++    let status_line_changed =
++        STATUS_LINE.swap(status_line, std::sync::atomic::Ordering::Relaxed) != status_line;
++    let context_changed =
++        CONTEXT_INDICATOR_DISABLED.swap(context, std::sync::atomic::Ordering::Relaxed) != context;
++    status_line_changed || context_changed
 +}
 +
 +pub(crate) fn mode_disabled(mode: codex_protocol::config_types::ModeKind) -> bool {
