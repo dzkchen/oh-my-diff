@@ -2,6 +2,29 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.2) — 2026-11-11
+
+Codex 0.167.1, shareable theme scenes, and more reliable status, cache and background work.
+
+### New
+
+- Themes: import, share, remove and restore scene files, including the bundled scenes; Aurora, Koi and Prismatic Flow join the collection
+
+### Changed
+
+- Upstream: Codex 0.167.1
+- Statusline: inherit your Codex layout, keep unsaved editor drafts, preview segment changes immediately and keep mod failure alerts visible in narrow terminals
+- Background work: independent provider setup, model discovery, PR checks, skill reads and worker shutdowns can run together
+
+### Fixed
+
+- Statusline: show context remaining consistently with Codex, hide its duplicate context indicator and refresh only the sources used by visible segments
+- Usage and caching: expire stale long-cache observations consistently across usage details, idle compaction and observation masking
+- Turns: reject late Cursor tool callbacks and superseded runs, preserve saved message order and keep redaction and usage data in their owning thread
+- Preview: retry failed watched-file renders; keep terminal views updating when owner snapshots advance and discard work from an earlier conversation
+- Tools: show grouped failure details and detect failures in piped verification commands
+- Mods: explain failed, overridden and pending changes in plain language; the first automatic timeout action names omd_auto_continue and explains how to turn it off
+
 ## [1.5.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.1) — 2026-11-11
 
 Claude models work with tools again, /update opens with mod updates waiting, and /mods shows one row per mod.
