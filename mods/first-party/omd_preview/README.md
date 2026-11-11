@@ -31,9 +31,10 @@ omd mods enable omd_preview
 For `/preview PATH`, use `./PATH` if the file is named like a subcommand. Spaces inside the path are kept as typed;
 only `--` flags are removed.
 
-With `--watch`, you can name a file that doesn't exist yet. OMD waits for it by watching its parent directory. For a
-file in the repository root, or in a directory that doesn't exist yet, it checks again instead, every 2 s at first and
-slowing to once a minute, until the file exists.
+The file must exist when you start watching it. If a watched file later disappears, OMD waits for it by watching its
+parent directory. For a file in the repository root, or in a directory that no longer exists, it checks again instead,
+every 2 s at first and slowing to once a minute, until the file exists. If rendering a watched file fails, OMD retries
+even if the file has not changed again.
 
 ## Settings
 

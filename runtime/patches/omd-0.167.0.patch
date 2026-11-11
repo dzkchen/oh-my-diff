@@ -26338,7 +26338,7 @@ index a22fc2684f5cfe257b5c001bda164561fbd26428..447659e174e7d464aa4f81159d566d9a
      }
 
 diff --git a/codex-rs/core/src/session/mcp.rs b/codex-rs/core/src/session/mcp.rs
-index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f5327e86a 100644
+index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..78f3a0d165a855232918743a09bb185963581730 100644
 --- a/codex-rs/core/src/session/mcp.rs
 +++ b/codex-rs/core/src/session/mcp.rs
 @@ -83,6 +83,25 @@ impl ElicitationReviewer for GuardianMcpElicitationReviewer {
@@ -26367,19 +26367,21 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
  impl Session {
      pub(crate) async fn runtime_mcp_config(&self, config: &Config) -> McpConfig {
          self.runtime_mcp_config_and_context(config).await.0
-@@ -715,6 +734,46 @@ impl Session {
+@@ -715,6 +734,49 @@ impl Session {
              };
          }
 
 +        let request_json = serde_json::to_value(&request).unwrap_or_default();
 +        let request_key = elicitation_key(&request_id);
++        let display_id = elicitation_display_id(&request_id);
 +        for contributor in self.services.extensions.turn_lifecycle_contributors() {
 +            let Some(answer) = contributor
 +                .intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
 +                    turn_store: turn_context.extension_data.as_ref(),
 +                    turn_id: turn_context.sub_id.as_str(),
 +                    server: &server_name,
-+                    request_id: &request_key,
++                    request_id: &display_id,
++                    request_key: &request_key,
 +                    request: &request_json,
 +                    session_store: &self.services.session_extension_data,
 +                    thread_store: &self.services.thread_extension_data,
@@ -26396,6 +26398,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
 +            self.notify_elicitation_result(
 +                Some(turn_context.extension_data.as_ref()),
 +                &server_name,
++                &display_id,
 +                &request_key,
 +                &answer.action,
 +                answer.content.as_ref(),
@@ -26414,7 +26417,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
          // This callback carries a request ID, not a reliable tool invocation owner.
          // Do not report its human wait as ordinary tool execution.
          if turn_context
-@@ -724,6 +783,17 @@ impl Session {
+@@ -724,6 +786,17 @@ impl Session {
          {
              turn_context.turn_timing_state.invalidate_critical_path();
          }
@@ -26432,7 +26435,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
          let _elicitation = self.services.elicitations.register();
          let (tx_response, rx_response) = oneshot::channel();
          let prev_entry = {
-@@ -789,6 +859,27 @@ impl Session {
+@@ -789,6 +862,28 @@ impl Session {
          id: RequestId,
          response: ElicitationResponse,
      ) -> anyhow::Result<()> {
@@ -26451,6 +26454,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
 +        self.notify_elicitation_result(
 +            turn_store.as_deref(),
 +            &server_name,
++            &elicitation_display_id(&id),
 +            &elicitation_key(&id),
 +            &action,
 +            response.content.as_ref(),
@@ -26460,7 +26464,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
          let entry = {
              let mut active = self.active_turn.lock().await;
              match active.as_mut() {
-@@ -812,6 +903,31 @@ impl Session {
+@@ -812,6 +907,33 @@ impl Session {
              .await
      }
 
@@ -26469,6 +26473,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
 +        turn_store: Option<&codex_extension_api::ExtensionData>,
 +        server: &str,
 +        request_id: &str,
++        request_key: &str,
 +        action: &str,
 +        content: Option<&serde_json::Value>,
 +        by: Option<&str>,
@@ -26479,6 +26484,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
 +                    turn_store,
 +                    server,
 +                    request_id,
++                    request_key,
 +                    action,
 +                    content,
 +                    by,
@@ -26492,17 +26498,40 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..11ff0becd5d678159b86442076bf9f6f
      pub(crate) async fn refresh_mcp_servers_now(
          &self,
          added_servers: HashMap<String, McpServerConfig>,
-@@ -1260,3 +1376,11 @@ fn plugin_install_elicitation_telemetry_metadata(
+@@ -1260,3 +1382,15 @@ fn plugin_install_elicitation_telemetry_metadata(
  #[cfg(test)]
  #[path = "mcp_tests.rs"]
  mod tests;
 +
 +fn elicitation_key(id: &impl serde::Serialize) -> String {
++    serde_json::to_string(id).expect("MCP request IDs are serializable")
++}
++
++fn elicitation_display_id(id: &impl serde::Serialize) -> String {
 +    match serde_json::to_value(id) {
 +        Ok(serde_json::Value::String(id)) => id,
 +        Ok(id) => id.to_string(),
 +        Err(_) => String::new(),
 +    }
++}
+diff --git a/codex-rs/core/src/session/mcp_tests.rs b/codex-rs/core/src/session/mcp_tests.rs
+index a6dd60fc13fed6456b80be52a7500c82a3445746..1b9e41cd37cab518a68bf1e09ade50ffc35fd727 100644
+--- a/codex-rs/core/src/session/mcp_tests.rs
++++ b/codex-rs/core/src/session/mcp_tests.rs
+@@ -58,3 +58,14 @@ fn plugin_install_elicitation_telemetry_metadata_requires_install_tool_suggestio
+         None
+     );
+ }
++
++#[test]
++fn elicitation_identity_preserves_request_id_type() {
++    let numeric = codex_protocol::mcp::RequestId::Integer(7);
++    let string = codex_protocol::mcp::RequestId::String("7".into());
++    assert_ne!(elicitation_key(&numeric), elicitation_key(&string));
++    assert_eq!(
++        elicitation_display_id(&numeric),
++        elicitation_display_id(&string)
++    );
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
 index f365c4e2e8cba703f2189ecff0acaf6aacd20ef1..4a04709a49debe22a193dc7d2c2aea33db8503f4 100644
@@ -36513,10 +36542,10 @@ index f0b4daefb34fa020c7e6063400468481fe5e7078..f880c399b364641bf079755f39b64ff8
 
  /// The execution interval represented by a tool timing observation.
 diff --git a/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
-index c6c7571de526e67815e9993ae745b8925b5be1d4..fb135d862b2dd68fb573375522f4d5ce2d691340 100644
+index c6c7571de526e67815e9993ae745b8925b5be1d4..2f51ce752e969b73874661c5755abb07697234c9 100644
 --- a/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
-@@ -79,3 +79,190 @@ pub struct TurnErrorInput<'a> {
+@@ -79,3 +79,192 @@ pub struct TurnErrorInput<'a> {
      /// Store scoped to this turn runtime.
      pub turn_store: &'a ExtensionData,
  }
@@ -36684,6 +36713,7 @@ index c6c7571de526e67815e9993ae745b8925b5be1d4..fb135d862b2dd68fb573375522f4d5ce
 +    pub turn_id: &'a str,
 +    pub server: &'a str,
 +    pub request_id: &'a str,
++    pub request_key: &'a str,
 +    pub request: &'a serde_json::Value,
 +    pub session_store: &'a ExtensionData,
 +    pub thread_store: &'a ExtensionData,
@@ -36701,6 +36731,7 @@ index c6c7571de526e67815e9993ae745b8925b5be1d4..fb135d862b2dd68fb573375522f4d5ce
 +    pub turn_store: Option<&'a ExtensionData>,
 +    pub server: &'a str,
 +    pub request_id: &'a str,
++    pub request_key: &'a str,
 +    pub action: &'a str,
 +    pub content: Option<&'a serde_json::Value>,
 +    pub by: Option<&'a str>,
@@ -64075,10 +64106,10 @@ index 0000000000000000000000000000000000000000..abc922758904d864dde642b99f95d35e
 +}
 diff --git a/codex-rs/core/src/session/persisted_text.rs b/codex-rs/core/src/session/persisted_text.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..09660b4b60d3657fb1fa3c5d2378d8dcc0569c7f
+index 0000000000000000000000000000000000000000..08be73ed5c8cea30652b6e4e709ca45487ca858f
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text.rs
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,636 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -64141,13 +64172,19 @@ index 0000000000000000000000000000000000000000..09660b4b60d3657fb1fa3c5d2378d8dc
 +        {
 +            return live_thread.append_items(items).await;
 +        }
-+        let order = Arc::clone(&self.rollout_order);
++        let mut order = Box::pin(tokio::task::unconstrained(
++            Arc::clone(&self.rollout_order).lock_owned(),
++        ));
++        let reserved = futures::poll!(order.as_mut());
 +        let live_thread = live_thread.clone();
 +        let items = items.to_vec();
 +        let thread_id = self.thread_id().to_string();
 +        // Detached, so an interrupted turn cannot drop items its live history already holds.
 +        tokio::spawn(async move {
-+            let _order = order.lock_owned().await;
++            let _order = match reserved {
++                std::task::Poll::Ready(guard) => guard,
++                std::task::Poll::Pending => order.await,
++            };
 +            let items = persisted(&rewriters, &thread_id, items, turn_store).await;
 +            live_thread.append_items(&items).await
 +        })
@@ -64711,10 +64748,10 @@ index 0000000000000000000000000000000000000000..09660b4b60d3657fb1fa3c5d2378d8dc
 +}
 diff --git a/codex-rs/core/src/session/persisted_text_tests.rs b/codex-rs/core/src/session/persisted_text_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..651ab67f8c6dc1b5e25eeee75f21f8097a58b015
+index 0000000000000000000000000000000000000000..d93776e480d4cc0da1957b44fa80ef58595ad45d
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text_tests.rs
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,277 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -64949,6 +64986,48 @@ index 0000000000000000000000000000000000000000..651ab67f8c6dc1b5e25eeee75f21f809
 +        .find("slow interrupted")
 +        .expect("an interrupted append is still stored");
 +    assert!(interrupted < stored.find("later sentinel").expect("later message stored"));
++}
++
++struct TurnScopedRewriter;
++
++impl codex_extension_api::TurnLifecycleContributor for TurnScopedRewriter {
++    fn rewrites_persisted_text(
++        &self,
++        turn_store: Option<&codex_extension_api::ExtensionData>,
++    ) -> bool {
++        turn_store.is_some()
++    }
++}
++
++#[tokio::test]
++async fn rollout_appends_reserve_order_before_detached_rewrite_runs() {
++    let (mut session, turn_context) = make_session_and_context().await;
++    let mut builder = codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++    builder.turn_lifecycle_contributor(Arc::new(TurnScopedRewriter));
++    session.services.extensions = Arc::new(builder.build());
++    let rollout_path = attach_thread_persistence(&mut session).await;
++    let message = |text: &str| {
++        RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
++            message: text.to_owned(),
++            ..Default::default()
++        }))
++    };
++    let first = [message("first rewritten append")];
++    let second = [message("second ordinary append")];
++    let (first_result, second_result) = tokio::join!(
++        biased;
++        session.persist_rollout_items(Some(&turn_context), &first),
++        session.persist_rollout_items(None, &second),
++    );
++    assert!(first_result && second_result);
++    session.flush_rollout().await.expect("rollout should flush");
++    let stored = std::fs::read_to_string(&rollout_path).expect("read rollout");
++    assert!(
++        stored.find("first rewritten append").expect("first stored")
++            < stored
++                .find("second ordinary append")
++                .expect("second stored")
++    );
 +}
 diff --git a/codex-rs/core/src/tools/approval_gate.rs b/codex-rs/core/src/tools/approval_gate.rs
 new file mode 100644
@@ -78904,10 +78983,10 @@ index 0000000000000000000000000000000000000000..e3c45404e8ec7972bba9ae9fe524f018
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..34ee089ecb3398647cf51c8093a2e3425a21c166
+index 0000000000000000000000000000000000000000..bb555c39e2b492c889705024a9938b450a72d05d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2539 @@
+@@ -0,0 +1,2557 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -80029,13 +80108,8 @@ index 0000000000000000000000000000000000000000..34ee089ecb3398647cf51c8093a2e342
 +                    }
 +                    let mut frames = frames;
 +                    for mut next in readers.drain(..) {
-+                        let (sender, frames, alive, open, announced) = (
-+                            sender.clone(),
-+                            frames.take(),
-+                            alive.clone(),
-+                            open.clone(),
-+                            announced.clone(),
-+                        );
++                        let (sender, frames, alive, open) =
++                            (sender.clone(), frames.take(), alive.clone(), open.clone());
 +                        let (notifier, owner, session) =
 +                            (notifier.clone(), owner.clone(), session.clone());
 +                        let reader_reaped = Arc::clone(&reaped);
@@ -80076,18 +80150,6 @@ index 0000000000000000000000000000000000000000..34ee089ecb3398647cf51c8093a2e342
 +                                let bytes = (result.is_ok() && notify_output).then_some(size);
 +                                if sender.send(result).is_err() || terminal {
 +                                    alive.store(false, std::sync::atomic::Ordering::Release);
-+                                    if announced.swap(true, std::sync::atomic::Ordering::AcqRel) {
-+                                        break;
-+                                    }
-+                                    if let Some(notifier) = &notifier {
-+                                        notifier(ProcessNotice {
-+                                            owner: owner.clone(),
-+                                            session: session.clone(),
-+                                            output_bytes: None,
-+                                            exited: true,
-+                                            deliver: notify_exit,
-+                                        });
-+                                    }
 +                                    break;
 +                                }
 +                                if let (Some(notifier), Some(bytes)) = (&notifier, bytes) {
@@ -80776,6 +80838,41 @@ index 0000000000000000000000000000000000000000..34ee089ecb3398647cf51c8093a2e342
 +            "process_stopped"
 +        );
 +        assert!(started.elapsed() < Duration::from_millis(500));
++    }
++
++    #[test]
++    fn output_eof_does_not_announce_exit_before_the_leader_exits() {
++        for framing in ["raw", "ndjson", "content-length"] {
++            let fixture = Fixture::new();
++            let (sender, notices) = mpsc::channel();
++            fixture
++                .processes
++                .set_notifier(Arc::new(move |notice: ProcessNotice| {
++                    if notice.exited {
++                        let _ = sender.send(notice.session);
++                    }
++                }));
++            fixture
++                .start(
++                    "server",
++                    "exec 1>&- 2>&-; sleep 2",
++                    json!({"framing":framing,"notify":["exit"]}),
++                )
++                .unwrap();
++            assert_eq!(
++                notices.recv_timeout(Duration::from_millis(300)),
++                Err(mpsc::RecvTimeoutError::Timeout)
++            );
++            assert_eq!(fixture.processes.running("fixture", "server"), Some(true));
++            assert_eq!(
++                notices.recv_timeout(Duration::from_secs(5)).as_deref(),
++                Ok("server")
++            );
++            assert_eq!(
++                notices.recv_timeout(Duration::from_millis(100)),
++                Err(mpsc::RecvTimeoutError::Timeout)
++            );
++        }
 +    }
 +
 +    #[test]
@@ -81601,10 +81698,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..293ea6d1baa19b3cdaf8300c3f0e0581a15d5754
+index 0000000000000000000000000000000000000000..a87f5278d116dc991d340a61f3c4aabf81dbbdf8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,3090 @@
+@@ -0,0 +1,3092 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -81788,7 +81885,7 @@ index 0000000000000000000000000000000000000000..293ea6d1baa19b3cdaf8300c3f0e0581
 +    /// Tool and outcome of each lead call until its batch settles or its thread's next turn starts.
 +    settled: Mutex<BTreeMap<(String, String), (String, String)>>,
 +    /// Secret fields of each pending elicitation, redacted from its result.
-+    elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
++    elicitations: Mutex<std::collections::VecDeque<((String, String, String), Vec<String>)>>,
 +}
 +
 +struct PendingTool {
@@ -83102,6 +83199,7 @@ index 0000000000000000000000000000000000000000..293ea6d1baa19b3cdaf8300c3f0e0581
 +            this.autonomy.turn_ended(
 +                &this.core,
 +                &lead,
++                input.turn_store.level_id(),
 +                matches!(
 +                    input.reason,
 +                    codex_protocol::protocol::TurnAbortReason::Interrupted
@@ -83179,7 +83277,8 @@ index 0000000000000000000000000000000000000000..293ea6d1baa19b3cdaf8300c3f0e0581
 +            else {
 +                return;
 +            };
-+            this.autonomy.turn_ended(&this.core, &lead, false);
++            this.autonomy
++                .turn_ended(&this.core, &lead, input.turn_store.level_id(), false);
 +            let Some(turn) = this.take_turn(&lead.thread) else {
 +                return;
 +            };
@@ -88571,10 +88670,10 @@ index 0000000000000000000000000000000000000000..4869121b502f6c9fe4bbb870108e6aa8
 +}
 diff --git a/codex-rs/ext/omd/src/mods/autonomy.rs b/codex-rs/ext/omd/src/mods/autonomy.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..76ceebe6269228942e1abcbdd071cac91dede8bc
+index 0000000000000000000000000000000000000000..e99e76b1ae4e23c9843e00dc3607c761a4d3fc11
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/autonomy.rs
-@@ -0,0 +1,409 @@
+@@ -0,0 +1,474 @@
 +use super::*;
 +use codex_omd::peers::now_ms;
 +use codex_protocol::turn_input::StartIfIdleSubmission;
@@ -88625,9 +88724,23 @@ index 0000000000000000000000000000000000000000..76ceebe6269228942e1abcbdd071cac9
 +    continued: BTreeMap<(String, String), u32>,
 +    dispatching: bool,
 +    woken: bool,
++    ended_during_dispatch: Vec<String>,
 +}
 +
 +impl Queue {
++    fn accept_started(&mut self, owner: &str, turn_id: &str) -> bool {
++        self.dispatching = false;
++        *self.started.entry(owner.to_owned()).or_default() += 1;
++        let ended = self.ended_during_dispatch.iter().any(|id| id == turn_id);
++        self.ended_during_dispatch.clear();
++        self.woken = false;
++        if ended {
++            self.running = None;
++            self.submitting = None;
++        }
++        ended && !self.paused && !self.entries.is_empty()
++    }
++
 +    pub(super) fn pick(
 +        &mut self,
 +        grants: &BTreeMap<String, codex_omd::ModGrants>,
@@ -88679,6 +88792,7 @@ index 0000000000000000000000000000000000000000..76ceebe6269228942e1abcbdd071cac9
 +        self.running = Some(entry.owner.clone());
 +        self.dispatching = true;
 +        self.woken = false;
++        self.ended_during_dispatch.clear();
 +        self.submitting = Some((
 +            message(&entry),
 +            json!({"kind": "mod", "package": entry.owner, "sha256": entry.source_sha256,
@@ -88844,10 +88958,12 @@ index 0000000000000000000000000000000000000000..76ceebe6269228942e1abcbdd071cac9
 +        };
 +        match started {
 +            Ok(Some(turn_id)) => {
-+                let _ = self.with(&thread, |queue| {
-+                    queue.dispatching = false;
-+                    *queue.started.entry(entry.owner.clone()).or_default() += 1;
++                let resume = self.with(&thread, |queue| {
++                    queue.accept_started(&entry.owner, &turn_id)
 +                });
++                if resume == Ok(true) {
++                    self.schedule(core, lead);
++                }
 +                notify(
 +                    core,
 +                    lead,
@@ -88935,7 +89051,13 @@ index 0000000000000000000000000000000000000000..76ceebe6269228942e1abcbdd071cac9
 +        let _ = self.with(thread, |queue| queue.paused = false);
 +    }
 +
-+    pub(super) fn turn_ended(&self, core: &Arc<Core>, lead: &Lead, interrupted: bool) {
++    pub(super) fn turn_ended(
++        &self,
++        core: &Arc<Core>,
++        lead: &Lead,
++        turn_id: &str,
++        interrupted: bool,
++    ) {
 +        let resume = self
 +            .with(&lead.thread.to_string(), |queue| {
 +                queue.continued.clear();
@@ -88944,6 +89066,7 @@ index 0000000000000000000000000000000000000000..76ceebe6269228942e1abcbdd071cac9
 +                }
 +                if queue.dispatching {
 +                    queue.woken = true;
++                    queue.ended_during_dispatch.push(turn_id.to_owned());
 +                    return false;
 +                }
 +                queue.running = None;
@@ -88984,6 +89107,47 @@ index 0000000000000000000000000000000000000000..76ceebe6269228942e1abcbdd071cac9
 +}
 +
 +pub(super) const CONTINUATIONS: u32 = CONTINUATION_LIMIT;
++
++#[cfg(test)]
++mod lifecycle_tests {
++    use super::*;
++
++    #[test]
++    fn early_end_releases_only_the_accepted_turn_and_counts_it_once() {
++        for (ended, paused, running) in [
++            ("accepted", false, false),
++            ("accepted", true, false),
++            ("previous", false, true),
++        ] {
++            let mut queue = Queue {
++                running: Some("fixture".into()),
++                dispatching: true,
++                woken: true,
++                paused,
++                ended_during_dispatch: vec![ended.into()],
++                ..Queue::default()
++            };
++            queue.accept_started("fixture", "accepted");
++            assert_eq!(queue.running.is_some(), running);
++            assert_eq!(queue.started["fixture"], 1);
++            assert_eq!(queue.paused, paused);
++            assert!(!queue.dispatching);
++            assert!(!queue.woken);
++        }
++    }
++
++    #[test]
++    fn acknowledged_turn_without_early_end_keeps_its_reservation() {
++        let mut queue = Queue {
++            running: Some("fixture".into()),
++            dispatching: true,
++            ..Queue::default()
++        };
++        assert!(!queue.accept_started("fixture", "accepted"));
++        assert_eq!(queue.running.as_deref(), Some("fixture"));
++        assert_eq!(queue.started["fixture"], 1);
++    }
++}
 diff --git a/codex-rs/ext/omd/src/mods/compaction.rs b/codex-rs/ext/omd/src/mods/compaction.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..be8156d928a5f49a7c1cfb69eaf47b52b3f486cf
@@ -89169,10 +89333,10 @@ index 0000000000000000000000000000000000000000..be8156d928a5f49a7c1cfb69eaf47b52
 +}
 diff --git a/codex-rs/ext/omd/src/mods/elicitation.rs b/codex-rs/ext/omd/src/mods/elicitation.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..eda428223c228b1320fe440307df0ee26a1214e8
+index 0000000000000000000000000000000000000000..62db01a2431ec836e6dd3ae03ddb4a8e30a8a9bf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/elicitation.rs
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,174 @@
 +use super::*;
 +use codex_extension_api::ElicitationAnswer;
 +use codex_extension_api::ElicitationInterceptInput;
@@ -89234,7 +89398,11 @@ index 0000000000000000000000000000000000000000..eda428223c228b1320fe440307df0ee2
 +        let schema = &input.request["requested_schema"];
 +        let secrets = secret_fields(schema);
 +        if let Ok(mut pending) = self.elicitations.lock() {
-+            let key = format!("{}\0{}", input.server, input.request_id);
++            let key = (
++                lead.thread.to_string(),
++                input.server.to_owned(),
++                input.request_key.to_owned(),
++            );
 +            pending.retain(|(pending, _)| *pending != key);
 +            if pending.len() >= 64 {
 +                pending.pop_front();
@@ -89325,7 +89493,11 @@ index 0000000000000000000000000000000000000000..eda428223c228b1320fe440307df0ee2
 +        else {
 +            return;
 +        };
-+        let key = format!("{}\0{}", input.server, input.request_id);
++        let key = (
++            lead.thread.to_string(),
++            input.server.to_owned(),
++            input.request_key.to_owned(),
++        );
 +        let secrets = self.elicitations.lock().ok().and_then(|mut pending| {
 +            let at = pending.iter().position(|(pending, _)| *pending == key)?;
 +            pending.remove(at).map(|(_, secrets)| secrets)
@@ -92802,10 +92974,10 @@ index 0000000000000000000000000000000000000000..708e3e710b8c9b6974f4c32640ca2c49
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1eddcea81c
+index 0000000000000000000000000000000000000000..efc930e3bc3b52cc032aa5c125b1b7476df04c14
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,7181 @@
+@@ -0,0 +1,7248 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -97246,7 +97418,8 @@ index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1e
 +        Some("user"),
 +        "a busy thread keeps its queue"
 +    );
-+    core.autonomy.turn_ended(core, &fixture.lead, true);
++    core.autonomy
++        .turn_ended(core, &fixture.lead, "test-turn", true);
 +    assert_eq!(
 +        pick(&grants).0,
 +        None,
@@ -97255,7 +97428,8 @@ index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1e
 +    core.autonomy.user_turn(&thread);
 +    let (first, _) = pick(&grants);
 +    assert_eq!(first.unwrap()["key"], "triage");
-+    core.autonomy.turn_ended(core, &fixture.lead, false);
++    core.autonomy
++        .turn_ended(core, &fixture.lead, "test-turn", false);
 +    assert_eq!(
 +        core.autonomy.running(&thread).as_deref(),
 +        Some("monitor"),
@@ -98015,6 +98189,7 @@ index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1e
 +            turn_id: "turn-2",
 +            server,
 +            request_id: "7",
++            request_key: "7",
 +            request: &request,
 +            session_store,
 +            thread_store,
@@ -98042,6 +98217,7 @@ index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1e
 +        turn_store: None,
 +        server: "docs",
 +        request_id: "7",
++        request_key: "7",
 +        action: "accept",
 +        content: Some(&json!({"token": "hunter2"})),
 +        by: None,
@@ -98057,6 +98233,7 @@ index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1e
 +            turn_id: "turn-2",
 +            server: "bulk",
 +            request_id: &format!("{id:02}"),
++            request_key: &format!("{id:02}"),
 +            request: &request,
 +            session_store,
 +            thread_store,
@@ -98068,6 +98245,7 @@ index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1e
 +            turn_store: None,
 +            server: "bulk",
 +            request_id: id,
++            request_key: id,
 +            action: "accept",
 +            content: Some(&json!({"token": "hunter2"})),
 +            by: None,
@@ -99986,6 +100164,67 @@ index 0000000000000000000000000000000000000000..cffdb0c3af39709d62f264cc10dc7e1e
 +    );
 +    assert_eq!(other, "70");
 +    drop(fixture);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn elicitation_redaction_isolates_threads_and_typed_ids() {
++    let Some(fixture) = fixture(&[Package {
++        id: "observer",
++        capabilities: &["lifecycle", "approvals", "store"],
++        manifest: json!({}),
++        source: "export default api => api.on('elicitation_result', e => api.state.set([...(api.state.get() ?? []), e]));",
++    }]) else {
++        return;
++    };
++    let mods = mods(&fixture.core);
++    let session = ExtensionData::new("session");
++    let first = ExtensionData::new("first");
++    let second = ExtensionData::new("second");
++    first.insert(fixture.lead.clone());
++    second.insert(Lead {
++        thread: ThreadId::new(),
++        ..fixture.lead.clone()
++    });
++    for (store, key, secret) in [
++        (&first, "7", true),
++        (&second, "7", false),
++        (&first, "\"7\"", false),
++    ] {
++        let request = json!({"mode": "form", "requested_schema": {"properties": {"token": {"type": "string", "writeOnly": secret}}}});
++        mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
++            turn_store: store,
++            turn_id: "turn",
++            server: "docs",
++            request_id: "7",
++            request_key: key,
++            request: &request,
++            session_store: &session,
++            thread_store: store,
++        })
++        .await;
++    }
++    mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
++        turn_store: None,
++        server: "docs",
++        request_id: "7",
++        request_key: "7",
++        action: "accept",
++        content: Some(&json!({"token": "cross-thread-secret"})),
++        by: None,
++        session_store: &session,
++        thread_store: &first,
++    })
++    .await;
++    let log = fixture
++        .core
++        .runtime
++        .lock()
++        .unwrap()
++        .state("observer")
++        .cloned()
++        .unwrap();
++    assert_eq!(log[0]["content"]["token"], "[redacted]");
++    assert_eq!(mods.elicitations.lock().unwrap().len(), 2);
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
@@ -195175,10 +195414,10 @@ index 0000000000000000000000000000000000000000..bfe0cb188c69a619184b9b6548802729
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_module_tests.rs b/codex-rs/tui/src/mod_module_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9820041eae6ca2979442d46dba2cdac2cd69f335
+index 0000000000000000000000000000000000000000..8bb7cd33494fdf20f27f2d6c366dfc75eece7d38
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module_tests.rs
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,124 @@
 +use super::*;
 +use std::sync::Arc;
 +use std::sync::mpsc;
@@ -195268,6 +195507,40 @@ index 0000000000000000000000000000000000000000..9820041eae6ca2979442d46dba2cdac2
 +            );
 +        }
 +    }
++}
++
++#[test]
++fn context_replacement_rejects_previous_mount_results_and_posts() {
++    let mut original = fresh("owner", "module");
++    original.tree = tree("previous conversation");
++    original.mounted = true;
++    let mut job = take_job(&mut original);
++    let post = Post {
++        id: job.id.clone(),
++        generation: job.generation,
++        owner: job.owner.clone(),
++        thread: None,
++        payload: json!({}),
++    };
++    let mut mounted = HashMap::from([(job.id.clone(), original)]);
++    assert!(post.current(&mounted));
++    mounted.clear();
++    mounted.insert(job.id.clone(), fresh("owner", "module"));
++    assert!(!post.current(&mounted));
++    assert!(
++        finish_job(
++            &mut mounted,
++            &mut job,
++            Some(Ok(json!({
++                "tree": tree("late previous conversation"), "post": {"data": {}}
++            })))
++        )
++        .is_none()
++    );
++    let replacement = &mounted["module"];
++    assert!(replacement.tree.is_empty());
++    assert!(!replacement.mounted);
++    assert!(replacement.changed);
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
@@ -198666,10 +198939,10 @@ index 0000000000000000000000000000000000000000..c774f3c1004e1d4b2bb580a75ecf37c5
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22ab7220f7
+index 0000000000000000000000000000000000000000..358f8ee47686bfa2a0dc22274acd44bf220bb0e1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,1026 @@
+@@ -0,0 +1,1048 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -198848,6 +199121,7 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +    instance: (String, String),
 +    input: Value,
 +    cleared: u64,
++    context: u64,
 +    background: bool,
 +}
 +
@@ -198865,6 +199139,7 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +    running: bool,
 +    revision: Option<(u64, u64)>,
 +    cleared: u64,
++    context: u64,
 +    #[cfg(test)]
 +    changes: usize,
 +}
@@ -198876,7 +199151,11 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +        instance: (String, String),
 +        rendered: Option<Rendered>,
 +        cleared: u64,
++        context: u64,
 +    ) -> bool {
++        if self.context != context {
++            return false;
++        }
 +        if self.done.len() >= DONE_LIMIT {
 +            self.done.clear();
 +        }
@@ -198884,7 +199163,6 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +            self.latest.clear();
 +            self.generations.clear();
 +        }
-+        // A render started before the cache was cleared may reflect older state.
 +        if self.cleared == cleared {
 +            self.done.insert(key, rendered.clone());
 +        }
@@ -199212,6 +199490,7 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +                    instance: instance.clone(),
 +                    input: input.clone(),
 +                    cleared,
++                    context: engine.context,
 +                    background: true,
 +                };
 +                (*ask, job)
@@ -199238,7 +199517,17 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +
 +/// Cells asked for another context never draw again.
 +pub(crate) fn clear_asked() {
-+    engine(|engine| engine.asked.clear());
++    engine(|engine| {
++        engine.asked.clear();
++        engine.done.clear();
++        engine.latest.clear();
++        engine.generations.clear();
++        engine.pending.clear();
++        engine.revision = None;
++        engine.cleared += 1;
++        engine.context += 1;
++    });
++    REFRESHES.with(|state| state.fetch_add(1, Ordering::Relaxed));
 +}
 +
 +/// Lets a test drive a fresh render engine with its own frames, restoring the previous ones after.
@@ -199334,14 +199623,18 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +        }) else {
 +            return;
 +        };
++        if engine(|engine| engine.context != job.context) {
++            continue;
++        }
 +        let Some(rendered) = run(job.input.clone()) else {
 +            if job.background {
 +                std::thread::sleep(RETRY);
 +                engine(|engine| {
-+                    if !engine
-+                        .pending
-+                        .iter()
-+                        .any(|queued| queued.instance == job.instance)
++                    if engine.context == job.context
++                        && !engine
++                            .pending
++                            .iter()
++                            .any(|queued| queued.instance == job.instance)
 +                    {
 +                        engine.pending.push_back(job);
 +                    }
@@ -199352,7 +199645,8 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +            continue;
 +        };
 +        let changed = engine(|engine| {
-+            let changed = engine.remember(job.key, job.instance, rendered, job.cleared);
++            let changed =
++                engine.remember(job.key, job.instance, rendered, job.cleared, job.context);
 +            #[cfg(test)]
 +            {
 +                engine.changes += usize::from(changed);
@@ -199409,12 +199703,12 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +                }
 +                let input = input(target, width);
 +                if waiting {
-+                    let cleared = engine(|engine| engine.cleared);
++                    let (cleared, context) = engine(|engine| (engine.cleared, engine.context));
 +                    let Some(rendered) = run(input) else {
 +                        return engine(|engine| engine.latest.get(&instance).cloned());
 +                    };
 +                    engine(|engine| {
-+                        engine.remember(key, instance, rendered.clone(), cleared);
++                        engine.remember(key, instance, rendered.clone(), cleared, context);
 +                    });
 +                    return Some(rendered);
 +                }
@@ -199426,6 +199720,7 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +                        instance: instance.clone(),
 +                        input,
 +                        cleared,
++                        context: engine.context,
 +                        background: false,
 +                    });
 +                    (start, engine.latest.get(&instance).cloned())
@@ -199698,10 +199993,10 @@ index 0000000000000000000000000000000000000000..9edab3ecb01b964ce703743d21f84c22
 +}
 diff --git a/codex-rs/tui/src/mod_render_tests.rs b/codex-rs/tui/src/mod_render_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0a13c9deb169fad6568a54321e33ec53df8ee3ee
+index 0000000000000000000000000000000000000000..e91dcbc036821600f76a9ace40dd4afb8bbdb423
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render_tests.rs
-@@ -0,0 +1,353 @@
+@@ -0,0 +1,410 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use ratatui::style::Modifier;
@@ -199753,6 +200048,7 @@ index 0000000000000000000000000000000000000000..0a13c9deb169fad6568a54321e33ec53
 +            ("tool_call".into(), "first".into()),
 +            Some(rendered.clone()),
 +            engine.cleared,
++            engine.context,
 +        )
 +    });
 +    assert!(!first.is_current());
@@ -199763,6 +200059,7 @@ index 0000000000000000000000000000000000000000..0a13c9deb169fad6568a54321e33ec53
 +            ("tool_call".into(), "second".into()),
 +            None,
 +            engine.cleared,
++            engine.context,
 +        )
 +    });
 +    assert!(second.is_current());
@@ -199805,6 +200102,7 @@ index 0000000000000000000000000000000000000000..0a13c9deb169fad6568a54321e33ec53
 +            ("tool_call".into(), "pending-group".into()),
 +            None,
 +            engine.cleared,
++            engine.context,
 +        )
 +    });
 +    let changed = RenderTarget::new(
@@ -200054,6 +200352,60 @@ index 0000000000000000000000000000000000000000..0a13c9deb169fad6568a54321e33ec53
 +    assert_eq!(reasked(), ["drawing", "drawn"]);
 +    clear_asked();
 +    assert!(reasked().is_empty());
++}
++
++#[test]
++fn context_reset_discards_answers_jobs_and_late_results() {
++    let _engine = test_engine(crate::tui::FrameRequester::test_dummy());
++    let instance = ("tool_call".to_owned(), "same".to_owned());
++    engine(|engine| {
++        engine.remember(7, instance.clone(), None, engine.cleared, engine.context);
++        engine.ask(7, &instance, &json!({}));
++        engine.pending.push_back(Job {
++            key: 7,
++            instance: instance.clone(),
++            input: json!({}),
++            cleared: engine.cleared,
++            context: engine.context,
++            background: true,
++        });
++    });
++    let (old, context) = engine(|engine| (engine.cleared, engine.context));
++    forget();
++    assert!(engine(|engine| engine.latest.contains_key(&instance)));
++    clear_asked();
++    engine(|engine| {
++        assert!(engine.done.is_empty());
++        assert!(engine.latest.is_empty());
++        assert!(engine.asked.is_empty());
++        assert!(engine.pending.is_empty());
++        assert!(!engine.remember(7, instance.clone(), None, old, context));
++        assert!(engine.done.is_empty());
++        assert!(engine.latest.is_empty());
++        engine.remember(7, instance.clone(), None, engine.cleared, engine.context);
++        assert!(engine.done.contains_key(&7));
++    });
++}
++
++#[test]
++fn same_context_refresh_accepts_late_fallback_without_caching_done() {
++    let mut engine = Engine::default();
++    let instance = ("tool_call".to_owned(), "same".to_owned());
++    let rendered = Some(Rendered {
++        props: None,
++        tree: tree(json!([{"type":"text","id":"answer","label":"Answer","text":"late"}])),
++    });
++    let cleared = engine.cleared;
++    engine.cleared += 1;
++    assert!(engine.remember(
++        7,
++        instance.clone(),
++        rendered.clone(),
++        cleared,
++        engine.context
++    ));
++    assert!(!engine.done.contains_key(&7));
++    assert!(engine.latest.get(&instance) == Some(&rendered));
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
@@ -207109,10 +207461,10 @@ index 0000000000000000000000000000000000000000..c8b57534186c56bca390685f1a7bdc5d
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0fc13448be0ee754f5523453a38db6fde06c452d
+index 0000000000000000000000000000000000000000..8b08b16db2ee8d321299f8bf1312c480a291d289
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,6216 @@
+@@ -0,0 +1,6217 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -208587,14 +208939,15 @@ index 0000000000000000000000000000000000000000..0fc13448be0ee754f5523453a38db6fd
 +}
 +
 +pub(crate) fn invalidate_context() {
++    crate::mod_render::clear_tool_notices();
++    crate::mod_render::clear_asked();
++    crate::mod_module::retain(&Default::default());
 +    if crate::mod_runtime::owner_view_active() || crate::mod_runtime::remote_frontend_active() {
 +        return;
 +    }
 +    CACHE.with(|cache_state| {
 +        INTERACTION.with(|interaction_state| {
 +            BLOCKED_SNAPSHOT.with(|blocked_snapshot_state| {
-+                crate::mod_render::clear_tool_notices();
-+                crate::mod_render::clear_asked();
 +                let (_, snapshot) = crate::omd::mod_snapshot();
 +                let context = crate::mod_runtime::active_context();
 +                let published_matches = matches_context(&snapshot, context.as_ref());

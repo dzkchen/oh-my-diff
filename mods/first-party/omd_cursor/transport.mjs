@@ -175,6 +175,7 @@ class Turn {
   }
   // Each OMD tool runs in Codex: the callback parks until the next request returns its output.
   call(name, args) {
+    if (this.finished) return Promise.reject(new Error('cursor_run_ended'));
     const tool = this.tools[name];
     if (!tool) return Promise.reject(new Error(`tool_not_in_omd_inventory:${name}`));
     return new Promise((resolve, reject) => {
@@ -220,6 +221,7 @@ export class Router {
     this.statePath = join(route.data, `omd-agents-${account.name}.json`);
     this.agents = new Map();
     this.turns = new Map();
+    this.admissions = new Map();
     this.charged = new Map();
     this.seen = new Map();
     this.settling = new Map();
@@ -288,37 +290,55 @@ export class Router {
     return agent;
   }
   async start(payload, entry, thread) {
-    await this.ready();
-    for (const [key, turn] of this.turns) if (turn.thread === thread) await this.cancel(key, 'cursor_turn_superseded');
-    const { messages, context } = conversation(payload.input);
-    // Tool outputs with no parked run (the transport restarted mid-turn) continue in a new agent from the transcript.
-    const orphaned = OUTPUTS.includes(payload.input?.at(-1)?.type);
-    if (!messages.length || !orphaned && messages.at(-1).role !== 'user') throw new Error('cursor_request_must_end_with_user_message');
-    const effort = payload.reasoning?.effort;
-    const model = { id: entry.id, ...(entry.effort && entry.effort.values.includes(effort)
-      ? { params: [{ id: entry.effort.id, value: effort }] } : {}) };
-    const turn = new Turn(thread, messages, entry.slug);
-    turn.tools = inventory(payload);
-    const { agent, input, fresh } = await this.agent(messages, thread, model, orphaned);
-    turn.agentId = agent.agentId;
-    const key = callId();
-    this.turns.set(key, turn);
+    const admission = Symbol();
+    this.admissions.set(thread, admission);
+    const current = () => this.admissions.get(thread) === admission;
     try {
-      turn.run = await agent.send(prompt(input, context, fresh, orphaned), { model, local: { customTools: turn.customTools() },
-        onDelta: ({ update }) => {
-          if (update?.type === 'text-delta' && update.text) turn.push({ kind: 'text', delta: update.text });
-          else if (update?.type === 'thinking-delta' && update.text) turn.push({ kind: 'reasoning', delta: update.text });
-          else if (update?.type === 'turn-ended' && update.usage) {
-            turn.pending = add(turn.pending, update.usage);
-            turn.usages.push(update.usage);
-          }
-        } });
-    } catch (error) {
-      await this.finish(key, turn, false);
-      throw error;
+      await this.ready();
+      if (!current()) throw new Error('cursor_turn_superseded');
+      await Promise.all([...this.turns].filter(([, turn]) => turn.thread === thread)
+        .map(([key]) => this.cancel(key, 'cursor_turn_superseded')));
+      if (!current()) throw new Error('cursor_turn_superseded');
+      const { messages, context } = conversation(payload.input);
+      const orphaned = OUTPUTS.includes(payload.input?.at(-1)?.type);
+      if (!messages.length || !orphaned && messages.at(-1).role !== 'user') throw new Error('cursor_request_must_end_with_user_message');
+      const effort = payload.reasoning?.effort;
+      const model = { id: entry.id, ...(entry.effort && entry.effort.values.includes(effort)
+        ? { params: [{ id: entry.effort.id, value: effort }] } : {}) };
+      const turn = new Turn(thread, messages, entry.slug);
+      turn.tools = inventory(payload);
+      const key = callId();
+      this.turns.set(key, turn);
+      try {
+        const { agent, input, fresh } = await this.agent(messages, thread, model, orphaned);
+        turn.agentId = agent.agentId;
+        if (turn.finished || !current()) {
+          this.releaseInactive();
+          throw new Error('cursor_turn_superseded');
+        }
+        turn.run = await agent.send(prompt(input, context, fresh, orphaned), { model, local: { customTools: turn.customTools() },
+          onDelta: ({ update }) => {
+            if (turn.finished) return;
+            if (update?.type === 'text-delta' && update.text) turn.push({ kind: 'text', delta: update.text });
+            else if (update?.type === 'thinking-delta' && update.text) turn.push({ kind: 'reasoning', delta: update.text });
+            else if (update?.type === 'turn-ended' && update.usage) {
+              turn.pending = add(turn.pending, update.usage);
+              turn.usages.push(update.usage);
+            }
+          } });
+        if (turn.finished || !current()) {
+          await turn.run.cancel().catch(() => {});
+          throw new Error('cursor_turn_superseded');
+        }
+      } catch (error) {
+        await this.finish(key, turn, false);
+        throw error;
+      }
+      turn.run.wait().then(result => turn.push({ kind: 'end', result }), error => turn.push({ kind: 'end', error }));
+      return { key, turn };
+    } finally {
+      if (current()) this.admissions.delete(thread);
     }
-    turn.run.wait().then(result => turn.push({ kind: 'end', result }), error => turn.push({ kind: 'end', error }));
-    return { key, turn };
   }
   resume(payload) {
     const outputs = [];
@@ -373,7 +393,7 @@ export class Router {
     this.state.agents = Object.fromEntries(Object.entries(this.state.agents).sort((a, b) => b[1].at - a[1].at).slice(0, 200));
     if (turn.run?.id) this.settle(turn.agentId, turn.model, { thread: turn.thread, request_id: turn.requestId ?? null, run_id: turn.run.id, usages: turn.usages });
     this.releaseInactive();
-    const temporary = `${this.statePath}.${turn.agentId}.${Date.now()}`;
+    const temporary = `${this.statePath}.${key}`;
     await writeFile(temporary, JSON.stringify(this.state));
     await rename(temporary, this.statePath);
   }

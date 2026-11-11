@@ -21,8 +21,11 @@ export default function activate(api: ModAPI) {
   const saved = (): State => ({ readings: [], pending: null, ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
 
-  api.on('app_notification', ({ method, params }) => {
+  api.on('app_notification', ({ method, params, thread_id }) => {
     if (method !== 'thread/tokenUsage/updated') return;
+    const thread = thread_id ?? (params as { threadId?: string } | null)?.threadId;
+    const session = api.host.tryCall('session.info', null);
+    if (!thread || !session.ok || thread !== session.value.thread_id) return;
     const usage = (params as { tokenUsage?: { last?: { inputTokens?: unknown }; modelContextWindow?: unknown } } | null)?.tokenUsage;
     const tokens = Number(usage?.last?.inputTokens), window = Number(usage?.modelContextWindow);
     if (tokens >= 0 && window > 0) save({ ...saved(), pending: { tokens, window } });

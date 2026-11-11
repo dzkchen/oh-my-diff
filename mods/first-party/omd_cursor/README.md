@@ -59,7 +59,8 @@ It has no settings.
   rules and MCP servers are off, so the agent reaches your repository only through OMD tools, under OMD's sandbox,
   approvals and mods. Hosted web search isn't offered.
 - Cursor keeps its own system prompt and context. Codex's base instructions aren't sent. Pending tool calls expire
-  after ten minutes. Interrupting Codex, or sending a new message while tools are pending, cancels the Cursor run.
+  after ten minutes. Interrupting Codex, or starting a new turn in the same thread, cancels the earlier Cursor run,
+  including one still starting.
 - At most 16 models are listed across accounts, each account's default first. The catalog assumes a 200K-token
   context window. `/profile window` (in `omd_profiles`) can lower it, so Codex compacts sooner; Cursor serves no more.
 - Cursor settles billed cost minutes after a run ends. Each run's cost is matched to the request that ended it by the
