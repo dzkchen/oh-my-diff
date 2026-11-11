@@ -14,5 +14,5 @@
   "capabilities": ["commands", "lifecycle", "inventory", "store", "exec", "os", "fs.read", "fs.write"],
   "os_access": {"programs": ["git"], "network": false},
   "exec_environment": ["GIT_INDEX_FILE"],
-  "compatibility": {"required_features": ["store_v1", "state_scopes_v1", "exec_v1", "exec_output_artifacts_v1", "unrestricted_process_v1", "lifecycle_events_v1"]}
+  "compatibility": {"required_features": ["store_v1", "state_scopes_v1", "exec_v1", "exec_output_artifacts_v1", "unrestricted_process_v1", "lifecycle_events_v1", "package_contributes_v1"]}
 }

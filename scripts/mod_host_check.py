@@ -248,6 +248,8 @@ def static_problems(path):
             needed.add("package_imports_v1")
         if report["component"]:
             needed.add("component_modules_v1")
+    if "contributes" in package:
+        needed.add("package_contributes_v1")
     lists = {kind: package.get("compatibility", {}).get(f"{kind}_features", []) for kind in ("required", "optional")}
     for kind, features in lists.items():
         found += [f"{len(features)} {kind}_features exceed the limit of 32"] if len(features) > 32 else []
@@ -255,7 +257,7 @@ def static_problems(path):
         found += [f"{kind}_features lists unknown host feature {feature}" for feature in sorted(set(features) - FEATURES)]
     found += [f"{feature} is both required and optional" for feature in sorted(set(lists["required"]) & set(lists["optional"]))]
     required = set(lists["required"])
-    found += [f"assets, relative imports and api.component need required feature {feature}" for feature in sorted(needed - required)]
+    found += [f"assets, relative imports, api.component and contributes need required feature {feature}" for feature in sorted(needed - required)]
     if path.parent.name == "first-party":
         found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH - replaced)]
     found += [f"{count} {kind} exceed the limit of 32" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 32]

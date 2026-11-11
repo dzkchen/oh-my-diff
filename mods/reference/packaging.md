@@ -261,7 +261,8 @@ screen show it.
 ### `contributes`
 
 An optional `contributes` (`package_contributes_v1`) declares what the mod adds before it runs, so `packages.list`
-can show it while the mod is off:
+can show it while the mod is off. A host without the feature refuses the whole manifest, so list
+`package_contributes_v1` in `compatibility.required_features`:
 
 ```json
 {"contributes": {"commands": [{"name": "review", "description": "Review the diff"}],
