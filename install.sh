@@ -1162,7 +1162,7 @@ def mod_changes(current, record, bundle):
         return []
     locked = read_json(current / "prefix/management/runtime/mods.lock.json", {}).get("packages", {})
     return sorted(identifier for identifier, sha256 in bundle["packages"].items()
-                  if identifier in locked and identifier in record["packages"] and locked[identifier].get("package_sha256") != sha256)
+                  if locked.get(identifier, {}).get("package_sha256") != sha256)
 
 
 def mod_key(mods):
@@ -1434,7 +1434,8 @@ def apply_mods(args, root, current, mods):
          last_mods={"serial": mods["serial"], "changed": result["updated"], "at": int(time.time()),
                     "capabilities": result.get("capabilities") or {}})
     return {"mods_updated": result["updated"], "version": mods["omd"], "serial": mods["serial"],
-            "capabilities": result.get("capabilities") or {}, "needs_review": result.get("needs_review") or []}
+            "capabilities": result.get("capabilities") or {}, "needs_review": result.get("needs_review") or [],
+            "added": result.get("added") or []}
 
 
 def forget_backup(root, current):
@@ -1691,6 +1692,7 @@ def change_lines(changes):
             *([f"New default mods, left off (turn them on in /mods): {', '.join(changes['left_off'])}."] if changes.get("left_off") else []),
             *([f"New permissions: {'; '.join(granted)}."] if granted else []),
             *([f"Updated mods you installed from the catalog: {', '.join(changes['catalog_updated'])}."] if changes.get("catalog_updated") else []),
+            *([f"New mods, off until you install them (omd install ID or /mods): {', '.join(changes['added'])}."] if changes.get("added") else []),
             *([f"These installed mods need your review before they update; run omd mods update ID for each: {', '.join(changes['needs_review'])}."]
               if changes.get("needs_review") else [])]
 

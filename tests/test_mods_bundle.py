@@ -43,8 +43,13 @@ class Plan(unittest.TestCase):
 
     def test_a_revert_ships_as_the_next_bundle_and_nothing_new_is_refused(self):
         planned = self.plan(lock(a="a0", b="b0", c="c0"), {"mods-1.0.0-1": lock(a="a1", b="b0")})
-        self.assertEqual({key: planned[key] for key in ("serial", "changed", "bundle", "new", "needs_release", "needs_host")},
-                         {"serial": 2, "changed": [], "bundle": ["a"], "new": ["a"], "needs_release": ["c"], "needs_host": {}})
+        self.assertEqual({key: planned[key] for key in ("serial", "changed", "bundle", "new", "added", "needs_release", "needs_host")},
+                         {"serial": 2, "changed": [], "bundle": ["a", "c"], "new": ["a", "c"], "added": ["c"], "needs_release": [],
+                          "needs_host": {}})
+        planned = self.plan(lock(a="a0", b="b0", c="c0"), {"mods-1.0.0-1": lock(a="a0", b="b0", c="c0")})
+        self.assertEqual((planned["bundle"], planned["new"], planned["added"]), (["c"], [], ["c"]))
+        planned = self.plan(lock(a="a0", b="b0", c="c0"), {}, features=())
+        self.assertEqual((planned["bundle"], planned["added"], planned["needs_release"]), ([], [], ["c"]))
         planned = self.plan(lock(a="a0", b="b0"), {"mods-1.0.0-1": lock(a="a1", b="b0"), "mods-1.0.0-2": lock(a="a0", b="b0")})
         self.assertEqual((planned["serial"], planned["bundle"], planned["new"]), (3, ["a"], []))
         with (patch.object(mods_bundle, "plan", return_value=planned),

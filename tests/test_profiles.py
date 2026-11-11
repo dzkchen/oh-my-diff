@@ -842,7 +842,9 @@ enabled = true
                                                      "catalogued": package(prefix, "catalogued", "old")}}
             offered = {"mod_api": "1.0.0", "packages": {"one": package(bundle, "one", "new"), "two": package(bundle, "two", "same"),
                                                         "catalogued": package(bundle, "catalogued", "new"),
-                                                        "added": package(bundle, "added", "new")}}
+                                                        "added": package(bundle, "added", "new")},
+                       "catalog": {"added": {"description": "A new mod", "support": "experimental"}},
+                       "index": {"third": [{"version": "2.0.0", "integrity": "sha-third", "source": {"kind": "repository"}}]}}
             (prefix / "management/runtime").mkdir(parents=True)
             (prefix / "management/runtime/mods.lock.json").write_text(json.dumps(lock))
             (bundle / "mods.lock.json").write_text(json.dumps(offered))
@@ -894,17 +896,26 @@ enabled = true
                 (bundle / "sources/one/index.ts").write_text("new")
                 before = state()
                 self.assertEqual(profiles.update_mods(prefix, base / "bin", bundle, 1),
-                                 {"updated": ["catalogued", "one"], "needs_review": [], "capabilities": {"one": ["new"]}})
+                                 {"updated": ["catalogued", "one"], "added": ["added"], "needs_review": [], "capabilities": {"one": ["new"]}})
                 self.assertEqual(state(), ({"one": "new", "two": "same", "catalogued": "new"}, "new",
-                                           {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new"}, "sha-new", {"serial": 1}, True, "sha-new"))
-                index = json.loads((store / "package-index.json").read_text())["packages"]["catalogued"][0]
+                                           {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new", "added": "sha-new"},
+                                           "sha-new", {"serial": 1}, True, "sha-new"))
+                listed = json.loads((store / "package-index.json").read_text())["packages"]
+                index = listed["catalogued"][0]
                 self.assertEqual((index["integrity"], index["source"]["path"]), ("sha-new", str(prefix / "sources/catalogued")))
+                self.assertEqual(listed["added"], [{"description": "A new mod", "support": "experimental", "version": "1.0.0",
+                                                    "integrity": "sha-new", "source": {"kind": "local", "path": str(prefix / "sources/added")}}])
+                self.assertEqual(listed["third"][0]["integrity"], "sha-third")
+                self.assertEqual((prefix / "sources/added/index.ts").read_text(), "new")
+                self.assertIn("added", json.loads((prefix / "install.json").read_text())["sources"])
                 self.assertEqual(json.loads((prefix / "install.json").read_text())["management"]["files"]["runtime/mods.lock.json"],
                                  profiles.support.digest(prefix / "management/runtime/mods.lock.json"))
-                self.assertFalse((prefix / "sources/added").exists())
                 self.assertEqual(profiles.rollback_mods(prefix, base / "bin"),
-                                 {"updated": ["catalogued", "one"], "needs_review": [], "capabilities": {"one": ["old"]}})
+                                 {"updated": ["catalogued", "one"], "added": [], "needs_review": [], "capabilities": {"one": ["old"]}})
                 self.assertEqual(state(), before)
+                self.assertFalse((prefix / "sources/added").exists())
+                self.assertEqual(sorted(json.loads((store / "package-index.json").read_text())["packages"]), ["catalogued"])
+                self.assertNotIn("added", json.loads((prefix / "install.json").read_text())["sources"])
                 self.assertFalse((prefix / "mods-previous").exists())
                 with self.assertRaisesRegex(ValueError, "no first-party mod update to roll back"):
                     profiles.rollback_mods(prefix, base / "bin")

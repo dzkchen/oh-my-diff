@@ -110,7 +110,8 @@ new permission or changes how it stores its data isn't updated. The update names
 what changes before you approve it.
 
 Between releases, OMD can publish first-party mod fixes separately. These updates keep your OMD version and leave
-each mod on or off as it was. `omd update` installs them when no newer release is out; `/update` also offers them.
+each mod on or off as it was. They can also bring new mods and refresh the mod directory; a new mod stays off until
+you install it with `omd install ID` or from Available in `/mods`. `omd update` installs them when no newer release is out; `/update` also offers them.
 Automatic updates download them in the background and apply them when no other OMD session is open.
 
 A version pin disables these mod updates. `omd update rollback` undoes the last update. A first-party mod that needs
