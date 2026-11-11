@@ -10,7 +10,7 @@ import { closeSync, constants, mkdtempSync, openSync, readFileSync, rmSync, writ
 import { test } from 'node:test';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { CLI_MINIMUM, cliSupported, translateRequest, responseEvents } from './index.ts';
-import { publishable } from './setup.mjs';
+import { discover, publishable } from './setup.mjs';
 import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withCachedHistory, withoutCliContext } from './transport.mjs';
 
 const CLI_VERSION = `${CLI_MINIMUM} (Claude Code)`;
@@ -825,4 +825,45 @@ test('a tool whose schema is a top-level union reaches Claude as one object sche
   assert.deepEqual(translated.manifest[0].inputSchema, schema);
   const plainSchema = prompt.tools[0].parameters;
   assert.equal(translateRequest(prompt, model).extra.tools[0].input_schema, plainSchema);
+});
+
+
+test('model discovery overlaps four probes and preserves catalog order across batches', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'omd-discovery-'));
+  const fake = join(root, 'claude');
+  try {
+    await writeFile(fake, `#!${process.execPath}
+import { writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+const root = ${JSON.stringify(root)};
+for await (const line of createInterface({ input: process.stdin })) {
+  const row = JSON.parse(line);
+  if (row.type === 'control_request') {
+    const models = Array.from({ length: 5 }, (_, index) => ({ value: 'model' + index, resolvedModel: 'model' + index }));
+    console.log(JSON.stringify({ type: 'control_response', response: { response: { models: [...models, models[0]] } } }));
+  } else {
+    const model = process.argv[process.argv.indexOf('--model') + 1];
+    const index = Number(model.slice(5));
+    writeFileSync(root + '/started-' + index, '');
+    const deadline = Date.now() + 2000;
+    while (index < 4 && readdirSync(root).filter(name => name.startsWith('started-')).length < 4 && Date.now() < deadline)
+      await new Promise(resolve => setTimeout(resolve, 10));
+    const together = index === 4 ? readdirSync(root).filter(name => name.startsWith('finished-')).length === 4 : readdirSync(root).filter(name => name.startsWith('started-')).length >= 4;
+    await new Promise(resolve => setTimeout(resolve, (4 - index) * 20));
+    writeFileSync(root + '/finished-' + index, '');
+    console.log(JSON.stringify({ type: 'result', modelUsage: { [model]: { contextWindow: together && !(index === 0 && existsSync(root + '/fail')) ? 200000 + index : 0 } } }));
+  }
+}
+`, { mode: 0o755 });
+    const models = await discover(fake);
+    assert.deepEqual(models.map(entry => [entry.slug, entry.window]),
+      Array.from({ length: 5 }, (_, index) => ['model' + index, 200000 + index]));
+    for (const name of await readdir(root)) if (name !== 'claude') await rm(join(root, name));
+    await writeFile(join(root, 'fail'), '');
+    await assert.rejects(discover(fake), /claude_context_window_unmeasured:model0/);
+    assert.equal((await readdir(root)).filter(name => name.startsWith('finished-')).length, 4);
+    assert.ok(!(await readdir(root)).includes('started-4'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
