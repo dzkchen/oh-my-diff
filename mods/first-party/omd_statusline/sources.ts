@@ -2,13 +2,16 @@ import type { TerminalSpan, TerminalTone } from '../../api.d.ts';
 import { visible } from './segments.ts';
 import type { Checks, Data, Git, Pull, Settings } from './segments.ts';
 
-export const GIT_SCRIPT = [
+export const GIT_SEGMENTS = ['git', 'changes', 'pr', 'ci'];
+
+export const gitScript = (shown: string[]) => [
   'export LC_ALL=C GIT_OPTIONAL_LOCKS=0',
-  'git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel || exit 3',
-  'printf "@@\\n"; git remote get-url origin 2>/dev/null',
-  'printf "@@\\n"; git diff --shortstat HEAD 2>/dev/null',
-  'printf "@@\\n"; git status --porcelain=v2 --branch -z || exit 3',
-].join('\n');
+  shown.includes('git') ? 'git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel || exit 3' : '',
+  'printf "@@\\n"', shown.includes('pr') || shown.includes('ci') ? 'git remote get-url origin 2>/dev/null' : '',
+  'printf "@@\\n"', shown.includes('changes') ? 'git diff --shortstat HEAD 2>/dev/null' : '',
+  'printf "@@\\n"', shown.includes('git') || shown.includes('changes') ? 'git status --porcelain=v2 --branch -z || exit 3'
+    : 'head=$(git symbolic-ref --short -q HEAD); [ $? -le 1 ] || exit 3; printf "# branch.head %s\\0" "${head:-(detached)}"',
+].filter(Boolean).join('\n');
 
 export function remote(url: string): Git['remote'] {
   const match = url.trim().match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/);

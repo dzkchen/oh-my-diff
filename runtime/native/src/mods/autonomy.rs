@@ -48,9 +48,23 @@ pub(super) struct Queue {
     continued: BTreeMap<(String, String), u32>,
     dispatching: bool,
     woken: bool,
+    ended_during_dispatch: Vec<String>,
 }
 
 impl Queue {
+    fn accept_started(&mut self, owner: &str, turn_id: &str) -> bool {
+        self.dispatching = false;
+        *self.started.entry(owner.to_owned()).or_default() += 1;
+        let ended = self.ended_during_dispatch.iter().any(|id| id == turn_id);
+        self.ended_during_dispatch.clear();
+        self.woken = false;
+        if ended {
+            self.running = None;
+            self.submitting = None;
+        }
+        ended && !self.paused && !self.entries.is_empty()
+    }
+
     pub(super) fn pick(
         &mut self,
         grants: &BTreeMap<String, codex_omd::ModGrants>,
@@ -102,6 +116,7 @@ impl Queue {
         self.running = Some(entry.owner.clone());
         self.dispatching = true;
         self.woken = false;
+        self.ended_during_dispatch.clear();
         self.submitting = Some((
             message(&entry),
             json!({"kind": "mod", "package": entry.owner, "sha256": entry.source_sha256,
@@ -267,10 +282,12 @@ impl Queues {
         };
         match started {
             Ok(Some(turn_id)) => {
-                let _ = self.with(&thread, |queue| {
-                    queue.dispatching = false;
-                    *queue.started.entry(entry.owner.clone()).or_default() += 1;
+                let resume = self.with(&thread, |queue| {
+                    queue.accept_started(&entry.owner, &turn_id)
                 });
+                if resume == Ok(true) {
+                    self.schedule(core, lead);
+                }
                 notify(
                     core,
                     lead,
@@ -358,7 +375,13 @@ impl Queues {
         let _ = self.with(thread, |queue| queue.paused = false);
     }
 
-    pub(super) fn turn_ended(&self, core: &Arc<Core>, lead: &Lead, interrupted: bool) {
+    pub(super) fn turn_ended(
+        &self,
+        core: &Arc<Core>,
+        lead: &Lead,
+        turn_id: &str,
+        interrupted: bool,
+    ) {
         let resume = self
             .with(&lead.thread.to_string(), |queue| {
                 queue.continued.clear();
@@ -367,6 +390,7 @@ impl Queues {
                 }
                 if queue.dispatching {
                     queue.woken = true;
+                    queue.ended_during_dispatch.push(turn_id.to_owned());
                     return false;
                 }
                 queue.running = None;
@@ -407,3 +431,44 @@ impl Queues {
 }
 
 pub(super) const CONTINUATIONS: u32 = CONTINUATION_LIMIT;
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn early_end_releases_only_the_accepted_turn_and_counts_it_once() {
+        for (ended, paused, running) in [
+            ("accepted", false, false),
+            ("accepted", true, false),
+            ("previous", false, true),
+        ] {
+            let mut queue = Queue {
+                running: Some("fixture".into()),
+                dispatching: true,
+                woken: true,
+                paused,
+                ended_during_dispatch: vec![ended.into()],
+                ..Queue::default()
+            };
+            queue.accept_started("fixture", "accepted");
+            assert_eq!(queue.running.is_some(), running);
+            assert_eq!(queue.started["fixture"], 1);
+            assert_eq!(queue.paused, paused);
+            assert!(!queue.dispatching);
+            assert!(!queue.woken);
+        }
+    }
+
+    #[test]
+    fn acknowledged_turn_without_early_end_keeps_its_reservation() {
+        let mut queue = Queue {
+            running: Some("fixture".into()),
+            dispatching: true,
+            ..Queue::default()
+        };
+        assert!(!queue.accept_started("fixture", "accepted"));
+        assert_eq!(queue.running.as_deref(), Some("fixture"));
+        assert_eq!(queue.started["fixture"], 1);
+    }
+}

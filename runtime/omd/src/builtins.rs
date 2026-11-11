@@ -15,7 +15,7 @@ pub const PROTECTED_COMMANDS: &[&str] = &[
     "logout",
 ];
 pub const PROTECTED_MODES: &[&str] = &["default"];
-pub const SURFACES: &[&str] = &["status_line"];
+pub const SURFACES: &[&str] = &["status_line", "context_indicator"];
 
 pub fn builtins_snapshot(repository: &Path) -> String {
     let repository = repository

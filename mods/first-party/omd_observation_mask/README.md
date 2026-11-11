@@ -50,7 +50,9 @@ Cache lifetime is an estimate, not a cache probe. On a ChatGPT plan, with local 
 unknown there is no estimate, so only `/continue --compact` hides outputs, and `/hidden_outputs` says so. `auto` uses a provider-reported lifetime, retaining it on reads
 for the same provider, route, credential and model. For OpenAI API responses with cache activity it otherwise uses
 30 minutes. OpenAI subscription and unpriced responses, local providers, and unknown lifetimes are skipped.
-An explicit `cache_ttl_minutes` overrides the estimate except for local providers. Model/provider/route changes
+An explicit `cache_ttl_minutes` overrides the estimate except for local providers. `720` is OpenAI's 12-hour cache:
+reads keep the estimated expiry or extend it to 30 minutes after the read, whichever is later, as in
+`omd_idle_compact`. Model/provider/route changes
 that differ from the observed response skip automatic masking. Compaction clears the estimate.
 
 Keep `omd_idle_compact` disabled if you want context reduction only through `/continue`: its separate timer can
@@ -76,7 +78,7 @@ still compact the conversation. This mode does not prepare a summary in the back
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `batch` | `batch` hides outputs automatically; `continue` hides a batch only on eligible `/continue` commands. |
-| `cache_ttl_minutes` | `auto` | Continue-mode estimate: `auto`, `5`, `10`, `30`, `60` or `120` minutes. Does not configure provider retention. |
+| `cache_ttl_minutes` | `auto` | Continue-mode estimate: `auto`, `5`, `10`, `30`, `60`, `120` or `720` (12 hours) minutes. Does not configure provider retention. |
 | `keep_recent` | `10` | The newest tool outputs that are always sent in full |
 | `min_bytes` | `1024` | Smaller outputs are never hidden |
 | `batch_bytes` | `32768` | Hide nothing until the outputs that could be hidden reach this size (about 8,000 tokens); `0` hides each one as soon as it's old enough |
