@@ -203580,10 +203580,10 @@ index 0000000000000000000000000000000000000000..307b2425bb55d3b0934ceeb57d786203
 +}
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..26a0cdb50c1ed754ff9899052e0b2a488b445d4d
+index 0000000000000000000000000000000000000000..a1d4f8b2d92f6def27cd380740c5e54bed38ae1a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,1885 @@
+@@ -0,0 +1,1889 @@
 +use super::*;
 +use codex_omd::ModOpenOptions;
 +use pretty_assertions::assert_eq;
@@ -204785,8 +204785,10 @@ index 0000000000000000000000000000000000000000..26a0cdb50c1ed754ff9899052e0b2a48
 +        );
 +    }
 +    owner_snapshot(serde_json::json!({"epoch":1,"revision":1})).unwrap();
-+    crate::mod_ui::refresh();
-+    assert!(crate::mod_render::enabled());
++    wait_until("the owner's render hook was not enabled", || {
++        crate::mod_ui::refresh();
++        crate::mod_render::enabled()
++    });
 +    let target = |expanded| {
 +        crate::mod_render::RenderTarget::new(
 +            "tool_call",
@@ -204806,8 +204808,10 @@ index 0000000000000000000000000000000000000000..26a0cdb50c1ed754ff9899052e0b2a48
 +    store.enable(&package, false).unwrap();
 +    shared_host().unwrap().locked().turn_boundary(&|| true);
 +    owner_snapshot(serde_json::json!({"epoch":1,"revision":2})).unwrap();
-+    crate::mod_ui::refresh();
-+    assert!(!crate::mod_render::enabled());
++    wait_until("the owner's render hook stayed enabled", || {
++        crate::mod_ui::refresh();
++        !crate::mod_render::enabled()
++    });
 +    assert!(crate::mod_render::resolve(&target(false), 80).is_none());
 +}
 +
