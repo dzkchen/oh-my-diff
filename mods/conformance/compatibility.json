@@ -3,9 +3,9 @@
   "as_of": "2026-11-03",
   "host": {
     "codex": "0.167.0",
-    "omd": "1.5.0",
+    "omd": "1.5.1",
     "release_status": "development",
-    "latest_stable": "1.4.2",
+    "latest_stable": "1.5.0",
     "stability": "stable",
     "current_api": "1.0.0",
     "package_schemas": [
