@@ -93,11 +93,14 @@ a bundle from `main` and publishes it as the GitHub release `mods-VERSION-N`, wh
 earlier bundle changed. Installs of exactly that VERSION take the mods that differ from what they have.
 
 Every push to `main` that changes `mods/first-party` or `runtime/mods.lock.json` runs the workflow with `--auto`. It
-leaves out each changed mod the release can't run and publishes the rest, or publishes nothing when no mod is new or
-the release isn't tagged yet. A mod is left out when it needs host features the release lacks (`needs_host`), uses a
-`mod.json` field no first-party manifest at the tag used (`needs_manifest`) or calls a host operation whose schema
-changed since the tag (`needs_api`). Those mods, and mods new since the release, wait for the next release. When a mod
-an earlier bundle shipped can no longer be shipped, the run fails: cut a release.
+leaves out each changed mod the release can't run and publishes the rest. A mod is left out when it needs host
+features the release lacks (`needs_host`), uses a `mod.json` field, list-item field or capability, state scope or app
+subscription value that no first-party manifest at the tag used (`needs_manifest`), calls a host operation whose
+schema changed since the tag (`needs_api`) or changed in a commit or merged pull request that also changed `runtime/`
+or `mods/api.d.ts` (`needs_runtime`). Those mods, and mods new since the release, wait for the next release. The run
+publishes nothing, and still passes, when no mod is new, the release isn't tagged yet, `main` hosts a different mod
+API, or `mods/api.d.ts` changed since the tag (run it by hand with `api_reviewed` once you have checked no bundled mod
+uses the change). When a mod an earlier bundle shipped can no longer be shipped, the run fails: cut a release.
 
 To publish by hand, for example to exclude a mod:
 
@@ -108,9 +111,9 @@ To publish by hand, for example to exclude a mod:
    ```
 
    `bundle` lists the mods it would ship, `new` the ones that changed since the last bundle (the build refuses when
-   it is empty), `needs_host`, `needs_manifest` and `needs_api` the mods the release can't run (the build refuses them) and
-   `needs_release` new mods it skips. `host_changed` lists host files changed since the tag: a mod fix that depends
-   on one of those changes waits for the release. `api_changed` lists the host operations whose arguments or results
+   it is empty), `needs_host`, `needs_manifest` and `needs_api` the mods the release can't run (the build refuses them),
+   `needs_runtime` the mods that changed together with host code (the build refuses them unless you pass
+   `--api-reviewed`) and `needs_release` new mods it skips. `api_changed` lists the host operations whose arguments or results
    changed, and `mods/api.d.ts` when it changed; the build refuses a changed API unless you pass `--api-reviewed`
    after leaving out every mod that depends on the change with `--exclude ID...` (`plan` takes `--exclude` too).
 2. Optional: dry-run it. It checks, builds and signs, then prints the publish command:

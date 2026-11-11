@@ -11,6 +11,7 @@ workflow and job. For local test commands, see [tests/README.md](../../tests/REA
 | `validate.yml` | Called by the two below | Tests, lints, builds and packages on `macos-15` |
 | `nightly.yml` | Daily at 07:17 UTC, or **Run workflow** | Validates; on `main` publishes a nightly prerelease |
 | `release.yml` | A `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates or reuses a passing dry run for the same commit, then publishes |
+| `mods.yml` | Pushes to `main` that change first-party mods; **Run workflow** | Publishes changed first-party mods the current release can run as a mod bundle |
 | `issue-triage.yml` | An issue is opened or edited | Adds the `area:` label for the form's Area field |
 
 ## Pull requests
@@ -85,7 +86,7 @@ The tag run checks the dry run's workflow, jobs and artifact identity, then veri
 signs it before publishing. If no eligible package remains, CI runs full validation. Nightly compiler caches do
 not qualify a package for this reuse. See [Cut a release](release.md).
 
-Releases and first-party mod bundles (the manual Mods workflow) are in [Cut a release](release.md).
+Releases and first-party mod bundles (the Mods workflow) are in [Cut a release](release.md).
 
 ## Repository settings
 

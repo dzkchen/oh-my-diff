@@ -13,7 +13,13 @@ from scripts import mods_lock
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERATIONS = "runtime/omd/src/mods/operation_schema.json"
-FREE_FORM = {"settings_schema", "codex_config", "mcp_servers", "lifecycle"}
+FREE_FORM = {"settings_schema", "codex_config", "mcp_servers", "lifecycle", "services.exports[].methods"}
+ENUMS = {"capabilities[]", "state_scope", "subscriptions.app[]", "http_access.credentials[]", "environment[]"}
+GENERATED = re.compile(r"runtime/[^/]+\.(?:lock\.json|txt|md)")
+
+
+class Postponed(ValueError):
+    pass
 
 
 def git(*arguments):
@@ -35,9 +41,14 @@ def required_features(identifier):
     return set(manifest.get("compatibility", {}).get("required_features", []))
 
 
-def manifest_keys(manifest):
-    return {key for name, value in manifest.items()
-            for key in [name, *(f"{name}.{inner}" for inner in (value if isinstance(value, dict) and name not in FREE_FORM else ()))]}
+def manifest_keys(value, path=""):
+    if path in FREE_FORM:
+        return {path}
+    if isinstance(value, dict):
+        return {path} - {""} | set().union(*(manifest_keys(inner, f"{path}.{name}" if path else name) for name, inner in value.items()))
+    if isinstance(value, list):
+        return {path} | set().union(*(manifest_keys(inner, f"{path}[]") for inner in value))
+    return {f"{path}={json.dumps(value)}" if path in ENUMS else path}
 
 
 def released_manifests(version):
@@ -65,6 +76,21 @@ def operations(document):
     return {name: resolve(operation) for name, operation in document["operations"].items()}
 
 
+def host_changes(version):
+    tied = {}
+    for entry in git("log", "--first-parent", "--diff-merges=first-parent", "--format=%x00%h", "--name-only", f"v{version}..HEAD").split("\0")[1:]:
+        commit, *paths = entry.split()
+        if any(path == "mods/api.d.ts" or path.startswith("runtime/") and not GENERATED.fullmatch(path) for path in paths):
+            for identifier in {path.split("/")[2] for path in paths if path.startswith("mods/first-party/") and path.count("/") > 2}:
+                tied.setdefault(identifier, []).append(commit)
+    return tied
+
+
+def history(version, bundle):
+    return git("log", "--no-merges", "--format=%h %s", f"v{version}..HEAD", "--",
+               *(f"mods/first-party/{identifier}" for identifier in bundle)).splitlines() if bundle else []
+
+
 def pinned():
     return json.loads((ROOT / "extensions/index.json").read_text())["release_pin"]["omd"]
 
@@ -77,7 +103,7 @@ def plan(exclude=()):
     release_lock = at(f"v{version}", "runtime/mods.lock.json")
     released = release_lock["packages"]
     if release_lock["mod_api"] != lock["mod_api"]:
-        raise ValueError(f"main hosts a different mod API than OMD {version}; cut a release instead")
+        raise Postponed(f"main hosts a different mod API than OMD {version}; cut a release instead")
     bundles = sorted((int(found[1]), tag) for tag in git("tag", "-l", f"mods-{version}-*").split()
                      if (found := re.fullmatch(rf"mods-{re.escape(version)}-([1-9][0-9]*)", tag)))
     shipped = {}
@@ -100,37 +126,47 @@ def plan(exclude=()):
     features = set(at(f"v{version}", "mods/conformance/compatibility.json")["host"]["features"])
     accepted = set().union(*map(manifest_keys, released_manifests(version)))
     changed_operations = [name for name in api_changed if "/" not in name]
-    return {"omd": version, "serial": (bundles[-1][0] if bundles else 0) + 1, "changed": changed, "bundle": bundle,
+    tied = host_changes(version)
+    return {"omd": version, "serial": (bundles[-1][0] if bundles else 0) + 1, "changed": changed, "shipped": sorted(shipped), "bundle": bundle,
             "new": sorted(identifier for identifier in bundle
                           if current[identifier] != shipped.get(identifier, released[identifier]["package_sha256"])),
             "needs_host": {identifier: sorted(missing) for identifier in bundle if (missing := required_features(identifier) - features)},
             "needs_manifest": {identifier: sorted(unknown) for identifier in bundle if (unknown := manifest_keys(json.loads(
                 (ROOT / "mods/first-party" / identifier / "mod.json").read_text())) - accepted)},
             "needs_api": {identifier: used for identifier in bundle if (used := calls(identifier, changed_operations))},
+            "needs_runtime": {identifier: sorted(tied[identifier]) for identifier in bundle if identifier in tied},
             "needs_release": sorted(lock["packages"].keys() - released.keys()), "excluded": sorted(exclude), "api_changed": api_changed,
-            "host_changed": git("diff", "--name-only", f"v{version}..HEAD", "--", "mods/api.d.ts", "runtime/").splitlines(),
-            "commits": git("log", "--no-merges", "--format=%h %s", f"v{version}..HEAD", "--",
-                           *(f"mods/first-party/{identifier}" for identifier in bundle)).splitlines() if bundle else []}
+            "commits": history(version, bundle)}
 
 
-def unsafe(planned):
-    return sorted(planned["needs_host"].keys() | planned["needs_manifest"].keys() | planned["needs_api"].keys())
+NEEDS = ("needs_host", "needs_manifest", "needs_api", "needs_runtime")
 
 
 def automatic(exclude=()):
     planned = plan(exclude)
-    held = sorted(set(unsafe(planned)) - set(exclude))
+    held = set().union(*(planned[need].keys() for need in NEEDS))
     if not held:
         return planned
-    if shipped := sorted(set(held) - set(planned["changed"])):
+    if shipped := sorted(held & set(planned["shipped"])):
         raise ValueError(f"mods shipped in an earlier bundle no longer suit OMD {planned['omd']}; cut a release instead: {', '.join(shipped)}")
-    return plan([*exclude, *held])
+    bundle = [identifier for identifier in planned["bundle"] if identifier not in held]
+    return planned | {need: {} for need in NEEDS} | {
+        "bundle": bundle, "new": [identifier for identifier in planned["new"] if identifier not in held],
+        "excluded": sorted({*planned["excluded"], *held}), "commits": history(planned["omd"], bundle)}
 
 
 def build(output, commit, exclude=(), api_reviewed=False, auto=False):
     if auto and not git("tag", "-l", f"v{pinned()}").strip():
         return {"published": False, "omd": pinned(), "reason": "the release is not tagged yet"}
-    planned = automatic(exclude) if auto else plan(exclude)
+    try:
+        planned = automatic(exclude) if auto else plan(exclude)
+    except Postponed as reason:
+        if not auto:
+            raise
+        return {"published": False, "omd": pinned(), "reason": str(reason)}
+    if auto and "mods/api.d.ts" in planned["api_changed"] and not api_reviewed:
+        return {"published": False, "omd": planned["omd"], "reason": "mods/api.d.ts changed since the release; run the Mods workflow "
+                "by hand with api_reviewed after checking no bundled mod uses the change, or cut a release"}
     if not planned["new"]:
         if auto:
             return {"published": False, "omd": planned["omd"], "reason": "nothing new to ship", "excluded": planned["excluded"]}
@@ -141,8 +177,11 @@ def build(output, commit, exclude=(), api_reviewed=False, auto=False):
         raise ValueError(f"these mods use manifest fields OMD {planned['omd']} rejects; they wait for a release: {planned['needs_manifest']}")
     if planned["needs_api"]:
         raise ValueError(f"these mods call operations that changed since OMD {planned['omd']}; they wait for a release: {planned['needs_api']}")
-    api_reviewed = api_reviewed or auto
-    if planned["api_changed"] and not api_reviewed:
+    if planned["needs_runtime"] and not api_reviewed:
+        raise ValueError(f"these mods changed with the host since OMD {planned['omd']}; review them and pass --api-reviewed, "
+                         f"exclude them or cut a release: {planned['needs_runtime']}")
+    operations_only = auto and "mods/api.d.ts" not in planned["api_changed"]
+    if planned["api_changed"] and not (api_reviewed or operations_only):
         raise ValueError(f"the mod host API changed since OMD {planned['omd']}: {', '.join(planned['api_changed'])}; cut a release, "
                          "or exclude the mods that depend on it and pass --api-reviewed")
     lock = support.mods_lock()
