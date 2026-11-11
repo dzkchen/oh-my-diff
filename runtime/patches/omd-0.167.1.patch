@@ -26342,7 +26342,7 @@ index a22fc2684f5cfe257b5c001bda164561fbd26428..447659e174e7d464aa4f81159d566d9a
      }
 
 diff --git a/codex-rs/core/src/session/mcp.rs b/codex-rs/core/src/session/mcp.rs
-index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..78f3a0d165a855232918743a09bb185963581730 100644
+index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..29903de9cb3ed3c50274dbbd23b375987fcebf5c 100644
 --- a/codex-rs/core/src/session/mcp.rs
 +++ b/codex-rs/core/src/session/mcp.rs
 @@ -83,6 +83,25 @@ impl ElicitationReviewer for GuardianMcpElicitationReviewer {
@@ -26468,10 +26468,14 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..78f3a0d165a855232918743a09bb1859
          let entry = {
              let mut active = self.active_turn.lock().await;
              match active.as_mut() {
-@@ -812,6 +907,33 @@ impl Session {
+@@ -812,6 +907,37 @@ impl Session {
              .await
      }
 
++    #[expect(
++        clippy::too_many_arguments,
++        reason = "elicitation result fields follow the lifecycle hook contract"
++    )]
 +    async fn notify_elicitation_result(
 +        &self,
 +        turn_store: Option<&codex_extension_api::ExtensionData>,
@@ -26502,13 +26506,16 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..78f3a0d165a855232918743a09bb1859
      pub(crate) async fn refresh_mcp_servers_now(
          &self,
          added_servers: HashMap<String, McpServerConfig>,
-@@ -1260,3 +1382,15 @@ fn plugin_install_elicitation_telemetry_metadata(
+@@ -1260,3 +1386,18 @@ fn plugin_install_elicitation_telemetry_metadata(
  #[cfg(test)]
  #[path = "mcp_tests.rs"]
  mod tests;
 +
-+fn elicitation_key(id: &impl serde::Serialize) -> String {
-+    serde_json::to_string(id).expect("MCP request IDs are serializable")
++fn elicitation_key(id: &RequestId) -> String {
++    match id {
++        RequestId::Number(id) => id.to_string(),
++        RequestId::String(id) => serde_json::Value::String(id.to_string()).to_string(),
++    }
 +}
 +
 +fn elicitation_display_id(id: &impl serde::Serialize) -> String {
@@ -26519,7 +26526,7 @@ index 3d85a45e014f34a3a8dbec940c0e8598c33a6d13..78f3a0d165a855232918743a09bb1859
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mcp_tests.rs b/codex-rs/core/src/session/mcp_tests.rs
-index a6dd60fc13fed6456b80be52a7500c82a3445746..1b9e41cd37cab518a68bf1e09ade50ffc35fd727 100644
+index a6dd60fc13fed6456b80be52a7500c82a3445746..629adbc19eb051f835eafe766efc35227d6b8bca 100644
 --- a/codex-rs/core/src/session/mcp_tests.rs
 +++ b/codex-rs/core/src/session/mcp_tests.rs
 @@ -58,3 +58,14 @@ fn plugin_install_elicitation_telemetry_metadata_requires_install_tool_suggestio
@@ -26529,8 +26536,8 @@ index a6dd60fc13fed6456b80be52a7500c82a3445746..1b9e41cd37cab518a68bf1e09ade50ff
 +
 +#[test]
 +fn elicitation_identity_preserves_request_id_type() {
-+    let numeric = codex_protocol::mcp::RequestId::Integer(7);
-+    let string = codex_protocol::mcp::RequestId::String("7".into());
++    let numeric = RequestId::Number(7);
++    let string = RequestId::String("7".into());
 +    assert_ne!(elicitation_key(&numeric), elicitation_key(&string));
 +    assert_eq!(
 +        elicitation_display_id(&numeric),
@@ -79272,7 +79279,7 @@ index 0000000000000000000000000000000000000000..e3c45404e8ec7972bba9ae9fe524f018
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bb555c39e2b492c889705024a9938b450a72d05d
+index 0000000000000000000000000000000000000000..3c54f7e3c97b1614c754bf7c4ad83422e2fe3423
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
 @@ -0,0 +1,2557 @@
@@ -80375,7 +80382,7 @@ index 0000000000000000000000000000000000000000..bb555c39e2b492c889705024a9938b45
 +                    let announced = Arc::new(std::sync::atomic::AtomicBool::new(false));
 +                    if let Some(notifier) = notifier.clone() {
 +                        let (announced, owner, session, reaped) = (
-+                            announced.clone(),
++                            announced,
 +                            owner.clone(),
 +                            session.clone(),
 +                            Arc::clone(&reaped),
@@ -81987,10 +81994,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a87f5278d116dc991d340a61f3c4aabf81dbbdf8
+index 0000000000000000000000000000000000000000..7896c0bfd6122fafb9c9887f9d65c1a9f658ff43
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,3092 @@
+@@ -0,0 +1,3093 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -82044,6 +82051,7 @@ index 0000000000000000000000000000000000000000..a87f5278d116dc991d340a61f3c4aabf
 +type SharedSessions = Arc<Mutex<BTreeMap<String, std::sync::Weak<Session>>>>;
 +type SharedTurns = Arc<Mutex<BTreeMap<String, TurnRecord>>>;
 +type SharedProviderSwitches = Arc<Mutex<BTreeMap<String, Config>>>;
++type ElicitationRedactions = std::collections::VecDeque<((String, String, String), Vec<String>)>;
 +
 +struct HostRequest {
 +    caller: String,
@@ -82174,7 +82182,7 @@ index 0000000000000000000000000000000000000000..a87f5278d116dc991d340a61f3c4aabf
 +    /// Tool and outcome of each lead call until its batch settles or its thread's next turn starts.
 +    settled: Mutex<BTreeMap<(String, String), (String, String)>>,
 +    /// Secret fields of each pending elicitation, redacted from its result.
-+    elicitations: Mutex<std::collections::VecDeque<((String, String, String), Vec<String>)>>,
++    elicitations: Mutex<ElicitationRedactions>,
 +}
 +
 +struct PendingTool {
@@ -203572,10 +203580,10 @@ index 0000000000000000000000000000000000000000..307b2425bb55d3b0934ceeb57d786203
 +}
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..804c7ef780c0add3644114e6e7d48cd359de1b9c
+index 0000000000000000000000000000000000000000..a1d4f8b2d92f6def27cd380740c5e54bed38ae1a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,1883 @@
+@@ -0,0 +1,1889 @@
 +use super::*;
 +use codex_omd::ModOpenOptions;
 +use pretty_assertions::assert_eq;
@@ -204777,8 +204785,10 @@ index 0000000000000000000000000000000000000000..804c7ef780c0add3644114e6e7d48cd3
 +        );
 +    }
 +    owner_snapshot(serde_json::json!({"epoch":1,"revision":1})).unwrap();
-+    crate::mod_ui::refresh();
-+    assert!(crate::mod_render::enabled());
++    wait_until("the owner's render hook was not enabled", || {
++        crate::mod_ui::refresh();
++        crate::mod_render::enabled()
++    });
 +    let target = |expanded| {
 +        crate::mod_render::RenderTarget::new(
 +            "tool_call",
@@ -204798,8 +204808,10 @@ index 0000000000000000000000000000000000000000..804c7ef780c0add3644114e6e7d48cd3
 +    store.enable(&package, false).unwrap();
 +    shared_host().unwrap().locked().turn_boundary(&|| true);
 +    owner_snapshot(serde_json::json!({"epoch":1,"revision":2})).unwrap();
-+    crate::mod_ui::refresh();
-+    assert!(!crate::mod_render::enabled());
++    wait_until("the owner's render hook stayed enabled", || {
++        crate::mod_ui::refresh();
++        !crate::mod_render::enabled()
++    });
 +    assert!(crate::mod_render::resolve(&target(false), 80).is_none());
 +}
 +
@@ -204957,8 +204969,10 @@ index 0000000000000000000000000000000000000000..804c7ef780c0add3644114e6e7d48cd3
 +    assert!(owner_view_active());
 +    let _ = try_with_host(|_, _| Some(()));
 +    assert!(!crate::mod_render::enabled());
-+    crate::mod_ui::refresh();
-+    assert!(crate::mod_render::enabled());
++    wait_until("the owner host's render hook was not enabled", || {
++        crate::mod_ui::refresh();
++        crate::mod_render::enabled()
++    });
 +}
 +
 +#[test]
@@ -205135,7 +205149,7 @@ index 0000000000000000000000000000000000000000..804c7ef780c0add3644114e6e7d48cd3
 +            if check > 0 {
 +                let mut latest = snapshot.clone();
 +                latest["revision"] = check.into();
-+                owner_snapshot(latest).unwrap();
++                publish_owner_snapshot(decode_owner_snapshot(latest).unwrap());
 +            }
 +            if check == 32 {
 +                synchronize_context(next.clone());
