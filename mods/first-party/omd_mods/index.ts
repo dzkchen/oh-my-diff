@@ -19,7 +19,25 @@ const managed = (item: Pick<PackageState, 'scope'>) => item.scope === 'managed';
 const copy = ({ scope }: Pick<PackageState, 'scope'>) => scope === 'managed' ? {} : { scope };
 const owns = ({ overrides }: Pick<PackageState, 'overrides'>) => Boolean(overrides && (overrides.enabled !== undefined || Object.keys(overrides.settings).length));
 const shown = (value: Json | undefined) => value === null || value === undefined ? 'not set' : typeof value === 'boolean' ? value ? 'on' : 'off' : typeof value === 'string' ? value : JSON.stringify(value);
-const PLAIN: Record<string, string> = { configuration_override_forbidden: 'your administrator manages this mod', grant_expired: 'its permission expired; choose Trust again', settings_file_invalid: 'its settings file has a mistake; fix or delete the file, then try again' };
+const NEWER = 'it was built for a different Oh My Diff version; update the mod or Oh My Diff';
+const DEPENDS = 'it needs a different version of another mod; update the mods it depends on';
+const PLAIN: Record<string, string> = {
+  configuration_override_forbidden: 'your administrator manages this mod',
+  grant_expired: 'its permission expired; choose Trust again',
+  settings_file_invalid: 'its settings file has a mistake; fix or delete the file, then try again',
+  source_changed: 'its files changed after you trusted them; review the change, then trust it again (omd mods update, from a shell)',
+  capability_denied: 'it needs a permission you have not approved; review it with omd mods update from a shell',
+  grant_not_brokered: 'its saved permission could not be verified; trust it again',
+  managed_by_policy: 'your administrator requires this mod; ask them to change the policy',
+  managed_content_stale: 'its files differ from the version your administrator pinned; ask your administrator to sync it',
+  invalid_mod_configuration: 'your mods configuration file has a mistake; fix or restore it, then reload',
+  incompatible_api: NEWER, incompatible_package_schema: NEWER, incompatible_host_release: NEWER, incompatible_package: NEWER,
+  dependency_version_incompatible: DEPENDS, service_version_incompatible: DEPENDS,
+  package_blocked: 'it is blocked (quarantined); lift the block with omd mods unblock from a shell',
+  package_version_blocked: 'that version is blocked; choose another version',
+  package_not_trusted: 'it is not trusted yet; trust it first',
+  mod_conflict: 'two copies of it are on in the same place; turn one off',
+};
 const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
 const word = (value: string) => /^\S{1,128}$/.test(value);
 const strings = (value: Json | undefined) => Array.isArray(value) && value.every(entry => typeof entry === 'string') ? value as string[] : null;
@@ -264,8 +282,8 @@ export default function activate(api: ModAPI) {
   };
   const supportOf = (state: Saved, id: string) => SUPPORT[state.catalog.find(entry => entry.id === id)?.support ?? ''];
   const status = (item: Omit<Listed, 'own'>) =>
-    !item.installed ? 'removed' : item.blocked ? 'quarantined' : item.needs_approval ? 'needs approval' : item.failed ? 'failed' : item.pending ? item.effective ? 'stopping' : 'starting'
-      : item.effective ? 'on' : item.enabled ? 'shadowed' : 'off';
+    !item.installed ? 'removed' : item.blocked ? 'blocked' : item.needs_approval ? 'needs approval' : item.failed ? 'failed' : item.pending ? item.effective ? 'turning off at your next message' : 'starting at your next message'
+      : item.effective ? 'on' : item.enabled ? 'overridden by another copy' : 'off';
   const subtitle = (lines: (string | null | undefined | false)[]) => clip(lines.filter(Boolean).join('\n'), 2000);
   const entry = (item: TerminalPanelItem): TerminalPanelItem => ({ ...item, label: clip(item.label, 128), description: item.description ? clip(item.description, 256) : undefined });
   const reviewing = (title: string, state: Saved, args: string): TerminalPanel => ({
@@ -290,8 +308,8 @@ export default function activate(api: ModAPI) {
         description: [fixed ? 'always on' : extra, flag?.toLowerCase(), item.scope === 'project' ? 'this project' : null, item.own ? 'only this terminal' : null, item.description].filter(Boolean).join(' · '),
         keywords: clip([item.id, ...names, ...(declared?.contributes.commands ?? []).map(command => `/${command.name}`)].join(' '), 256),
         detail: clip([`${word} · ${item.scope === 'project' ? 'this project' : 'every project'}`, ...usage(names, declared?.contributes), declared?.maintainer && `By ${declared.maintainer}`,
-          item.needs_approval ? approval(item) : item.failed && `Why it failed: ${brief(item.failed)}`, item.blocked && `Quarantined: ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
-          ...item.conflicts.map(conflict => `Conflict: ${conflict}`)].filter(Boolean).join(' · '), 512) });
+          item.needs_approval ? approval(item) : item.failed && `Why it failed: ${plain(item.failed)}`, item.blocked && `Blocked (quarantined): ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
+          ...item.conflicts.map(conflict => `Conflict: ${plain(conflict)}`)].filter(Boolean).join(' · '), 512) });
     });
     const settings = shown.map(item => entry({ id: `open:${key(item)}`, tab: 'settings', label: `${friendly(item.id)} ›`, kind: 'action', description: 'Settings', keywords: item.id }));
     const sources: TerminalPanelItem[] = [
@@ -311,7 +329,7 @@ export default function activate(api: ModAPI) {
     const components = api.host.tryCall('plugins.components', null);
     const plugins = (components.ok ? components.value.components : []).filter(item => !item.installed).map(item => entry({
       id: `plugin:${item.marketplace}/${item.plugin}`, tab: 'installed', group: 'Available', kind: 'action', label: `${friendly(item.id ?? item.plugin)} (plugin)`,
-      description: item.error ? `Can't be turned on: ${brief(item.error)}` : item.description ?? `The mod in the ${item.plugin} plugin`, keywords: `${item.plugin} ${item.id ?? ''}`,
+      description: item.error ? `Can't be turned on: ${plain(item.error)}` : item.description ?? `The mod in the ${item.plugin} plugin`, keywords: `${item.plugin} ${item.id ?? ''}`,
       detail: item.error ? `Plugin ${item.plugin} ${item.version}` : `Plugin ${item.plugin} ${item.version} · Enter reviews turning its mod on` }))
       .filter(item => encoder.encode(item.id).length <= 128);
     const catalog = [...plugins, ...offered].slice(0, Math.max(0, 200 - toggles.length - settings.length - sources.length));
@@ -383,8 +401,8 @@ export default function activate(api: ModAPI) {
       subtitle: subtitle([[status(item), item.version, item.source === 'selection' ? 'local folder' : item.source, flag?.toLowerCase(), item.maintainer && `by ${item.maintainer}`, !item.compatible && 'needs a newer Oh My Diff'].filter(Boolean).join(' · '), item.description,
         item.effective ? null : usage([], item.contributes).filter(Boolean).join(' · '),
         own && 'This terminal has its own choices',
-        item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}${scopeFlag(item)}.`,
-        item.needs_approval ? `${approval(item)}.` : item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), schema.length ? locked(item, state) : null, state.notice]),
+        item.blocked && `Blocked (quarantined): ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}${scopeFlag(item)}.`,
+        item.needs_approval ? `${approval(item)}.` : item.failed && `Why it failed: ${plain(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${plain(conflict)}`), schema.length ? locked(item, state) : null, state.notice]),
       items: [
         ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
         ...!editable && !managed(item) ? [] : schema.slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),

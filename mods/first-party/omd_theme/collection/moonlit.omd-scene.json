@@ -1,0 +1,36 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "moonlit",
+  "name": "Moonlit night",
+  "detail": "Stars twinkle over rolling hills while a wisp of cloud crosses the moon; now and then a meteor.",
+  "sky": [
+    "#050816",
+    "#111a3a",
+    "#24305c"
+  ],
+  "palette": {
+    "tint": [
+      "#151f45",
+      "#0c1230"
+    ],
+    "accent": "#ffcf7a"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "moon",
+      "colors": [
+        "#e6ecff",
+        "#8fa4ff",
+        "#d9d2b8",
+        "#f4efd8",
+        "#3a4675",
+        "#ffffff",
+        "#141a3a",
+        "#0a0e22",
+        "#ffcf7a"
+      ]
+    }
+  ]
+}

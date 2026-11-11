@@ -1,0 +1,33 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "jelly",
+  "name": "Jellyfish",
+  "detail": "Three glowing jellyfish pulse and rise through deep water, trailing their tentacles.",
+  "sky": [
+    "#1b0f3d",
+    "#0d0a29",
+    "#05061a"
+  ],
+  "palette": {
+    "tint": [
+      "#231446",
+      "#0f0a2b"
+    ],
+    "accent": "#9fd9ff"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "jellyfish",
+      "colors": [
+        "#6c5bd6",
+        "#a9b7ff",
+        "#ffb3e6",
+        "#ff8fd6",
+        "#8fd8ff",
+        "#c39bff"
+      ]
+    }
+  ]
+}

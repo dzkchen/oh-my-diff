@@ -13,26 +13,37 @@ omd mods disable omd_statusline
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
-When the mod is off, or if it fails, Codex's own status row and its own `/statusline` command come back. Your
-`tui.status_line` setting is never changed.
+When the layout shows the `context` segment, it also hides Codex's own `N% context left` footer indicator, so context
+isn't shown twice. When the mod is off, or if it fails, Codex's own status row, context indicator and `/statusline`
+command come back. Your `tui.status_line` setting is never changed.
 
 ## Use it
 
-Run `/statusline` to open the editor, in the same panel as `/config`. Its subtitle previews your draft live.
+Run `/statusline` to open the editor, in the same panel as `/config`. Its subtitle previews your draft live, using
+live data where it has arrived and sample values for the rest, so a segment you just turned on shows at once.
 
-- The Settings tab contains placement, preset, glyphs, bars and thresholds, with Save and Reset to defaults.
-- The Segments tab puts each segment on a line or hides it, and Order edits the whole layout as text.
+- The Settings tab contains placement, preset, glyphs, bars and warning levels, with Save, Discard changes and Reset
+  to defaults.
+- The Segments tab has Save too. It lists each segment by a plain name, in layout order: put it on a line or hide
+  it, and use Move earlier and Move later to reorder. Order edits the whole layout as text.
 - Up and Down move, Left and Right switch tabs, `Space` or `Enter` changes the highlighted item and `/` searches.
-- Save keeps the draft. `Esc` closes without saving.
+- While the draft differs from your saved settings, the subtitle says `Unsaved changes` and Save reads
+  `Save (unsaved changes)`. `Esc` closes without saving, and reopening `/statusline` brings the draft back.
+  Discard changes drops it.
 - Reset to defaults restores the defaults (`tones`, `github`, `refresh_s` and `scripts` keep their values).
 
 Presets:
 
+- `auto` (default): your Codex `tui.status_line` items mapped to segments, plus `context` and `omd`, or `compact` when you haven't
+  set `tui.status_line`. The editor says `Layout from your Codex tui.status_line` when it applies. Items with no
+  matching segment (such as `hostname`, `codex-version` or `approval-mode`) are left out. Choosing another preset or
+  saving a layout in the editor replaces it.
 - `compact`: `model tier context limits cost cache git omd`
 - `detailed`: `model effort tier provider context tokens cache cost limits`, then
   `git changes pr ci session tools agents plan omd` on a second line
 
-A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLOR`.
+A narrow terminal drops trailing segments, but never the `N failed · /omd` alert: it moves to the end of its line
+and other segments go first. Colors follow your theme and `NO_COLOR`.
 
 ### Segments
 
@@ -42,13 +53,15 @@ A narrow terminal drops trailing segments. Colors follow your theme and `NO_COLO
 - `profile`: `profile: <name>` when the active user config layer is a `--profile` one. Not in a preset; add it to a
   custom layout.
 - `workspace`: `workspace: <name>` for the selected ChatGPT workspace. Not in a preset; add it to a custom layout.
-- `context`: usage with a bar. `~` and muted after a compaction (a shorter summary replacing the earlier
+- `context`: tokens and percent left, such as `258k left (99%)`, with a bar of what's left. The percent matches Codex's
+  own `% context left`; without a known window it shows tokens used. `~` and muted after a compaction (a shorter summary replacing the earlier
   conversation), rewind or model switch. `⟳N` counts compactions.
 - `tokens`, `cache`: token use and cache state.
 - `cost`: session cost, never an invoice. `~` or `est.` marks an estimate, `included` marks subscription use, and `+?`
   means some cost is still unsettled or unknown. `omd_usage` (`Alt+a`) breaks it down by request.
 - `limits`: account rate-limit windows with reset countdowns. Refreshes every minute and on `/statusline refresh`, so an account usage reset is picked up even while idle.
-- `git`, `changes`: branch and diff summary.
+- `git`, `changes`: branch and diff summary. Git runs only when a shown segment (`git`, `changes`, `pr`, `ci`) or a
+  script needs it, and only the commands those segments need.
 - `pr`, `ci`: GitHub pull request and checks.
 - `session`: thread id and elapsed time.
 - `tools`, `agents`, `plan`: running tools, agents and plan progress.
@@ -105,12 +118,12 @@ omd-mod settings "$STORE" "$STORE/sources/omd_statusline" '{"preset": "detailed"
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `placement` | `below` | `below` or `above` the prompt |
-| `preset` | `compact` | `compact`, `detailed` or `custom` |
+| `preset` | `auto` | `auto` (from `tui.status_line`), `compact`, `detailed` or `custom` |
 | `layout` | the detailed set | Custom layout: segment ids separated by spaces, lines by `;` (up to 4) |
 | `hidden` | empty | Segment ids to hide from a preset |
 | `glyphs` | `unicode` | `ascii` uses plain characters |
-| `bars` | `true` | Progress bar before the context percentage |
-| `thresholds` | `context=70,90 limits=70,90 cost=5,20` | Warning and alert levels (percent, or USD for `cost`) |
+| `bars` | `true` | Bar showing how much context is left |
+| `thresholds` | `context=70,90 limits=70,90 cost=5,20` | Warning and alert levels (percent used, or USD for `cost`) |
 | `tones` | empty | `segment=tone` overrides: `accent`, `success`, `attention`, `failure`, `muted`, `normal` |
 | `github` | `true` | Pull request and CI segments, once a token is connected |
 | `refresh_s` | `60` | Git refresh interval in seconds (5-3600) |
@@ -124,8 +137,10 @@ omd-mod settings "$STORE" "$STORE/sources/omd_statusline" '{"preset": "detailed"
   capabilities are `terminal`, `commands`, `builtins`, `store`, `events`, `lifecycle`, `model`, `middleware`, `threads`,
   `config`, `account`, `inventory`, `exec`, `credentials` and `http`, with `http` limited to `https://api.github.com`
   (see [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
-- Git, scripts and GitHub run on timers, so values can lag by a refresh interval. Main-thread tool results trigger
-  a Git refresh; child-agent tools are represented by the agent segment and do not schedule session timers.
+- Git, scripts and GitHub refresh from one shared timer per thread, so values can lag by a refresh interval.
+  Main-thread tool results trigger a Git refresh when a shown segment needs Git; child-agent tools are represented
+  by the agent segment and do not schedule session timers. If the host's timer pool is full, the line still updates
+  from events and the timer is retried at the next one.
 - Pull request and CI segments need a GitHub token and an `origin` remote on github.com.
 
 ## More

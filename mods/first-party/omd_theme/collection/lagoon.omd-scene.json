@@ -1,0 +1,52 @@
+{
+  "format": "omd-scene",
+  "version": 1,
+  "id": "lagoon",
+  "name": "Lagoon",
+  "detail": "Light shafts swaying through shallow water while a sea turtle paddles past; bubbles rise.",
+  "sky": [
+    "#2a9d9a",
+    "#0d5466",
+    "#062433",
+    "#04131c"
+  ],
+  "palette": {
+    "tint": [
+      "#0d4a57",
+      "#062733"
+    ],
+    "accent": "#c8fff5"
+  },
+  "layers": [
+    {
+      "kind": "effect",
+      "effect": "reef",
+      "colors": [
+        "#bff7ee",
+        "#c8fff5",
+        "#4a4632",
+        "#8a8460",
+        "#3f8f5a",
+        "#2b6a43",
+        "#9bd28a",
+        "#d8fffb"
+      ],
+      "art": [
+        [
+          "......kk...",
+          "..sdsdsd...",
+          "kssdsdsdskk",
+          "..sdsdsd...",
+          "......kk..."
+        ],
+        [
+          "....kk.....",
+          "..sdsdsd...",
+          "kssdsdsdskk",
+          "..sdsdsd...",
+          "....kk....."
+        ]
+      ]
+    }
+  ]
+}
