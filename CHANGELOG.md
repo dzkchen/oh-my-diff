@@ -2,6 +2,39 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.1) — 2026-11-11
+
+Claude models work with tools again, /update opens with mod updates waiting, and /mods shows one row per mod.
+
+### New
+
+- /workspace off asks whether to turn it off for this conversation, this terminal or every terminal (#521)
+
+### Changed
+
+- Update opt-out, recovery guidance, needs-approval listing and launch onboarding. (#447)
+- Put OMD on PATH, repair catalog digests, readable update output and omd doctor (#454)
+- /mods edits everything, plain host messages, and mods that no longer fail silently (#523)
+- Stop rescanning sessions/ on every status-line refresh (#419)
+- One way to turn mods on, experimental labels, and moved stranded sections (#525)
+- Run Oh My Diff in any directory, simplify mod commands and permission prompts, and keep themes updating after terminal resizes. (#528)
+- Clarify the Node.js 24.x requirement in the mod author launcher and its regression test. (#522)
+- Clarify user guides, mod documentation, API reference and changelog wording; regenerate the reference, changelog and plugin guide digest. (#530)
+- Restore native-component render hooks for local owner views and refresh them as owner snapshots advance. (#532)
+- Reduce host allocations and centralize tooling helpers. (#533)
+
+### Fixed
+
+- Keep last accepted attach parameters when a reattach is refused (#442)
+- Fixes
+- Actionable omd errors, safer store reset and a fuller explain table (#436)
+- /omd title first and no upstream Codex update notice (#527)
+- Redact secrets with placeholder words, keep checkpoint refs visible, quieter first launch (#526)
+- Retry release metadata, handle TLS errors, check the platform first (#524)
+- Restore theme scenes immediately after the canvas resets
+- Show one row when a mod is installed twice in one scope (#531)
+- Open /update with mod updates waiting and send Claude flat tool schemas (#534)
+
 ## [1.5.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.0) — 2026-11-08
 
 Per-terminal mod settings, lower resource use in idle and background sessions, Codex 0.167.0, and fixes across first-party mods, the git panel, threads and the installer.

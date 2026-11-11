@@ -1,5 +1,72 @@
 [
   {
+    "version": "1.5.1",
+    "date": "2026-11-11",
+    "title": "Oh My Diff 1.5.1",
+    "summary": "Claude models work with tools again, /update opens with mod updates waiting, and /mods shows one row per mod.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "/workspace off asks whether to turn it off for this conversation, this terminal or every terminal (#521)"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Update opt-out, recovery guidance, needs-approval listing and launch onboarding. (#447)",
+          "Put OMD on PATH, repair catalog digests, readable update output and omd doctor (#454)",
+          "/mods edits everything, plain host messages, and mods that no longer fail silently (#523)",
+          "Stop rescanning sessions/ on every status-line refresh (#419)",
+          "One way to turn mods on, experimental labels, and moved stranded sections (#525)",
+          "Run Oh My Diff in any directory, simplify mod commands and permission prompts, and keep themes updating after terminal resizes. (#528)",
+          "Clarify the Node.js 24.x requirement in the mod author launcher and its regression test. (#522)",
+          "Clarify user guides, mod documentation, API reference and changelog wording; regenerate the reference, changelog and plugin guide digest. (#530)",
+          "Restore native-component render hooks for local owner views and refresh them as owner snapshots advance. (#532)",
+          "Reduce host allocations and centralize tooling helpers. (#533)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Keep last accepted attach parameters when a reattach is refused (#442)",
+          "Fixes",
+          "Actionable omd errors, safer store reset and a fuller explain table (#436)",
+          "/omd title first and no upstream Codex update notice (#527)",
+          "Redact secrets with placeholder words, keep checkpoint refs visible, quieter first launch (#526)",
+          "Retry release metadata, handle TLS errors, check the platform first (#524)",
+          "Restore theme scenes immediately after the canvas resets",
+          "Show one row when a mod is installed twice in one scope (#531)",
+          "Open /update with mod updates waiting and send Claude flat tool schemas (#534)"
+        ]
+      }
+    ],
+    "commits": [
+      "6dc78c7",
+      "6e004bb",
+      "54f57d1",
+      "221d548",
+      "784932f",
+      "d3675ca",
+      "0960b49",
+      "a77826c",
+      "bfd21f5",
+      "5e1c261",
+      "d694cb0",
+      "a6d9f6a",
+      "85e6dc4",
+      "d65520f",
+      "42ee85e",
+      "1e276cb",
+      "69a40e0",
+      "62c7e28",
+      "620e82e",
+      "0cb379f",
+      "95864a5",
+      "8bb7888"
+    ]
+  },
+  {
     "version": "1.5.0",
     "date": "2026-11-08",
     "title": "Oh My Diff 1.5.0",
