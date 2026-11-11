@@ -61,3 +61,25 @@ test('a failed row adds its last output or error line below it', () => {
   assert.match(text(mcp), /└ timed out$/);
   assert.equal(render({ ...exec('two'), output_tail: 'fine' }).value.result.tree.length, 1);
 });
+
+test('a group marks its latest failure with the exit code and a muted error line', () => {
+  const calls = [{ ...exec('one', 'failed'), exit_code: 2, output_tail: 'old' }, { ...exec('two', 'failed'), exit_code: 127, output_tail: 'sh: nope: not found' }, exec('three')];
+  const tree = render({ kind: 'explore', call_id: 'one', status: 'completed', calls }, 60).value.result.tree;
+  assert.match(tree[0].spans.map(span => span.text).join(''), /2 failed · exit 127/);
+  assert.equal(tree[1].spans[0].text, '  └ sh: nope: not found');
+  assert.equal(tree[1].spans[0].tone, 'muted');
+  assert.doesNotMatch(text(render({ kind: 'explore', call_id: 'one', status: 'completed', calls: [exec('one'), exec('two')] })), /exit/);
+  const narrow = render({ kind: 'explore', call_id: 'one', status: 'completed', calls: [{ ...exec('one', 'failed'), output_tail: 'x'.repeat(200) }, exec('two')] }, 40).value.result.tree[1];
+  assert.ok([...narrow.spans[0].text].length <= 40);
+});
+
+test('host-shaped props render: unparsed shell, list and read calls in one failed group', () => {
+  const shell = { ...exec('s', 'failed'), command: "sh -c 'exit 127'", exit_code: 127, parsed: [{ type: 'unknown', cmd: "sh -c 'exit 127'" }], output_tail: 'boom: compiler exploded' };
+  const list = { ...exec('l'), command: 'ls', parsed: [{ type: 'list_files', cmd: 'ls', path: null }], exit_code: 0 };
+  const read = { ...exec('r', 'failed'), command: 'cat missing.txt', parsed: [{ type: 'read', cmd: 'cat missing.txt', name: 'missing.txt', path: 'missing.txt' }], exit_code: 1, output_tail: null };
+  const group = render({ kind: 'explore', call_id: 'l', status: 'failed', duration_ms: 9, calls: [list, read, shell] }).value.result.tree;
+  assert.deepEqual(group.map(line => line.id), ['tool_lines_0', 'tool_lines_0_reason']);
+  assert.match(text({ value: { result: { tree: group } } }), /1 list, 1 read, 1 command.*2 failed · exit 127.*└ boom: compiler exploded/);
+  const single = render(shell).value.result.tree;
+  assert.match(text({ value: { result: { tree: single } } }), /✗ Shell sh -c 'exit 127' · exit 127.*└ boom: compiler exploded/);
+});

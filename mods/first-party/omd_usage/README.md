@@ -27,6 +27,8 @@ omd mods enable omd_usage
 
 With a budget set, a notice appears once at 80% and once at 100%, and the dialog shows spend against the budget. Requests with no price yet (unsettled or unknown cost) are not in the figure; the notice and the dialog say how many.
 
+Esc closes the dialog, and Tab moves between its buttons (Refresh, Expanded or Compact, Close). Enter presses the focused button. The dialog's first row lists these keys.
+
 Changes apply from your next message.
 
 ## Settings
@@ -51,7 +53,11 @@ Change settings in `/mods`.
   cost before they left that window.
 - Quota windows are listed per account (Codex, Claude, Cursor), each under the account that reported it. No window
   depends on which model route (model setup) you're using.
-- Cache expiry shows only when the provider reports how long its cache lasts.
+- Cache expiry shows when the provider reports how long its cache lasts, or as a 30-minute estimate for OpenAI API
+  responses with cache activity. Reads retain the reported lifetime for the same provider, route, credential and
+  requested/served model among retained conversation requests. An OpenAI 12-hour cache keeps its write deadline;
+  a read extends it only to at least 30 minutes ahead. ChatGPT plans and unpriced OpenAI responses show none. Rows with nothing to report
+  (no workers, no paid API use, no plan, no running tools, no quota window) are left out.
 - Running tools list the calls started while the dialog is open, so the mod doesn't rewrite its state on every tool
   call when nothing shows them.
 - While it's on, it takes over Codex's `/usage`; `/usage codex` opens Codex's own menu.
