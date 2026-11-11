@@ -27,11 +27,12 @@ change back with `build.py sync`.
 `NAME` is a label made of letters, numbers, hyphens or underscores, starting with a letter or number:
 
 ```sh
-python3 .github/scripts/build.py setup NAME
+mise run dev:setup NAME
 ```
 
-`setup` prints the patch result and then the tree's path, `/private/tmp/omd-bNAME/codex`. Running it again on an
-existing tree only prints the path.
+`dev:setup` creates `/private/tmp/omd-bNAME/codex`, applies the patch and fetches its verified V8 prebuilt. Running
+it again preserves the existing tree and reuses downloads whose checksums match. If you only need the source,
+use `python3 .github/scripts/build.py setup NAME` to skip the V8 download.
 
 Reuse the same name for repeated edits: Cargo keeps that tree's incremental output. `setup` does not refresh an
 existing tree after you switch branches, change the upstream pin or pull a new patch. Finish and `sync` your native
@@ -49,7 +50,8 @@ in `*_tests.rs` files.
 
 ## Fetch the V8 prebuilt
 
-`omd-runner` and `codex-cli` link a V8 prebuilt. Fetch it once:
+`omd-runner` and `codex-cli` link a V8 prebuilt. `dev:setup` fetches it; fetch it separately after a source-only
+setup with:
 
 ```sh
 python3 .github/scripts/build.py v8 NAME
@@ -69,8 +71,24 @@ mise run dev:build NAME
 
 `dev:check` takes one or more Cargo package names and does not compile tests. `dev:build` requires V8 and builds
 `codex`, `omd-runner` and `codex-code-mode-host` together in `/private/tmp/omd-bNAME/target/debug`.
-Both tasks print the log path, a summary and the exit status. Logs are `logs/dev-check.log` and
-`logs/dev-build.log` under the scratch tree and are overwritten on each run.
+Both tasks print the log path, elapsed time, a summary and the exit status. Logs are `logs/dev-check.log` and
+`logs/dev-build.log` under the scratch tree and are overwritten on each run. Cargo also writes an HTML timing
+report to `target/cargo-timings/cargo-timing.html`; the log records its path. Compare repeated builds in the
+same tree before changing compiler flags or cache settings.
+
+For mod and SDK tests, build just the mod engine and runner:
+
+```sh
+mise run dev:mods NAME
+OMD_TEST_RUNNER=/private/tmp/omd-bNAME/target/debug/omd-runner \
+OMD_MOD_BIN=/private/tmp/omd-bNAME/target/debug/omd-mod mise run mods:test
+```
+
+`dev:mods` builds `omd-mod` and `omd-runner` together and writes `logs/dev-mods.log` and a timing report. It skips
+the terminal app and code-mode host. The two environment variables select these binaries even if another version
+is installed or another scratch tree was built more recently. Replace `/private/tmp` with `OMD_WORK_ROOT` if you
+set it. To run the host integration check with this build, use
+`python3 scripts/mod_host_check.py --omd-mod /private/tmp/omd-bNAME/target/debug/omd-mod`.
 
 For other Cargo commands, use `build.py cargo`. It sets the same target and environment. For `test` and `nextest`
 it first builds `omd-runner` and links it beside the test binaries, where hosts look for it. `LOG` is a log file
@@ -80,12 +98,17 @@ path: the full output goes there and a summary goes to the terminal.
 python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER
 ```
 
-Build `codex`, `omd-mod` and `omd-runner` together, because a host started from the target looks for `omd-runner`
-beside itself. `mise run mods:test` then finds them without `OMD_TEST_RUNNER` or `OMD_MOD_BIN`:
+For tests that do not start a mod host, add `--skip-runner` before `NAME` to avoid building `omd-runner`:
 
 ```sh
-python3 .github/scripts/build.py cargo NAME LOG build --locked -p codex-cli -p codex-omd-extension -p codex-omd-runner --bins
+python3 .github/scripts/build.py cargo --skip-runner NAME LOG test --locked -p CRATE FILTER
 ```
+
+The wrapper sets development debug information to `0`. Use `CARGO_PROFILE_DEV_DEBUG=line-tables-only` for file
+and line numbers in backtraces, or `full` when you need local variables in a debugger. Each setting gives Cargo a
+different build configuration, so switching it can rebuild dependencies. On machines that run out of memory or
+swap heavily, try `OMD_LOW_RESOURCE=1 mise run dev:build NAME` to limit Cargo to three build jobs. An explicit
+`CARGO_BUILD_JOBS` or Cargo `--jobs` flag takes precedence.
 
 Incremental compilation is the default for repeated edits in one tree. To try sccache across targets, use
 `OMD_SCCACHE=1` and a common `SCCACHE_DIR`:
@@ -199,11 +222,13 @@ design.
 | Command | Does |
 | --- | --- |
 | `setup NAME` | Creates the scratch tree at the pin, tags the normalized source as `normalized<version>` and applies the patch |
+| `dev-setup NAME` | Creates the scratch tree and fetches its verified V8 prebuilt |
 | `v8 NAME` | Downloads and verifies the V8 prebuilt |
 | `cargo NAME LOG ARGS` | Runs cargo in the tree, full log to `LOG` |
 | `cargo --skip-runner NAME LOG ARGS` | Skips runner preparation for host-independent tests |
-| `dev-check NAME CRATE [CRATE...]` | Checks selected crates without test targets; `logs/dev-check.log` |
-| `dev-build NAME` | Builds the debug app, runner and code-mode host; `logs/dev-build.log` |
+| `dev-check NAME CRATE [CRATE...]` | Checks selected crates without test targets; log and timing report |
+| `dev-build NAME` | Builds the debug app, runner and code-mode host; log and timing report |
+| `dev-mods NAME` | Builds only the debug mod engine and runner; log and timing report |
 | `storage` | Lists each scratch tree's target disk usage |
 | `clean NAME [NAME...]` | Deletes only the selected targets; preserves sources and logs |
 | `check NAME` | Runs `cargo check --tests` of the crates a pull request compiles |

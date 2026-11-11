@@ -25,14 +25,7 @@ jobs:
           fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
           persist-credentials: false
       - id: select
-        env:
-          PR_BASE_SHA: ${{ github.event.merge_group.base_sha || 'HEAD^1' }}
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            echo 'native=true' >> "$GITHUB_OUTPUT"
-          else
-            python3 scripts/pr_ci.py select
-          fi
+        run: python3 scripts/pr_ci.py select
 
   portable:
     runs-on: ubuntu-latest
@@ -61,7 +54,7 @@ jobs:
       - name: Host-free Python tests
         run: |
           sudo install -d -m 1777 /private/tmp
-          python3 -m unittest tests.test_pr_ci tests.test_native_ownership tests.test_mod_conformance tests.test_build_provenance \
+          python3 -m unittest tests.test_pr_ci tests.test_check_changed tests.test_dev_builds tests.test_native_ownership tests.test_mod_conformance tests.test_build_provenance \
             tests.test_release tests.test_install_updates tests.test_package
       - name: Workflow lint
         run: mise exec actionlint@1.7.12 -- actionlint
@@ -112,10 +105,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-lint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}-${{ github.sha }}
+          key: sccache-lint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}
           restore-keys: |
             sccache-lint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}-
-            sccache-lint-${{ runner.os }}-
+            sccache-lint-${{ runner.os }}-${{ runner.arch }}-
       - name: Replay patch and check drift
         run: |
           python3 .github/scripts/build.py setup nightly

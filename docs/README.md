@@ -45,6 +45,9 @@ These docs describe the `main` branch, which can be ahead of the current release
 | I want to | Read |
 | --- | --- |
 | Change OMD, its mods or its docs | [Contributing](../CONTRIBUTING.md) |
+| Choose checks for my diff | [Check your change](../CONTRIBUTING.md#check-your-change) |
+| Follow code conventions and update generated files | [Code conventions](contributing/code-style.md) |
+| Design a terminal view or review a visible change | [Terminal UI style guide](STYLEGUIDE.md) |
 | Change the patched Codex code | [Change the patched Codex code](contributing/runtime.md) |
 | Understand what CI runs | [How CI checks a change](contributing/ci.md) |
 | Change how CI caches downloads and builds | [CI caching](contributing/ci-caching.md) |

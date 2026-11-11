@@ -74,6 +74,7 @@ See [Mods, plugins, skills and hooks](how-omd-works.md#mods-plugins-skills-and-h
 | Scratch store, watch, status, reports, cost | [Run and debug a mod](mod-authors/run-and-debug.md) |
 | Author tools without an OMD install | [Run the author tools from a source checkout](mod-authors/run-from-source.md) |
 | Scenario files, TypeScript tests, mocks | [Test a mod](mod-authors/test-a-mod.md) |
+| Component choices, tones, layout and keyboard behavior | [Terminal UI style guide](STYLEGUIDE.md) |
 | Install, Git, npm, update, roll back | [Install, share and update a mod](mod-authors/publish-a-mod.md) |
 | Ship skills and a mod together | [Bundle a mod in a plugin](mod-authors/bundle-in-a-plugin.md) |
 | Change the shape of saved state | [Change a mod's saved state](mod-authors/migrate-state.md) |

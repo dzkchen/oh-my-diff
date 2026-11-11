@@ -65,10 +65,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}-${{ github.sha }}
+          key: sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}
           restore-keys: |
             sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}-
-            sccache-${{ github.job }}-${{ runner.os }}-
+            sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Validate
         id: validation
         run: python3 .github/scripts/ci.py validate --job "$GITHUB_JOB" ${OMD_RELEASE_VERSION:+--release}
