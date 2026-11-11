@@ -56,9 +56,7 @@ export default function activate(api: ModAPI) {
     const waiting = Object.values(state.pending);
     if (state.running && !waiting.length) return;
     const started = api.host.tryCall('app.request', { method: 'thread/compact/start', params: { threadId: api.session().thread_id } });
-    // Fails while another thread is displayed; retry until the cache expires. Other failures are final.
     if (!started.ok) return void (RETRYABLE.test(started.error) && api.host.tryCall('events.schedule', { key: 'idle', delay_ms: RETRY_MS }));
-    // A declined request was never made: recording it as requested would owe a cancellation notice for a compaction that never started. The next model response or turn end re-arms.
     if ((started.value as { status?: unknown } | null)?.status === 'declined') return;
     save({ requested: waiting.includes('question') ? 'question' : waiting[0] ?? 'idle' });
   });

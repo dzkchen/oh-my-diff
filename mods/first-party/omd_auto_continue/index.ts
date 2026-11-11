@@ -47,7 +47,6 @@ export default function activate(api: ModAPI) {
     }
   });
 
-  // Request ids restart with the app-server, and a fork inherits its parent's state: neither may answer a stale id.
   const reset = () => {
     api.state.set({ pending: {} });
     api.host.tryCall('events.cancel', { key: 'deadline' });

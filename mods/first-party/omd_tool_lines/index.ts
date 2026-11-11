@@ -8,16 +8,13 @@ const bytes = (text: string) => { let size = 0; for (const char of text) { const
 const WIDE = /[ᄀ-ᅟ\u17A4⺀-꓏ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3ffff}]|\p{Extended_Pictographic}|\p{Emoji_Presentation}/u;
 const ZERO = /[\u1160-\u11ff\uD7B0-\uD7FF\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]/u;
 const EMOJI = /^(?:[\p{Extended_Pictographic}\p{Regional_Indicator}]|[#*0-9]\uFE0F?\u20E3)[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]*$/u;
-// ICU objects are built on first use: every callback evaluates the module in a fresh context.
 let segments: Intl.Segmenter | undefined;
 const segmenter = () => segments ??= new Intl.Segmenter();
-// The native renderer treats variation-selector-1 quotes as two cells.
 const widthOf = (text: string) => ASCII.test(text) ? text.length : [...segmenter().segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
   : [...segment.replace(/([‘’“”])\uFE01/gu, '$1$1')].reduce((width, char) => width + (char !== '\u115F' && ZERO.test(char) ? 0 : char === '\u17D8' ? 3 : WIDE.test(char) ? 2 : 1), 0)), 0);
 
 const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   if (cells < 1 || chars < 1 || limit < 3) return '';
-  // Slice before flattening: renders refit the same command every frame, so a huge heredoc must not be scanned whole each time. Kept output never exceeds min(chars, limit) code units, so one past that bound is enough to detect truncation.
   const bound = Math.min(chars, limit) + 1;
   const cut = text.length > bound;
   let sliced = cut ? text.slice(0, bound) : text;
@@ -139,7 +136,6 @@ const line = (id: string, item: Row, columns: number): TerminalComponent => {
   const marker = fit(item.marker.filter(Boolean).join(' · '), available - 5 - Math.min(12, widthOf(item.name)), 96);
   const name = fit(item.name, Math.min(48, available - 2 - (marker ? widthOf(marker) + 3 : 0)));
   const used = widthOf(bullet) + (name ? widthOf(name) + 1 : 0) + (marker ? widthOf(marker) + 3 : 0);
-  // A line holds at most 256 characters across its spans.
   const args = fit(item.args, Math.max(0, available - used - 1), 249 - [...name].length - [...marker].length);
   const spans: TerminalSpan[] = [
     { text: bullet, tone: item.failed ? 'failure' : item.running ? 'accent' : 'muted' },

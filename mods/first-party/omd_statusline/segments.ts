@@ -301,7 +301,6 @@ export function render(data: Data, config: Settings, input: { now: number; colum
 }
 
 const MAX_SPANS = 12;
-// The view refuses a span over 256 bytes, so merged spans are split there.
 const SPAN_BYTES = 256;
 const utf8 = new TextEncoder();
 const cut = (text: string) => text.slice(0, utf8.encodeInto(text, new Uint8Array(SPAN_BYTES)).read);

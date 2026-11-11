@@ -23,7 +23,6 @@ export default function activate(api: ModAPI) {
     for (const [key, fallback] of Object.entries(EMPTY)) if (fallback && typeof fallback === 'object' && !Array.isArray(fallback)) data[key] = { ...fallback, ...object(stored[key]) };
     return data as Data;
   };
-  // A settings change reaches the session's host only at its next turn, so drawing follows the editor's last apply while this host still runs with settings that apply superseded.
   const effective = (data: Data): Settings => data.pending?.from.includes(JSON.stringify(config)) ? data.pending.to : config;
   const shown = (data: Data) => layout(effective(data), configured.scripts.map(script => script.id), data.seed).flat();
   const shows = (ids: string[], data: Data) => configured.scripts.length > 0 || shown(data).some(id => ids.includes(id));
@@ -40,12 +39,10 @@ export default function activate(api: ModAPI) {
     const needs = gitNeeds(data);
     if (!needs.length) return;
     const key = data.cwd ?? '';
-    // The checkout in argv makes a state-conflict retry after a directory change rerun Git instead of replaying the old output.
     const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', gitScript(needs), key], timeout_ms: 3000, max_output_bytes: 65_536 });
     update(data => {
       data.git = !run.ok ? { ...parseGit(key, ''), error: visible(run.error, 80) }
         : run.value.exit_code !== 0 || run.value.timed_out ? { ...parseGit(key, ''), error: run.value.timed_out ? 'timed out' : 'not a repository' }
-        // A capped status would silently undercount, so say it was truncated instead of showing wrong numbers.
         : run.value.stdout_truncated ? { ...parseGit(key, ''), error: 'status truncated' }
         : parseGit(key, run.value.stdout);
     });
@@ -179,8 +176,6 @@ export default function activate(api: ModAPI) {
     const credits = object(snapshot.credits);
     if (Object.keys(credits).length) data.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? 'credits' : 'none';
   };
-  // Mirrors Codex's processing-tier label: the configured tier (or, unset, the catalog default) when the model offers it,
-  // named from the catalog, or Flex on a provider other than Amazon Bedrock.
   const tierFor = (configured: unknown, model: string | null, provider: string | null, fallback = false): Data['model']['tier'] => {
     if ((typeof configured !== 'string' || !configured) && !fallback) return null;
     const listed = api.host.tryCall('app.request', { method: 'model/list', params: { includeHidden: true, limit: 200 } });
@@ -268,7 +263,6 @@ export default function activate(api: ModAPI) {
   api.on('turn_end', () => {
     update(data => {
       data.tools = {};
-      // The turn after the one an apply landed in runs with the host's current settings, whichever route changed them.
       if (data.pending) data.pending = data.pending.turns || JSON.stringify(config) === JSON.stringify(data.pending.to) ? null : { ...data.pending, turns: 1 };
     });
     soon(job => job !== 'settle' && job !== 'tick', 1000);
@@ -478,7 +472,6 @@ export default function activate(api: ModAPI) {
     const values = Object.fromEntries(Object.entries(state.draft).filter(([key, entry]) => current[key as keyof Settings] !== entry));
     if (!Object.keys(values).length) return show({ ...state, notice: 'Status line unchanged' });
     const superseded = (data.pending?.from ?? []).filter(entry => entry !== JSON.stringify(config));
-    // The session records the apply through this mod's own channel; writing this mod's settings reloads it, so no host call, durable state or command view may follow a successful write.
     api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: { from: [...superseded, JSON.stringify(config)].slice(-8), to: state.draft } } });
     const written = api.host.tryCall('settings.write', { values });
     if (written.ok) {
@@ -504,7 +497,6 @@ export default function activate(api: ModAPI) {
     const data = saved();
     const columns = number(input.client?.columns) ?? 120;
     const rows = number(input.client?.rows);
-    // Drawing writes durable state only when something it caches changed: mod counts or the viewport. Thread-scoped state can't be written before the session has a thread (the startup event has no ledger).
     const viewport = rows !== null ? { columns, rows } : data.viewport;
     const mods = input.identity?.mods ?? data.mods;
     const changed = JSON.stringify([viewport, mods]) !== JSON.stringify([data.viewport, data.mods]);

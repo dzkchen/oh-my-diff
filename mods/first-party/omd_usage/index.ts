@@ -62,7 +62,6 @@ export default function activate(api: ModAPI) {
   const text = (id: string, label: string, body: string): TerminalComponent => ({ type: 'text', id, label, text: visible(body, 4000) });
   const multiline = (id: string, label: string, lines: string[]): TerminalComponent => ({ type: 'text', id, label, text: lines.map(line => line.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '?')).join('\n').slice(0, 4000) });
 
-  // Codex reports native dollar usage for the thread on some plans; it replaces the configured-rate estimate.
   const nativeUsd = (thread: string | null, fallback: number | null) => {
     const read = thread ? api.host.tryCall('app.request', { method: 'account/usage/read', params: { threadId: thread } }) : null;
     if (!read?.ok) return fallback;
@@ -123,7 +122,6 @@ export default function activate(api: ModAPI) {
     sum.pending ? `${requests(sum.pending)} unsettled` : '', sum.unknown ? `${requests(sum.unknown)}, cost unknown` : '',
   ].filter(Boolean).join(' · ') || 'no priced requests';
 
-  // Native usage covers the lead thread, so it replaces only the lead's configured-rate estimates.
   const outlay = (hud: Hud) => {
     const sum = totals(hud.entries);
     const native = hud.native === null ? 0 : hud.native - totals(hud.entries.filter(entry => isLead(hud, entry))).estimate - hud.leadShed;
@@ -323,7 +321,6 @@ export default function activate(api: ModAPI) {
     const written = api.host.tryCall('settings.write', { values });
     return { display: written.ok ? `${done}; applies when the mod reloads at the next turn` : `Usage settings unchanged: ${written.error}` };
   };
-  // Slash commands can't read task status, so they hop to this mod's own native channel handler.
   api.command('usage', value => {
     const [argument = '', choice = ''] = String(value ?? '').trim().split(/\s+/);
     if (argument === 'budget') {
@@ -380,7 +377,6 @@ export default function activate(api: ModAPI) {
   api.on('start', configure);
   api.on('resume', configure);
   const expiry = () => { const state = saved(); const last = context(state.hud)?.last; return last ? cacheTtl(state.hud, last)?.at ?? null : null; };
-  // Redraws the open dialog's cache countdown once a minute until it passes; the tick adds no observation.
   const ticker = api.time.every('countdown', 60_000, () => {
     if (!saved().open) return false;
     hud(state => { state.tick += 1; });

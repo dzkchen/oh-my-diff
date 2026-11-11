@@ -2,7 +2,7 @@ import type { HistoryItem, Json, ModAPI, ResourceRef } from '../../api.d.ts';
 import { cacheLifetime } from './cache_ttl.ts';
 
 type Kept = { tool: string; reference: ResourceRef | null; bytes: number; failed_edit: boolean };
-type Cache = { identity: string; provider: string; model: string; route: string; ttl: number; reported: boolean; expires: number };
+type Cache = { identity: string; provider: string; model: string; route: string; at: number; ttl: number; reported: boolean; expires: number };
 type State = {
   cache: Cache | null; continuation: { prompt: string; force: boolean; readable: string[] } | null;
   masked: Record<string, string>; kept: string[]; pinned: string[]; calls: Record<string, Kept>; visible: string[];
@@ -91,9 +91,9 @@ export default function activate(api: ModAPI) {
         || !['completed', 'incomplete'].includes(response.status)) return;
       const state = load();
       const at = response.timing.started_at_ms;
+      if (state.cache && at < state.cache.at) return;
       const memo = cacheLifetime(response, minutes, at, state.cache);
-      if (state.cache && at < state.cache.expires - state.cache.ttl) return;
-      save({ ...state, cache: { ...memo, provider: response.provider, model: response.requested_model, route: response.route,
+      save({ ...state, cache: { ...memo, at, provider: response.provider, model: response.requested_model, route: response.route,
         ttl: Number.isFinite(at) && at > 0 && at <= Date.now() ? memo.ttl : 0 } });
     });
     api.intercept('command', async (event, next) => {

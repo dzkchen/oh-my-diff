@@ -254,6 +254,16 @@ test('the OpenAI 12-hour cache estimate counts a first read as 30 minutes only',
   assert.deepEqual([cache.ttl, cache.expires], [720 * minute, NOW + 30 * minute]);
 });
 
+test('an older response cannot replace a recent long-cache read with an expired credential cache', () => {
+  const read = cached({ provider: 'openai', usage: {}, cost: { basis: 'settled' }, timing: { started_at_ms: NOW - 5 * minute } });
+  const settings = { cache_ttl_minutes: 720 };
+  const state = continuation('model_response', '', read, { settings }).state;
+  assert.equal(state.cache.expires, NOW + 25 * minute);
+  const stale = { ...read, credential: 'old-profile', timing: { started_at_ms: NOW - 60 * minute } };
+  const ignored = continuation('model_response', '', stale, { state, settings });
+  assert.deepEqual(ignored.state ?? state, state);
+});
+
 test('reported cache reads refresh matching estimates; stale and worker responses cannot overwrite them', () => {
   const state = continuation('model_response', '', cached()).state;
   const refreshed = continuation('model_response', '', cached({ usage: {}, timing: { started_at_ms: NOW + minute } }), { state, now: NOW + minute }).state;
