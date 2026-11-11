@@ -88,7 +88,8 @@ Pushing:
 - A branch without an upstream is pushed to `origin` and tracked. A detached HEAD isn't pushed.
 - When the remote rejects the push and the branch has diverged from its upstream, as after an amend or reword, `P`
   offers `push --force-with-lease`.
-- A branch that is only behind, or that's new here while `origin` already has its name, is told to pull first.
+- If your branch is only behind its upstream, or is new locally while `origin` already has a branch with that name,
+  the panel tells you to pull first.
 
 Amending or rewording an older commit rebases onto it with `--autostash`, and is refused while a rebase, merge,
 cherry-pick or revert is in progress. If the rebase stops, it is aborted and the error shows in the panel. A failed
@@ -126,6 +127,8 @@ It has no settings.
 - The first 200 changed files and branches and the last 100 commits are listed. The main view keeps about 28 KB or
   1,000 lines, and each line is cut at 200 bytes.
 - Each session keeps its own selection and view, for the repository of its working directory.
+- Hunk actions use the exact displayed patch. If it changes, including while confirming discard, refresh and review
+  it again. Hunks clipped by the display limits cannot be staged, discarded or attached from that preview.
 
 ## More
 

@@ -9,12 +9,17 @@ use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
+use std::sync::PoisonError;
 
 pub const KEY_BYTES: usize = 256;
 pub const VALUE_BYTES: usize = 65_536;
 pub const SCOPE_BYTES: usize = 16 * 1024 * 1024;
 pub const KEY_LIMIT: usize = 4096;
 const LIST_LIMIT: usize = 256;
+const CACHED_BYTES: usize = 2 * SCOPE_BYTES;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +55,93 @@ struct Document {
     generation: u64,
     next_revision: u64,
     entries: BTreeMap<String, Entry>,
+}
+
+impl Document {
+    fn empty() -> Self {
+        Self {
+            schema: 1,
+            generation: 1,
+            next_revision: 1,
+            entries: BTreeMap::new(),
+        }
+    }
+}
+
+struct Cached {
+    stamp: crate::FileStamp,
+    bytes: usize,
+    document: Arc<Document>,
+}
+
+static DOCUMENTS: LazyLock<Mutex<BTreeMap<PathBuf, Cached>>> = LazyLock::new(Default::default);
+
+fn remember(path: &Path, stamp: crate::FileStamp, bytes: usize, document: &Arc<Document>) {
+    let mut documents = DOCUMENTS.lock().unwrap_or_else(PoisonError::into_inner);
+    documents.remove(path);
+    if documents.values().map(|cached| cached.bytes).sum::<usize>() + bytes > CACHED_BYTES {
+        documents.clear();
+    }
+    documents.insert(
+        path.to_path_buf(),
+        Cached {
+            stamp,
+            bytes,
+            document: Arc::clone(document),
+        },
+    );
+}
+
+fn load(path: &Path) -> io::Result<Arc<Document>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && metadata.len() <= SCOPE_BYTES as u64 => metadata,
+        Ok(_) => return Err(failure("store_document_invalid")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(Arc::new(Document::empty()));
+        }
+        Err(error) => return Err(error),
+    };
+    let stamp = crate::file_stamp(&metadata);
+    if let Some(cached) = DOCUMENTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        .filter(|cached| cached.stamp == stamp)
+    {
+        return Ok(Arc::clone(&cached.document));
+    }
+    let document = serde_json::from_slice::<Document>(&fs::read(path)?)?;
+    if document.schema != 1 {
+        return Err(failure("store_schema_unsupported"));
+    }
+    let document = Arc::new(document);
+    remember(path, stamp, metadata.len() as usize, &document);
+    Ok(document)
+}
+
+fn open_lock(directory: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(directory.join(".store.lock"))
+}
+
+fn existing_directory(root: &Path, components: &[&str]) -> io::Result<Option<PathBuf>> {
+    let mut path = root.to_path_buf();
+    for component in components {
+        path.push(component);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err(failure("store_directory_invalid")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(Some(path))
 }
 
 #[derive(Deserialize)]
@@ -230,7 +322,7 @@ pub fn remove_thread_data(root: &Path, thread: &str) -> io::Result<bool> {
 }
 
 impl DataStore<'_> {
-    fn directory(&self, scope: &str) -> io::Result<PathBuf> {
+    fn directory(&self, scope: &str, create: bool) -> io::Result<Option<PathBuf>> {
         let components = match scope {
             "repository" => vec!["data", self.repository_key, self.owner],
             "user" => vec!["data", "user", self.owner],
@@ -248,55 +340,53 @@ impl DataStore<'_> {
             _ => return Err(failure("store_scope_invalid")),
         };
         if !crate::resource_data::token(self.owner)
-            || !(scope != "repository" || crate::is_sha256_hex(&self.repository_key))
+            || !(scope != "repository" || crate::is_sha256_hex(self.repository_key))
             || self.root.canonicalize()? != self.root
         {
             return Err(failure("store_root_invalid"));
         }
-        crate::workspace::private_path(self.root, &components, "store_directory_invalid")
+        if create {
+            crate::workspace::private_path(self.root, &components, "store_directory_invalid")
+                .map(Some)
+        } else {
+            existing_directory(self.root, &components)
+        }
     }
 
-    fn with_document<T>(
+    fn read<T>(&self, scope: &str, read: impl FnOnce(&Document) -> io::Result<T>) -> io::Result<T> {
+        let Some(directory) = self.directory(scope, false)? else {
+            return read(&Document::empty());
+        };
+        let lock = open_lock(&directory)?;
+        lock.lock_shared()?;
+        let document = load(&directory.join("store.json"))?;
+        read(&document)
+    }
+
+    fn write<T>(
         &self,
         scope: &str,
-        write: bool,
         change: impl FnOnce(&mut Document) -> io::Result<T>,
     ) -> io::Result<T> {
-        let directory = self.directory(scope)?;
-        let lock = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(directory.join(".store.lock"))?;
+        let directory = self
+            .directory(scope, true)?
+            .ok_or_else(|| failure("store_directory_invalid"))?;
+        let lock = open_lock(&directory)?;
         lock.lock()?;
         let path = directory.join("store.json");
-        let mut document = match fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.is_file() && metadata.len() <= (SCOPE_BYTES * 2) as u64 => {
-                serde_json::from_slice::<Document>(&fs::read(&path)?)?
-            }
-            Ok(_) => return Err(failure("store_document_invalid")),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Document {
-                schema: 1,
-                generation: 1,
-                next_revision: 1,
-                entries: BTreeMap::new(),
-            },
-            Err(error) => return Err(error),
-        };
-        if document.schema != 1 {
-            return Err(failure("store_schema_unsupported"));
+        let mut document = load(&path)?;
+        DOCUMENTS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&path);
+        let value = change(Arc::make_mut(&mut document))?;
+        let bytes = serde_json::to_vec(&*document)?;
+        if bytes.len() > SCOPE_BYTES || document.entries.len() > KEY_LIMIT {
+            return Err(failure("store_quota"));
         }
-        let value = change(&mut document)?;
-        if write {
-            let bytes = serde_json::to_vec(&document)?;
-            if bytes.len() > SCOPE_BYTES || document.entries.len() > KEY_LIMIT {
-                return Err(failure("store_quota"));
-            }
-            crate::fsio::write_bytes(&path, &bytes, crate::fsio::Durability::Ordered)?;
-        }
+        crate::fsio::write_bytes(&path, &bytes, crate::fsio::Durability::Ordered)?;
+        let stamp = crate::file_stamp(&fs::symlink_metadata(&path)?);
+        remember(&path, stamp, bytes.len(), &document);
         Ok(value)
     }
 
@@ -311,7 +401,7 @@ impl DataStore<'_> {
         match operation {
             "store.get" => {
                 let name = checked_key()?.to_owned();
-                self.with_document(&input.scope, false, |document| {
+                self.read(&input.scope, |document| {
                     Ok(document.entries.get(&name).map_or(Value::Null, |entry| {
                         json!({"value": entry.value, "revision": entry.revision, "provenance": entry.provenance})
                     }))
@@ -328,7 +418,7 @@ impl DataStore<'_> {
                     at: u128::from(crate::peers::now_ms()),
                     ..self.provenance.clone()
                 };
-                self.with_document(&input.scope, true, |document| {
+                self.write(&input.scope, |document| {
                     let current = document.entries.get(&name).map(|entry| entry.revision);
                     if current != expected {
                         return Err(failure(format!(
@@ -354,21 +444,19 @@ impl DataStore<'_> {
                 let expected = input
                     .expected_revision
                     .ok_or_else(|| failure("store_expected_revision_required"))?;
-                self.with_document(&input.scope, true, |document| {
-                    match document.entries.get(&name) {
-                        Some(entry) if entry.revision == expected => {
-                            document.entries.remove(&name);
-                            Ok(json!({"deleted": true}))
-                        }
-                        Some(_) => Err(failure("store_revision_conflict")),
-                        None => Ok(json!({"deleted": false})),
+                self.write(&input.scope, |document| match document.entries.get(&name) {
+                    Some(entry) if entry.revision == expected => {
+                        document.entries.remove(&name);
+                        Ok(json!({"deleted": true}))
                     }
+                    Some(_) => Err(failure("store_revision_conflict")),
+                    None => Ok(json!({"deleted": false})),
                 })
             }
             "store.list" => {
                 let prefix = input.prefix.clone().unwrap_or_default();
                 let limit = input.limit.unwrap_or(LIST_LIMIT).clamp(1, LIST_LIMIT);
-                self.with_document(&input.scope, false, |document| {
+                self.read(&input.scope, |document| {
                     let keys = document
                         .entries
                         .iter()
@@ -386,7 +474,7 @@ impl DataStore<'_> {
                 })
             }
             "store.export" => {
-                self.with_document(&input.scope, false, |document| {
+                self.read(&input.scope, |document| {
                     let mut entries = serde_json::Map::new();
                     let mut bytes = 0;
                     let mut cursor = Value::Null;
@@ -412,7 +500,7 @@ impl DataStore<'_> {
                 let expected = input
                     .expected_generation
                     .ok_or_else(|| failure("store_expected_generation_required"))?;
-                self.with_document(&input.scope, true, |document| {
+                self.write(&input.scope, |document| {
                     if document.generation != expected {
                         return Err(failure("store_generation_conflict"));
                     }

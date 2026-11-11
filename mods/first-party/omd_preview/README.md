@@ -31,9 +31,10 @@ omd mods enable omd_preview
 For `/preview PATH`, use `./PATH` if the file is named like a subcommand. Spaces inside the path are kept as typed;
 only `--` flags are removed.
 
-With `--watch`, you can name a file that doesn't exist yet. OMD waits for it by watching its parent directory. For a
-file in the repository root, or in a directory that doesn't exist yet, it checks again instead, every 2 s at first and
-slowing to once a minute, until the file exists.
+The file must exist when you start watching it. If a watched file later disappears, OMD waits for it by watching its
+parent directory. For a file in the repository root, or in a directory that no longer exists, it checks again instead,
+every 2 s at first and slowing to once a minute, until the file exists. If rendering a watched file fails, OMD retries
+even if the file has not changed again.
 
 ## Settings
 
@@ -51,6 +52,7 @@ Change settings in `/mods`.
   `store`, `events`, `lifecycle` and `inventory` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - You need `node` on your `PATH`. Pages are written to `.omd/preview` in the repository.
+  A `.gitignore` containing `*` in `.omd/preview` (kept if one exists) makes Git ignore them.
 - Files can be up to 5 MB and responses up to about 48 KB. The inline view shows the first 4 KB of Markdown or code,
   or 48 KB of a diff. It also stops at 2,000 lines, or 60 KB once quotes and backslashes are escaped. A notice says
   when the view was cut.

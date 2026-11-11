@@ -1,6 +1,6 @@
 # Agent instructions
 
-Oh My Diff (OMD) patches Codex `0.166.0` with a host for TypeScript mods.
+Oh My Diff (OMD) patches Codex `0.167.0` with a host for TypeScript mods.
 
 ## Build a mod
 
@@ -11,8 +11,11 @@ this one.
 
 - New features are mods, plugins, skills or hooks. The patched Codex code (`runtime/`) only gets general building
   blocks that several unrelated mods can use, never one feature.
-- Set up and check changes as described in [CONTRIBUTING.md](CONTRIBUTING.md). Run only the checks for what you
-  changed; the full suite runs nightly.
+- Set up and check changes as described in [CONTRIBUTING.md](CONTRIBUTING.md). Run `mise run check:changed` after
+  your last edit, plus related tests and any native or terminal checks it cannot select. Preview with
+  `mise run check:changed -- --list`; the full suite runs nightly.
+- Follow [code conventions](docs/contributing/code-style.md) and the [terminal UI style guide](docs/STYLEGUIDE.md).
+  Add a test only for behavior nothing else covers; use the [test guide](tests/README.md#write-a-useful-test).
 - Edit the patch in a scratch tree (`python3 .github/scripts/build.py setup NAME`), never by hand.
   `python3 .github/scripts/build.py sync NAME` writes it back. The steps are in
   [docs/contributing/runtime.md](docs/contributing/runtime.md).

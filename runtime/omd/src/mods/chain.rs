@@ -1507,7 +1507,7 @@ impl ModHost {
             .flat_map(|policy| policy.namespaces.clone())
             .collect::<Vec<_>>();
         let policy = crate::sha256_hex(
-            &serde_json::to_vec(
+            serde_json::to_vec(
                 &exempt
                     .iter()
                     .filter_map(|id| {
@@ -1546,7 +1546,7 @@ impl ModHost {
                         "sha256": loaded.selection.sha256, "source": loaded.selection.path,
                         "scope": loaded.selection.scope, "capabilities": package.capabilities,
                         "dependencies": package.dependencies, "requires": package.requires,
-                        "services": package.services, "registrations": loaded.registrations,
+                        "services": package.services, "registrations": *loaded.registrations,
                         "source_use": loaded.source_use}, "reason": "load"});
                     let chain = intercept(
                         &mut Access::Held(self),
@@ -1629,9 +1629,9 @@ impl ModHost {
             if let Some(loaded) = self.loaded.remove(&id) {
                 self.order.retain(|item| *item != id);
                 self.rejected.push(ModRejection {
-                    path: loaded.selection.path,
+                    path: loaded.selection.path.clone(),
                     id: Some(id),
-                    scope: loaded.selection.scope,
+                    scope: loaded.selection.scope.clone(),
                     reason,
                 });
             }
@@ -1703,7 +1703,7 @@ impl ModHost {
             .map(|(id, loaded)| json!([id, loaded.selection.sha256, loaded.selection.settings]))
             .collect::<Vec<_>>();
         let fingerprint = crate::sha256_hex(
-            &serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
+            serde_json::to_vec(&json!([self.generation, policies])).unwrap_or_default(),
         );
         Some(SendPolicy {
             required: required == Some(true) || !self.policies.is_empty(),

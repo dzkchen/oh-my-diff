@@ -15,6 +15,7 @@ export type State = {
   skipped: Record<string, string>;
   preview: { path: string; source_sha256: string; source_version: number; thread_id: string; range: Json; actions: string[] } | null;
   status: 'idle' | 'synced' | 'fallback' | 'stale';
+  recovery: 'degraded' | 'resynced' | null;
   reason: string;
 };
 export type Message = Record<string, Json>;
@@ -202,19 +203,20 @@ export function state(value: Json, adapter: Adapter): State {
     skipped,
     preview,
     status: saved.status === 'synced' || saved.status === 'stale' || saved.status === 'fallback' ? saved.status : 'idle',
+    recovery: saved.recovery === 'degraded' || saved.recovery === 'resynced' ? saved.recovery : null,
     reason: string(saved.reason ?? null) ?? '',
   };
 }
 
 export function failure(s: State, reason: string, stale = false): void {
   s.status = stale ? 'stale' : 'fallback';
+  s.recovery = null;
   s.reason = [...reason].slice(0, 256).join('');
 }
 
-export const HELD_REASON = /^(?:degraded|resynced): /;
 export function markSynced(s: State, reason = ''): void {
   s.status = 'synced';
-  if (!HELD_REASON.test(s.reason)) s.reason = reason;
+  if (!s.recovery) s.reason = reason;
 }
 
 export const OBSERVED_REPOSITORY_KEY = 'lsp.observed_repository';

@@ -21,8 +21,8 @@ several accounts. [Manage mods](../../../docs/manage-mods.md) covers the other w
 
 | Command | What it does |
 | --- | --- |
-| `/claude login [NAME]` | Sign in with your Claude plan; `NAME` adds another account |
-| `/claude login api [NAME]` | Sign in with Console API credits |
+| `/claude login [NAME]` | Sign in with your Claude plan; `NAME` adds another account. If `claude auth status` already reports that account signed in, it skips the browser and says so |
+| `/claude login api [NAME]` | Sign in with Console API credits; skips the browser the same way when already signed in with an API key |
 | `/claude remove NAME` | Drop an account's models and route; a named account is also signed out |
 | `/claude code CODE` | Send the code the sign-in page shows to a running login |
 | `/claude` (or `/claude status`) | Show the CLI version, each account's login and billing, and whether models are published. If the CLI is missing or older than `2.1.307`, it says so and what to run; if the CLI version changed since an account's models were read, it says to rerun `/claude login` |
@@ -62,6 +62,8 @@ Change settings in `/mods`.
 - Plan usage shows no charge. Anthropic bills Console usage, and each request's cost (the CLI's list-price figure)
   counts against your OMD budget and allowance alerts.
 - A request for a model other than the selected one is refused.
+- Requests reach Anthropic labelled `oh-my-diff` instead of as headless CLI traffic, and each one is set up to reuse the
+  previous request's prompt cache (Anthropic caches only prompts above a minimum length).
 - Each request starts a fresh CLI process, adding a fraction of a second. A CLI that has not finished 30 minutes after
   starting (for example one that never sends its request) is stopped with its child processes and the request fails
   with `claude_upstream_incomplete`. Retry it, and if it repeats, check `/claude` or update the CLI.

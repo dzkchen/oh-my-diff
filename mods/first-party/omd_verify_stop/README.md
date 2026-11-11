@@ -1,8 +1,8 @@
 # omd_verify_stop
 
-Stops the agent from finishing a coding task with untested edits. When a turn would end after code edits and no test or
-check has passed since the last edit, it continues the turn once with a short checklist. If a check then fails, it
-continues once more with the failure. It's experimental, and no install profile includes it.
+Asks the agent to check its edits before ending a turn. If no test or check has passed since the last code edit, it
+continues the turn once with a short checklist. If a check then fails, it continues once more with the failure.
+These prompts don't guarantee that the agent will run or pass a check. It's experimental, and no install profile includes it.
 
 ## Turn it on
 
@@ -27,8 +27,13 @@ It watches tool output in the turn:
   `.txt`) don't count, whichever way they're edited, and deleting a file the agent created (with `apply_patch` or
   `rm`) doesn't either.
 - Checks: test runners and build checks (pytest, `python -m unittest`, `runtests.py`, `cargo test|check|clippy`,
-  `go test|vet`, `pnpm|npm|yarn test`, jest, vitest, tsc, `make test|check`, rspec, phpunit, mvn, gradle and others),
-  passing on exit code 0. A check left running is settled when `write_stdin` reports its exit code.
+  `go test|vet`, `pnpm|npm|yarn test`, `node --test`, `mise run test|check`, jest, vitest (also `pnpm [exec] vitest`), tsc, `make test|check`, rspec, phpunit, mvn, gradle and others),
+  passing on exit code 0. A check in a command with `||`, `;` or a newline doesn't count as passing, since its exit
+  code may not be the check's; its failure still counts. A check piped into another command (`npx mocha | tail`)
+  doesn't count either unless `set -o pipefail` (or `set -euo pipefail`, followed by `;`, `&&` or a newline) comes
+  first, since the pipe's exit code is the last command's. A piped run whose output shows a failure (`1 failed`,
+  mocha `1 failing`, rspec `1 failure`, phpunit `FAILURES!`, a traceback and so on) still counts as failed. A check left running is settled when `write_stdin` reports
+  its exit code.
 
 When the turn would stop after an edit with no passing check since:
 

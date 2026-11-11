@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
-from scripts import build_provenance
+from scripts import build_provenance, release_lock
 from scripts.pr_ci import gate, needs_native
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".github/scripts"))
@@ -37,15 +37,52 @@ class PullRequestChecks(unittest.TestCase):
             git(root, "mv", "build-input", "README.md")
             git(root, "commit", "-qm", "rename")
             output = root / "output"
-            env = os.environ | {"PR_BASE_SHA": base, "GITHUB_OUTPUT": str(output)}
-            result = subprocess.run([sys.executable, script, "select"], cwd=root, env=env, capture_output=True)
+            event = root / "event.json"
+            for event_name in ("push", "merge_group"):
+                for revision in (base, "missing-base"):
+                    with self.subTest(event=event_name, revision=revision):
+                        event.write_text(ci.json.dumps({"before": revision} if event_name == "push"
+                                                       else {"merge_group": {"base_sha": revision}}))
+                        output.write_text("")
+                        env = os.environ | {"GITHUB_EVENT_NAME": event_name, "GITHUB_EVENT_PATH": str(event),
+                                            "GITHUB_OUTPUT": str(output)}
+                        result = subprocess.run([sys.executable, script, "select"], cwd=root, env=env, capture_output=True)
+                        if revision == base:
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertEqual(output.read_text(), "native=true\n")
+                        else:
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertEqual(output.read_text(), "")
+
+    def test_pr_synchronize_selects_all_native_changes_from_a_shallow_merge(self):
+        script = Path(__file__).resolve().parents[1] / "scripts/pr_ci.py"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            origin, checkout = root / "origin", root / "checkout"
+            origin.mkdir()
+            git(origin, "init", "-q", "-b", "main")
+            (origin / "README.md").write_text("base\n")
+            git(origin, "add", ".")
+            git(origin, "commit", "-qm", "base")
+            git(origin, "checkout", "-qb", "feature")
+            (origin / "runtime").mkdir()
+            (origin / "runtime/input.rs").write_text("native change\n")
+            git(origin, "add", ".")
+            git(origin, "commit", "-qm", "native change")
+            before = git(origin, "rev-parse", "HEAD")
+            (origin / "README.md").write_text("docs followup\n")
+            git(origin, "commit", "-qam", "docs followup")
+            git(origin, "checkout", "-qb", "pr-merge", "main")
+            git(origin, "merge", "--no-ff", "-qm", "Merge PR", "feature")
+            git(root, "clone", "-q", "--depth", "2", "--branch", "pr-merge", origin.as_uri(), str(checkout))
+            event, output = root / "event.json", root / "output"
+            event.write_text(ci.json.dumps({"action": "synchronize", "before": before,
+                                            "after": git(origin, "rev-parse", "feature")}))
+            env = os.environ | {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(event),
+                                "GITHUB_OUTPUT": str(output)}
+            result = subprocess.run([sys.executable, script, "select"], cwd=checkout, env=env, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_text(), "native=true\n")
-            output.write_text("")
-            result = subprocess.run([sys.executable, script, "select"], cwd=root,
-                                    env=env | {"PR_BASE_SHA": "missing-base"}, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(output.read_text(), "")
 
     def test_native_selection_covers_shared_inputs_and_unknown_paths(self):
         for path in (
@@ -62,6 +99,48 @@ class PullRequestChecks(unittest.TestCase):
             "mods/first-party/omd_logo/index.ts", "mods/examples/hello/index.ts",
             "plugins/omd-code-execution/plugin.json", "tests/test_package.py",
         ]))
+
+    def test_native_fingerprint_tracks_inputs_across_main_syncs(self):
+        script = Path(__file__).resolve().parents[1] / "scripts/pr_ci.py"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            git(root, "init", "-q")
+            files = ("runtime/patches/native.patch", "upstream.lock.json", "mise.toml",
+                     ".github/workflows/pr.yml", "scripts/build.py", "mods/api.d.ts", "unknown-input")
+            for name in files:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("original\n")
+            git(root, "add", ".")
+            git(root, "commit", "-qm", "base")
+            output = root / "output"
+
+            def fingerprint():
+                output.write_text("")
+                subprocess.run([sys.executable, script, "fingerprint"], cwd=root, check=True,
+                               env=os.environ | {"GITHUB_OUTPUT": str(output)})
+                return output.read_text()
+
+            initial = fingerprint()
+            for name in ("README.md", "mods/first-party/example/index.ts", "tests/test_example.py",
+                         "runtime/mods.lock.json", "runtime/plugins.lock.json", "runtime/release.lock.json"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("unrelated update\n")
+                git(root, "add", name)
+                git(root, "commit", "-qm", name)
+                self.assertEqual(fingerprint(), initial, name)
+            for name in files:
+                path = root / name
+                path.write_text("changed\n")
+                git(root, "add", name)
+                git(root, "commit", "-qm", name)
+                self.assertNotEqual(fingerprint(), initial, name)
+                git(root, "revert", "--no-edit", "HEAD")
+                self.assertEqual(fingerprint(), initial)
+            git(root, "rm", "unknown-input")
+            git(root, "commit", "-qm", "delete input")
+            self.assertNotEqual(fingerprint(), initial)
 
     def test_gate_requires_all_selected_jobs_and_valid_selection(self):
         states = ("success", "failure", "cancelled", "skipped")
@@ -109,10 +188,7 @@ class HostedJobs(unittest.TestCase):
                 self.assertTrue(set(ci.HELPERS) <= set(selected))
         self.assertEqual(ci.scope("core"), ci.scope("core-integration"))
 
-    def test_build_targets_match_shipped_binaries_and_required_test_helpers(self):
-        shipped = [name for flag, name in zip(build.BUILD, build.BUILD[1:]) if flag == "--bin"]
-        self.assertCountEqual(shipped, build_provenance.BINARIES)
-        self.assertNotIn("--bins", build.BUILD)
+    def test_jobs_build_only_the_required_test_helpers(self):
         expected = {"omd-runner", "codex", "codex-code-mode-host", "rmcp_test_server", "test_stdio_server",
                     "test_streamable_http_server", "test_mcp_2026_stdio_server", "test_mcp_2026_discovery_stdio_server"}
         for job in ("native", "core"):
@@ -120,6 +196,37 @@ class HostedJobs(unittest.TestCase):
             selected = {name for flag, name in zip(args, args[1:]) if flag == "--bin"}
             self.assertEqual(selected, expected)
             self.assertNotIn("--bins", args)
+
+    def test_release_artifacts_are_built_copied_and_signed(self):
+        expected = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker", "omd-runner")
+        with TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            built = work / "target/release"
+            built.mkdir(parents=True)
+            for name in expected:
+                (built / name).write_text(name)
+            unsigned = {"unsigned": build_provenance.hashes(built)}
+            with mock.patch.object(build, "work_dir", return_value=work), \
+                    mock.patch.object(build, "cargo_env", return_value={}), \
+                    mock.patch.object(build, "cargo_run", return_value=0) as compiled, \
+                    mock.patch.object(build_provenance, "inputs", return_value={}), \
+                    mock.patch.object(build_provenance, "record_build"), \
+                    mock.patch.object(build_provenance, "verify", return_value=unsigned), \
+                    mock.patch.object(build_provenance, "record_signing"), \
+                    mock.patch.object(release_lock, "sign") as sign, \
+                    mock.patch.object(build, "pack_sdk") as packed, contextlib.redirect_stdout(io.StringIO()):
+                build.artifacts(argparse.Namespace(name="release"))
+            arguments = compiled.call_args.args[2]
+            self.assertEqual(arguments[:3], ["build", "--locked", "--release"])
+            self.assertCountEqual([name for flag, name in zip(arguments, arguments[1:]) if flag == "--bin"], expected)
+            self.assertCountEqual([name for flag, name in zip(arguments, arguments[1:]) if flag == "-p"],
+                                  ["codex-cli", "codex-code-mode-host", "codex-omd-extension", "codex-omd", "codex-omd-runner"])
+            self.assertNotIn("--bins", arguments)
+            self.assertEqual({path.name: path.read_text() for path in (work / "artifacts").iterdir()},
+                             {name: name for name in expected})
+            self.assertEqual([call.args[0].name for call in sign.call_args_list],
+                             ["codex", "omd-mod", "omd", "omd-contract", "omd-broker"])
+            packed.assert_called_once_with(work / "artifacts")
 
     def test_runner_is_built_with_the_packages_of_the_test_run(self):
         args = ["nextest", "run", "--locked", "-p", "codex-core", "-p", "codex-omd-runner", "--lib"]
@@ -132,7 +239,7 @@ class HostedJobs(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["cargo", "build", "--locked", "-p", "codex-core", "-p", "codex-omd-runner",
                                                  "--bin", "omd-runner"])
 
-    def test_a_release_dry_run_without_the_signing_key_prints_the_commands_unsigned(self):
+    def test_release_dry_runs_print_the_commands_without_signing(self):
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
             (directory / "omd.tar.xz").write_bytes(b"archive")
@@ -142,9 +249,33 @@ class HostedJobs(unittest.TestCase):
                 {"version": "1.2.3", "target": "aarch64-apple-darwin", "archive": "omd.tar.xz", "sha256": digest}))
             (directory / "provenance.json").write_text(ci.json.dumps({"commit": "c" * 40, "version": "1.2.3", "profile": "release"}))
             environment = {"GITHUB_SHA": "c" * 40, "GITHUB_REPOSITORY": "example/omd"}
-            with mock.patch.dict(os.environ, environment, clear=True), mock.patch("builtins.print") as printed:
-                ci.publish(directory, directory / "notes.md", dry_run=True)
-            self.assertIn("omd-release.json.sig", printed.call_args_list[0].args[1])
+            for key in (None, "present"):
+                configured = environment | ({"OMD_RELEASE_SIGNING_KEY": key} if key else {})
+                with self.subTest(signing_key=key), mock.patch.dict(os.environ, configured, clear=True), \
+                        mock.patch("builtins.print") as printed, \
+                        mock.patch.object(ci, "sign", side_effect=AssertionError("dry run signed")):
+                    ci.publish(directory, directory / "notes.md", dry_run=True, expected_version="1.2.3")
+                self.assertIn("omd-release.json.sig", printed.call_args_list[0].args[1])
+
+    def test_publication_rejects_a_reused_package_with_wrong_version_commit_or_checksum(self):
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "omd.tar.xz").write_bytes(b"archive")
+            digest = ci.support.digest(directory / "omd.tar.xz")
+            manifest = {"version": "1.2.3", "target": "aarch64-apple-darwin", "archive": "omd.tar.xz", "sha256": digest}
+            provenance = {"commit": "c" * 40, "version": "1.2.3", "profile": "release"}
+            environment = {"GITHUB_SHA": "c" * 40, "GITHUB_REPOSITORY": "example/omd", "GITHUB_REF": "refs/tags/v1.2.3"}
+            for mismatch in ("version", "commit", "checksum"):
+                with self.subTest(mismatch=mismatch), mock.patch.dict(os.environ, environment, clear=True), \
+                        mock.patch.object(ci, "sign") as sign, mock.patch.object(ci.support, "output") as publish:
+                    (directory / "omd-release.json").write_text(ci.json.dumps(manifest))
+                    (directory / "provenance.json").write_text(ci.json.dumps(
+                        provenance | ({"commit": "d" * 40} if mismatch == "commit" else {})))
+                    (directory / "SHA256SUMS").write_text(f"{'0' * 64 if mismatch == 'checksum' else digest}  omd.tar.xz\n")
+                    with self.assertRaises(ValueError):
+                        ci.publish(directory, directory / "notes.md", expected_version="1.2.4" if mismatch == "version" else "1.2.3")
+                    sign.assert_not_called()
+                    publish.assert_not_called()
 
 
 class DeveloperBuilds(unittest.TestCase):

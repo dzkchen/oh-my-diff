@@ -59,7 +59,11 @@ impl Mods {
         let schema = &input.request["requested_schema"];
         let secrets = secret_fields(schema);
         if let Ok(mut pending) = self.elicitations.lock() {
-            let key = format!("{}\0{}", input.server, input.request_id);
+            let key = (
+                lead.thread.to_string(),
+                input.server.to_owned(),
+                input.request_key.to_owned(),
+            );
             pending.retain(|(pending, _)| *pending != key);
             if pending.len() >= 64 {
                 pending.pop_front();
@@ -150,7 +154,11 @@ impl Mods {
         else {
             return;
         };
-        let key = format!("{}\0{}", input.server, input.request_id);
+        let key = (
+            lead.thread.to_string(),
+            input.server.to_owned(),
+            input.request_key.to_owned(),
+        );
         let secrets = self.elicitations.lock().ok().and_then(|mut pending| {
             let at = pending.iter().position(|(pending, _)| *pending == key)?;
             pending.remove(at).map(|(_, secrets)| secrets)

@@ -92,22 +92,28 @@ pub use workspace::Snapshot;
 pub use workspace::WorkspaceChange;
 pub use workspace::WorkspaceIndex;
 pub use workspace::WorkspaceTransaction;
+pub use workspace::agent_writable;
 pub use workspace::capture_tracked;
 pub use workspace::change_baseline;
 pub use workspace::cleanup_owned_directory;
 pub use workspace::create_worktree;
+pub use workspace::git_work_tree;
 pub use workspace::hash_tracked;
+pub use workspace::inside_repository;
 pub use workspace::observe_workspace_changes;
 pub use workspace::record_workspace_change;
 pub use workspace::take_workspace_changes;
 pub use workspace::tracked_paths;
 pub use workspace::tree_path;
 pub use workspace::workspace_path;
+pub use workspace::workspace_refused;
 
 pub use mods::AUTHORITY_CAPABILITIES;
 pub use mods::CODEX_CONFIG_COMPLETION_WAKE;
 pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 pub use mods::CODEX_CONFIG_UPDATE_PLAN;
+pub use mods::CODEX_HOST_RELEASE;
+pub use mods::ConfigurationOverrides;
 pub use mods::FileStamp;
 pub use mods::MANAGED_POLICY_FILE;
 pub use mods::MANAGED_POLICY_KEY;
@@ -138,6 +144,7 @@ pub use mods::ModComponent;
 pub use mods::ModComponentAction;
 pub use mods::ModComposerWhen;
 pub(crate) use mods::ModConfiguration;
+pub use mods::ModContributes;
 pub use mods::ModDensity;
 pub use mods::ModDirection;
 pub use mods::ModFind;
@@ -146,16 +153,20 @@ pub use mods::ModFsRoot;
 pub use mods::ModGrants;
 pub use mods::ModHost;
 pub use mods::ModHostCall;
+pub use mods::ModHostCallback;
 pub use mods::ModHttpAccess;
 pub use mods::ModIcons;
 pub use mods::ModInstallRequest;
+pub use mods::ModInvokeOptions;
 pub use mods::ModKeyAction;
 pub use mods::ModKeyContext;
 pub use mods::ModKeys;
 pub use mods::ModLayout;
+pub use mods::ModOpenOptions;
 pub use mods::ModOsAccess;
 pub use mods::ModOverlay;
 pub use mods::ModOverlayClip;
+pub use mods::ModPackage;
 pub use mods::ModPackageGrant;
 pub use mods::ModPackageLock;
 pub(crate) use mods::ModPackagePlan;
@@ -168,6 +179,7 @@ pub use mods::ModRegion;
 pub use mods::ModRenderSite;
 pub use mods::ModScreenAnchor;
 pub use mods::ModSelectOption;
+pub use mods::ModSelection;
 pub use mods::ModSidebarSide;
 pub use mods::ModSpacing;
 pub use mods::ModSpan;
@@ -221,7 +233,10 @@ pub use mods::persist_texts;
 pub use mods::read_only_call;
 pub use mods::render_shared;
 pub use mods::take_turned_off;
+pub use mods::terminal_configuration_owner;
+pub use mods::terminal_shared;
 pub use mods::write_settings;
+pub use mods::write_settings_shared;
 
 pub mod turn_evidence;
 
@@ -230,3 +245,14 @@ pub mod plugin_component;
 mod session_policy;
 
 pub use mods::release_disposable_runners;
+
+/// Prints one CLI result; a closed reader ends the output quietly.
+pub fn print_output(text: &str) {
+    use std::io::Write;
+    if let Err(error) = writeln!(std::io::stdout().lock(), "{text}")
+        && error.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}

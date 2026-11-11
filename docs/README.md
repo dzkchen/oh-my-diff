@@ -1,7 +1,7 @@
 # Oh My Diff docs
 
-Every page in the Oh My Diff (OMD) docs, grouped by what you want to do. If you're new to OMD, start with
-the [README](../README.md). These docs describe the `main` branch, which can be ahead of the current release.
+New to Oh My Diff (OMD)? Start with the [README](../README.md) or [install OMD](install.md).
+These docs describe the `main` branch, which can be ahead of the current release.
 
 ## Use OMD
 
@@ -45,6 +45,9 @@ the [README](../README.md). These docs describe the `main` branch, which can be 
 | I want to | Read |
 | --- | --- |
 | Change OMD, its mods or its docs | [Contributing](../CONTRIBUTING.md) |
+| Choose checks for my diff | [Check your change](../CONTRIBUTING.md#check-your-change) |
+| Follow code conventions and update generated files | [Code conventions](contributing/code-style.md) |
+| Design a terminal view or review a visible change | [Terminal UI style guide](STYLEGUIDE.md) |
 | Change the patched Codex code | [Change the patched Codex code](contributing/runtime.md) |
 | Understand what CI runs | [How CI checks a change](contributing/ci.md) |
 | Change how CI caches downloads and builds | [CI caching](contributing/ci-caching.md) |

@@ -2,6 +2,7 @@ use super::*;
 use codex_omd::Limits;
 use codex_omd::MOD_API_VERSION;
 use codex_omd::ModHost;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModStore;
 use codex_omd::WorkerLimits;
 use serde_json::json;
@@ -24,6 +25,7 @@ fn rates() -> Rates {
 
 fn account(task: &Arc<Task>, root: &Path, owner: &str) -> Account {
     Account {
+        mod_runtime: None,
         task: task.clone(),
         owner: owner.into(),
         model: "fixture-model".into(),
@@ -130,7 +132,11 @@ fn install_package(
         )
         .unwrap();
     store.enable(&package, true).unwrap();
-    let runtime = ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap();
+    let runtime = ModHost::open(
+        root.join("mod-store").canonicalize().unwrap(),
+        ModOpenOptions::default(),
+    )
+    .unwrap();
     let required = runtime.required_surfaces();
     let runtime = Arc::new(Mutex::new(runtime));
     accounts.install_mod_runtime(runtime.clone(), required);
@@ -272,7 +278,7 @@ fn final_request_policies_redact_unary_image_and_memory_bodies() {
         &["middleware", "request_policy"],
     );
     let mut image = json!({"model":"image-model","prompt":"draw SECRET-1"});
-    ResponseObserver::police_unary(&accounts, None, &mut image).unwrap();
+    ResponseObserver::police_unary(&accounts, None, &mut image, &http::Extensions::new()).unwrap();
     assert_eq!(image["prompt"], "draw [secret]");
     let mut memory = serde_json::to_value(codex_api::MemorySummarizeInput {
         model: "memory-model".into(),
@@ -287,15 +293,22 @@ fn final_request_policies_redact_unary_image_and_memory_bodies() {
         reasoning: None,
     })
     .unwrap();
-    ResponseObserver::police_unary(&accounts, Some("child"), &mut memory).unwrap();
+    ResponseObserver::police_unary(
+        &accounts,
+        Some("child"),
+        &mut memory,
+        &http::Extensions::new(),
+    )
+    .unwrap();
     assert_eq!(
         memory["traces"][0]["items"][0]["content"][0]["text"],
         "key [secret]"
     );
     let mut edit = json!({"model":"image-model","prompt":"edit","images":[{"file_id":"f1"}]});
-    let refused = ResponseObserver::police_unary(&accounts, None, &mut edit)
-        .unwrap_err()
-        .to_string();
+    let refused =
+        ResponseObserver::police_unary(&accounts, None, &mut edit, &http::Extensions::new())
+            .unwrap_err()
+            .to_string();
     assert!(refused.contains("unscanned file"), "{refused}");
 }
 
@@ -471,7 +484,7 @@ fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
     task.authorize_route("fixture", "fixture-model").unwrap();
     task.authorize_route("fixture", "fixture-fast").unwrap();
     request.headers.insert("thread-id", "main".parse().unwrap());
-    let mut prepared = Some(body.clone());
+    let mut prepared = Some(body);
     accounts.prepare(&mut request, &mut prepared).unwrap();
     let routed: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
     assert_eq!(routed["model"], "fixture-fast");
@@ -524,7 +537,7 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
     install_middleware(&accounts, root.path(), source);
     let notified = Arc::new(Mutex::new(Vec::new()));
     let sink = notified.clone();
-    accounts.install_mod_notifier(Arc::new(move |event, payload| {
+    accounts.install_mod_notifier(Arc::new(move |_terminal_owner, event, payload| {
         sink.lock().unwrap().push((event, payload));
     }));
     let mut lead = account(&task, root.path(), "lead");
@@ -793,6 +806,42 @@ fn completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transport
 }
 
 #[test]
+fn a_paused_cost_snapshot_never_replaces_a_newer_one() {
+    let (root, accounts, task, mut request, body) = setup();
+    let path = root.path().join("evidence").join("task-cost.json");
+    let (staged, paused) = std::sync::mpsc::channel();
+    let (finished, resume) = std::sync::mpsc::channel::<()>();
+    *BEFORE_COST_REPLACE.lock().unwrap() = Some((
+        path.clone(),
+        Box::new({
+            let path = path.clone();
+            move || {
+                staged.send(()).unwrap();
+                if cost_write_lock(&path).try_lock().is_ok() {
+                    let _ = resume.recv();
+                }
+            }
+        }),
+    ));
+    let stale = std::thread::spawn({
+        let account = account(&task, root.path(), "worker");
+        move || write_cost_capture(&account, Durability::Volatile).unwrap()
+    });
+    paused.recv().unwrap();
+    let _attempt = accounts.before_send(&mut request, Some(&body)).unwrap();
+    write_cost_capture(&account(&task, root.path(), "worker"), Durability::Volatile).unwrap();
+    let _ = finished.send(());
+    stale.join().unwrap();
+    assert!(!COST_WRITES.lock().unwrap().contains_key(&path));
+    let persisted: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        persisted["attempts"].as_array().map(Vec::len),
+        Some(task.cost_capture().unwrap().attempts.len())
+    );
+    assert_eq!(task.cost_capture().unwrap().attempts.len(), 1);
+}
+
+#[test]
 fn observe_only_accounts_record_usage_without_admission() {
     let (root, accounts, task, mut request, _body) = setup();
     let mut lead = account(&task, root.path(), "lead");
@@ -804,8 +853,8 @@ fn observe_only_accounts_record_usage_without_admission() {
         .unwrap()
         .insert("main".into(), lead);
     request.headers.insert("thread-id", "main".parse().unwrap());
-    assert!(!accounts.requires_observation(Some("main")));
-    assert!(accounts.requires_observation(Some("child")));
+    assert!(!accounts.requires_observation(Some("main"), &http::Extensions::new()));
+    assert!(accounts.requires_observation(Some("child"), &http::Extensions::new()));
     let body = EncodedJsonBody::encode(&json!({"model":"any-model","stream":true,
         "tools":[{"type":"web_search"}]}))
     .unwrap();
@@ -900,7 +949,7 @@ fn route_url_and_model_identity_cannot_drift() {
 #[test]
 fn paid_preparation_caps_output_and_rejects_unbounded_or_underreserved_requests() {
     let (_root, accounts, task, mut request, body) = setup();
-    let mut prepared = Some(body.clone());
+    let mut prepared = Some(body);
     accounts.prepare(&mut request, &mut prepared).unwrap();
     let value: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
     assert_eq!(value["max_output_tokens"], 128);
@@ -963,7 +1012,7 @@ fn paid_preset_grants_bind_repository_route_and_current_bytes() {
     let path = root.path().join("paid.json");
     let grant = json!({"schema":1,"paid_api_key":true,"revocable":true,"repository":"repo-a","provider":"provider-a","model":"model-a","responses_url":"https://example.invalid/responses"});
     std::fs::write(&path, grant.to_string()).unwrap();
-    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
+    let sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
     let allowed = || {
         worker_authorized(
             &path,
@@ -1009,7 +1058,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     let path = root.path().join("subscription.json");
     let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repository":"fixture","provider":"openai","model":"fixture-model","responses_url":SUBSCRIPTION_RESPONSES_URL});
     std::fs::write(&path, grant.to_string()).unwrap();
-    let sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
+    let sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
     assert!(worker_authorized(
         &path,
         &sha,
@@ -1066,7 +1115,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
         let rates = account.rates.as_mut().unwrap();
         rates.included_subscription = true;
         rates.reservation_microusd = 0;
-        account.worker_authorization = Some((path.clone(), sha.clone()));
+        account.worker_authorization = Some((path.clone(), sha));
     }
     let body = EncodedJsonBody::encode(
         &json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true}),
@@ -1101,7 +1150,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     let mut mixed = grant.clone();
     mixed["paid_api_key"] = true.into();
     std::fs::write(&path, mixed.to_string()).unwrap();
-    let mixed_sha = codex_omd::sha256_hex(&std::fs::read(&path).unwrap());
+    let mixed_sha = codex_omd::sha256_hex(std::fs::read(&path).unwrap());
     assert!(!worker_authorized(
         &path,
         &mixed_sha,
@@ -1323,7 +1372,7 @@ fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
     let (root, accounts, task, mut request, body) = setup();
     let notified = Arc::new(Mutex::new(Vec::new()));
     let sink = notified.clone();
-    accounts.install_mod_notifier(Arc::new(move |event, payload| {
+    accounts.install_mod_notifier(Arc::new(move |_terminal_owner, event, payload| {
         sink.lock().unwrap().push((event, payload));
     }));
     let mut lead = account(&task, root.path(), "lead");
@@ -1368,4 +1417,128 @@ fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
         "unpriced"
     );
     assert!(task.attempts().unwrap().is_empty());
+}
+
+#[test]
+fn request_policy_context_captures_terminal_middleware_through_the_response() {
+    let (root, accounts, _task, mut request, body) = setup();
+    let source = "export default api => { api.intercept('model_request', (e, next) => api.settings.mode === 'blocked' ? {deny:'terminal blocked'} : next(e)); api.intercept('response_stream', {match:{kind:'text'}}, (e,next) => next({...e,text:api.settings.mode + ':' + e.text})); }";
+    let (store, package, _) = install_package(&accounts, root.path(), source, &["middleware"]);
+    let manifest = package.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["settings_schema"] =
+        json!({"type":"object","properties":{"mode":{"type":"string","default":"saved"}}});
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    let inspected = ModStore::inspect_package(&package).unwrap();
+    store
+        .trust(
+            package.clone(),
+            inspected["sha256"].as_str().unwrap(),
+            vec!["middleware".into()],
+            "user",
+        )
+        .unwrap();
+    store.enable(&package, true).unwrap();
+    let shared = std::fs::read(store.root().join("mods.json")).unwrap();
+    let a = Arc::new(Mutex::new(
+        ModHost::open(
+            store.root().to_path_buf(),
+            codex_omd::ModOpenOptions::default(),
+        )
+        .unwrap(),
+    ));
+    let b = Arc::new(Mutex::new(
+        ModHost::open(
+            store.root().to_path_buf(),
+            codex_omd::ModOpenOptions::default(),
+        )
+        .unwrap(),
+    ));
+    let notified = Arc::new(Mutex::new(Vec::new()));
+    let sink = notified.clone();
+    accounts.install_mod_notifier(Arc::new(move |owner, _, _| {
+        sink.lock().unwrap().push(owner.map(str::to_owned));
+    }));
+    let bind = |runtime: &Arc<Mutex<ModHost>>, owner: &str| RuntimeBinding {
+        terminal_owner: Some(owner.into()),
+        runtime: runtime.clone(),
+        required: runtime.lock().unwrap().required_surfaces(),
+    };
+    a.lock()
+        .unwrap()
+        .write_configuration(
+            "request_router",
+            &json!({"mode":"blocked"}),
+            "terminal",
+            &[],
+        )
+        .unwrap();
+    a.lock().unwrap().refresh(&|| true).unwrap();
+    request.policy_context.insert(bind(&a, "terminal-a"));
+    let mut encoded = Some(body.clone());
+    assert!(
+        accounts
+            .prepare(&mut request, &mut encoded)
+            .unwrap_err()
+            .to_string()
+            .contains("terminal blocked")
+    );
+    request.policy_context.clear();
+    request.policy_context.insert(bind(&b, "terminal-b"));
+    let mut encoded = Some(body.clone());
+    accounts.prepare(&mut request, &mut encoded).unwrap();
+    let captured_account = accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .get("child")
+        .unwrap()
+        .clone();
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .get_mut("child")
+        .unwrap()
+        .owner = "unadmitted-worker".into();
+    let mut attempt = accounts
+        .before_send(&mut request, encoded.as_ref())
+        .unwrap()
+        .unwrap();
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("child".into(), captured_account);
+    request.policy_context.clear();
+    request.policy_context.insert(bind(&a, "terminal-a"));
+    let mut delta =
+        json!({"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"hello"});
+    attempt.observe(&mut delta, true).unwrap();
+    assert_eq!(delta["delta"], "saved:hello");
+    drop(attempt);
+    a.lock()
+        .unwrap()
+        .write_configuration("request_router", &json!({"mode":"local"}), "terminal", &[])
+        .unwrap();
+    a.lock().unwrap().refresh(&|| true).unwrap();
+    let mut encoded = Some(body);
+    accounts.prepare(&mut request, &mut encoded).unwrap();
+    let mut attempt = accounts
+        .before_send(&mut request, encoded.as_ref())
+        .unwrap()
+        .unwrap();
+    let mut delta =
+        json!({"type":"response.output_text.delta","output_index":0,"item_id":"n","delta":"hello"});
+    attempt.observe(&mut delta, true).unwrap();
+    assert_eq!(delta["delta"], "local:hello");
+    drop(attempt);
+    assert_eq!(
+        *notified.lock().unwrap(),
+        vec![Some("terminal-b".to_owned()), Some("terminal-a".to_owned())]
+    );
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        shared
+    );
 }

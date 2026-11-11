@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
-import { runScenarioObject } from './cli.mjs';
+import { runScenarioObject } from './project.mjs';
 
 const TERMINAL = { event: 'draw', ledger: null };
 
@@ -38,7 +38,6 @@ export const storeMock = ({ get = [], put = [], delete: remove = [] } = {}) => h
   'store.delete': remove.map(() => ({ result: { deleted: true } })),
 });
 
-// Fields combine in order: host operation queues and packages append, settings and tiers merge, other fields take the last value.
 /** @type {typeof import('../testing.d.ts').scenario} */
 export function scenario(...parts) {
   /** @type {import('../testing.d.ts').Scenario} */
@@ -118,7 +117,7 @@ export const findAll = (view, match) => [...walk(view)].filter(matches(match));
 export const find = (view, match) => findAll(view, match)[0];
 /** @type {typeof import('../testing.d.ts').text} */
 export function text(view) {
-  const own = node => node.text ?? node.spans?.map(span => span.text).join('') ?? node.rows?.map(row => row.label).join('\n') ?? node.title ?? (typeof node.value === 'string' ? node.value : undefined);
+  const own = node => node.text ?? node.spans?.map(span => span.text).join('') ?? node.lines?.map(line => line.map(span => span.text).join('')).join('\n') ?? node.unified ?? node.rows?.map(row => row.label).join('\n') ?? node.title ?? (typeof node.value === 'string' ? node.value : undefined);
   return roots(view).map(node => [own(node), text(node.children ?? [])].filter(Boolean).join('\n')).filter(Boolean).join('\n');
 }
 

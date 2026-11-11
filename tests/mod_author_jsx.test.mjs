@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -24,7 +24,7 @@ function project(source, { typescript = true, typecheck = false } = {}) {
     }));
   }
   writeFileSync(join(directory, 'package.json'), JSON.stringify({ type: 'module' }));
-  writeFileSync(join(directory, 'mod.json'), JSON.stringify({ id: 'jsx_fixture', version: '0.1.0', description: 'JSX fixture', capabilities: ['terminal'] }));
+  writeFileSync(join(directory, 'mod.json'), JSON.stringify({ schema: 1, id: 'jsx_fixture', api: '1.0.0', state_version: 1, version: '0.1.0', description: 'JSX fixture', capabilities: ['terminal'] }));
   writeFileSync(join(directory, 'index.tsx'), source);
   return directory;
 }
@@ -82,6 +82,15 @@ test('a hand-written index.ts is never overwritten by index.tsx', async () => {
     assert.equal(readFileSync(join(directory, 'index.ts'), 'utf8'), handWritten);
   });
 });
+
+test('type checking a JSX project leaves an author-owned tsconfig.omd-jsx.json alone', () => withProject('export const tree = <slot />;', { typecheck: true }, directory => {
+  const owned = '{"extends": "./tsconfig.json"}\n';
+  writeFileSync(join(directory, 'tsconfig.omd-jsx.json'), owned);
+  const result = check(directory);
+  assert.equal(result.status, 0, result.output);
+  assert.equal(readFileSync(join(directory, 'tsconfig.omd-jsx.json'), 'utf8'), owned);
+  assert.deepEqual(readdirSync(directory).filter(name => name.startsWith('tsconfig.omd-jsx')), ['tsconfig.omd-jsx.json']);
+}));
 
 test('the runtime accepts every component kind declared by the API', () => {
   const api = readFileSync(join(mods, 'api.d.ts'), 'utf8');

@@ -30,6 +30,7 @@ impl ModHostCall {
         if self
             .package_target()
             .is_some_and(|field| self.arguments[field].is_string())
+            || self.operation == "settings.write" && self.arguments["scope"].is_string()
         {
             return Ok("packages");
         }
@@ -105,7 +106,7 @@ impl ModHostCall {
             "config.describe" => Ok("config"),
             "config.set" => Ok("config.write"),
             "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
-            | "packages.reload" | "routes.write" => Ok("packages"),
+            | "packages.reload" | "plugins.components" | "routes.write" => Ok("packages"),
             "routes.add" | "routes.models" => Ok("agents"),
             "settings.write" => Ok("commands"),
             "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
@@ -256,7 +257,7 @@ fn metadata(loaded: &Loaded) -> Result<(Value, String, [u8; 32])> {
         "intercept": MOD_INTERCEPT_SURFACES.iter().map(|(surface, capability)| (surface.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
         "state": "store",
         "contracts": "contracts",
-        "adapter": loaded.adapter,
+        "adapter": loaded.adapter.as_ref().map(|adapter| &adapter.module),
     });
     // `entrypoint_sha256` stands for the source.
     let mut identity = Sha256::new();
@@ -310,6 +311,9 @@ pub(super) fn run(
         invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload}),
     };
     request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
+    if event != "inspect" {
+        request.invocation["registrations_sha256"] = json!(loaded.registrations.sha256());
+    }
     let render = event == "intercept" && request["payload"]["surface"] == "render";
     let component = event == "component";
     let session = loaded.session_key.as_ref().filter(|_| {
@@ -401,6 +405,11 @@ pub(super) fn run(
         scope.check_execution(started.elapsed().saturating_sub(waited))?;
         Ok(receipt)
     };
+    let registered = |value: &Value| {
+        value["registrations"].is_null()
+            || serde_json::from_value::<Registrations>(value["registrations"].clone())
+                .is_ok_and(|registrations| registrations == *loaded.registrations)
+    };
     let evaluated = match &warm {
         Some(key) => process::evaluate_warm(
             key,
@@ -408,6 +417,7 @@ pub(super) fn run(
             loaded.code_cache.as_deref(),
             budget,
             active,
+            &registered,
             &mut answer,
         ),
         None => process::evaluate(
@@ -425,7 +435,12 @@ pub(super) fn run(
     })?;
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
-    if event != "inspect" && reply.registrations != loaded.registrations {
+    if event != "inspect"
+        && reply
+            .registrations
+            .as_ref()
+            .is_some_and(|registrations| registrations != &*loaded.registrations)
+    {
         if let Some(key) = &warm {
             process::invalidate_warm(key);
         }
@@ -446,7 +461,7 @@ fn fit_history(request: &mut Request) -> Result<()> {
     if serde_json::to_vec(&*request)?.len() <= process::INPUT_LIMIT {
         return Ok(());
     }
-    let Some(items) = request
+    let Some(mut items) = request
         .invocation
         .get_mut("payload")
         .and_then(|payload| payload.get_mut("items"))
@@ -469,8 +484,24 @@ fn fit_history(request: &mut Request) -> Result<()> {
         room -= bytes;
         kept += 1;
     }
-    request.invocation["payload"]["items"] = Value::Array(items[items.len() - kept..].to_vec());
+    request.invocation["payload"]["items"] = Value::Array(items.split_off(items.len() - kept));
     Ok(())
+}
+
+fn encoded_len(value: &Value) -> Result<usize> {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    serde_json::to_writer(&mut count, value)?;
+    Ok(count.0)
 }
 
 fn receipt_for(
@@ -488,14 +519,14 @@ fn receipt_for(
             json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
         }
     };
-    let bytes = serde_json::to_vec(&receipt)?.len();
+    let bytes = encoded_len(&receipt)?;
     let room = scope
         .receipt_room()
         .min(HOST_RECEIPT_BYTES.saturating_sub(receipts_bytes));
     if bytes > room {
         let receipt = json!({"call": call, "error": format!(
         "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
-        let bytes = serde_json::to_vec(&receipt)?.len();
+        let bytes = encoded_len(&receipt)?;
         return Ok((receipt, bytes));
     }
     Ok((receipt, bytes))

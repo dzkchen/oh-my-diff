@@ -5,16 +5,21 @@ import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
+const assets = { 'cache_ttl.ts': { text: readFileSync(new URL('./cache_ttl.ts', import.meta.url), 'utf8'), sha256: '0'.repeat(64) } };
 const NOW = 1_800_000_000_000;
 const MINUTE = 60_000;
 
-function run(event, payload, state, { settings = {}, now = NOW, answer = () => ({}) } = {}) {
+function run(event, payload, state, { settings = {}, now = NOW, answer = () => ({}), schedule = args => args } = {}) {
   const calls = [];
-  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
+  const output = callback({ source, filename: 'index.ts', entrypoint: 'index.ts', assets, api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
     virtual_time_ms: now, hook_budget_ms: 2000 }, call => {
     calls.push(call);
-    if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.166.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
-    if (call.operation === 'events.schedule') return call.arguments;
+    if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.167.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
+    if (call.operation === 'events.schedule') {
+      const value = schedule(call.arguments);
+      if (value instanceof Error) throw value;
+      return value;
+    }
     if (call.operation === 'events.cancel') return { cancelled: true };
     const value = answer(call);
     if (value instanceof Error) throw value;
@@ -71,11 +76,17 @@ test('persistent subscription caching disarms auto compaction while explicit int
   const subscription = response({ credential: 'chatgpt', cost: { microusd: null, basis: 'included_subscription' } });
   const skipped = run('model_response', subscription, apiState);
   assert.equal(skipped.state.ttl, 0);
-  assert.deepEqual(skipped.calls, [['events.cancel', { key: 'idle' }]]);
+  assert.deepEqual(skipped.calls.map(([operation, args]) => [operation, args.placement]), [['terminal.notice', 'transcript'], ['events.cancel', undefined]]);
+  assert.match(skipped.calls[0][1].text, /inactive here: ChatGPT plans/);
+  assert.deepEqual(run('model_response', subscription, skipped.state).calls, [['events.cancel', { key: 'idle' }]]);
   assert.deepEqual(run('timer', { key: 'idle' }, skipped.state, { now: NOW + 27 * MINUTE }).calls, []);
-  assert.equal(run('model_response', subscription, null, { settings: { cache_ttl_minutes: '10' } }).state.ttl, 10 * MINUTE);
+  const explicit = run('model_response', subscription, null, { settings: { cache_ttl_minutes: '10' } });
+  assert.equal(explicit.state.ttl, 10 * MINUTE);
+  assert.ok(!explicit.calls.some(([operation]) => operation === 'terminal.notice'));
   const plain = response({ route: 'session', credential: null, cost: { microusd: null, basis: 'unpriced' } });
-  assert.equal(run('model_response', plain, apiState).state.ttl, 0, 'plain signed-in sessions do not carry an included-subscription cost label');
+  const unpriced = run('model_response', plain, apiState);
+  assert.equal(unpriced.state.ttl, 0, 'plain signed-in sessions do not carry an included-subscription cost label');
+  assert.match(unpriced.calls.find(([operation]) => operation === 'terminal.notice')[1].text, /no price is known/);
   assert.equal(run('model_response', plain, null, { settings: { cache_ttl_minutes: '30' } }).state.ttl, 30 * MINUTE);
 });
 
@@ -130,3 +141,13 @@ test('the timer compacts an idle thread or one waiting on the user, never a runn
   assert.deepEqual(run('turn_end', { turn_id: 't2', outcome: 'aborted' }, answered, { now: NOW + 28 * MINUTE }).calls, [['events.schedule', { key: 'idle', delay_ms: 1000 }]]);
 });
 
+
+test('a refused idle timer warns once and clears when a later one is armed', () => {
+  const full = () => new Error('timer_limit');
+  const refused = run('model_response', response(), null, { schedule: full });
+  assert.equal(refused.calls.filter(([operation]) => operation === 'terminal.notice').length, 1);
+  assert.equal(refused.state.limited, true);
+  const again = run('model_response', response({ request_id: 'r2' }), refused.state, { schedule: full });
+  assert.ok(!again.calls.some(([operation]) => operation === 'terminal.notice'));
+  assert.equal(run('model_response', response({ request_id: 'r3' }), again.state).state.limited, false);
+});

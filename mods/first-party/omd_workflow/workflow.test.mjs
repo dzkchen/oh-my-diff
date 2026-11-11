@@ -334,6 +334,47 @@ test('equivalent transport outages allow one fresh retry and one configured fall
   assert.deepEqual(run.calls.filter(call => call.operation === 'agents.spawn').map(call => call.arguments.route), ['contributor', 'contributor', 'opposite', 'lead']);
 });
 
+test('a default route missing from host.json names the setting to change', () => {
+  const run = fixture({ 'routes.list': () => [] });
+  begin(run.host);
+  assert.throws(() => invoke('delegate', { brief: 'Make the change' }, run.host), /no available worker route named "contributor"\. Run \/omd_workflow:routes.*\/mods.*set worker_route/);
+  const lonely = fixture({ 'routes.list': () => [] });
+  begin(lonely.host);
+  assert.throws(() => invoke('delegate', { brief: 'Make the change' }, lonely.host, { settings: { check: { program: 'check', argv: [] }, worker_route: 'opposite_lead' } }), /no other available lead route.*Run \/omd_workflow:routes.*set worker_route to a worker route from host\.json\.$/);
+});
+
+test('/omd_workflow:routes adds a worker and one reviewer route, saves the three settings and refuses without a second model', () => {
+  const catalog = names => names.map(model => ({ model, display_name: model, efforts: ['medium'], default_effort: 'medium', context_window: 272000 }));
+  const setup = (names, arg = '', lead = 'gpt-a', decline = false) => {
+    const calls = [];
+    const host = call => {
+      calls.push(call);
+      switch (call.operation) {
+        case 'routes.models': return catalog(names);
+        case 'task.status': return { ledger: { thread_id: 'thread-1' } };
+        case 'routes.add': return decline ? { status: 'declined' } : { route: `plan-${call.arguments.model ?? lead}-omd_workflow` };
+        case 'settings.write': return { settings: call.arguments.values };
+        default: throw new Error(`unexpected_operation: ${call.operation}`);
+      }
+    };
+    return { calls, display: invoke('routes', arg, host, { event: 'command', state: lead ? { 'thread-1': { model: lead, provider: 'fixture' } } : null }).value.display };
+  };
+  const done = setup(['gpt-a', 'gpt-b']);
+  assert.deepEqual(done.calls.filter(call => call.operation === 'routes.add').map(call => call.arguments), [{}, { model: 'gpt-b' }]);
+  assert.deepEqual(done.calls.find(call => call.operation === 'settings.write').arguments.values,
+    { worker_route: 'plan-gpt-a-omd_workflow', review_route: 'plan-gpt-b-omd_workflow', verify_route: 'plan-gpt-b-omd_workflow' });
+  assert.match(done.display, /gpt-a does the work, gpt-b reviews and verifies/);
+  const several = setup(['gpt-a', 'gpt-b', 'gpt-c']);
+  assert.match(several.display, /\/omd_workflow:routes MODEL.*gpt-b, gpt-c/);
+  assert.equal(several.calls.some(call => call.operation === 'routes.add'), false);
+  assert.deepEqual(setup(['gpt-a', 'gpt-b', 'gpt-c'], 'gpt-c').calls.filter(call => call.operation === 'routes.add').map(call => call.arguments), [{}, { model: 'gpt-c' }]);
+  const single = setup(['gpt-a']);
+  assert.match(single.display, /different model.*lists only gpt-a/);
+  assert.equal(single.calls.some(call => call.operation === 'routes.add'), false);
+  assert.match(setup(['gpt-a', 'gpt-b'], '', 'gpt-a', true).display, /declined/);
+  assert.match(setup(['gpt-a', 'gpt-b'], '', null).display, /send the agent a message first/);
+});
+
 test('changed route or workspace stops a retry and persisted interruption never recreates an agent', () => {
   let changed = false;
   const run = fixture({ 'agents.wait': () => outage, 'routes.list': () => routes.map(route => changed && route.name === 'contributor' ? { ...route, model: 'replacement' } : route) });
@@ -523,4 +564,18 @@ test('an initial task waits for a selected contract and an invalid one stops the
   const selected = fixture();
   invoke('', {}, selected.host, { event: 'turn_start', settings });
   assert.equal(selected.state.get('task').value.status, 'active');
+});
+
+test('self_verify under the solo contract submits a lead receipt for the exact candidate and records the verdict evidence', () => {
+  const run = fixture({}, 'solo_evidence');
+  begin(run.host);
+  const result = invoke('self_verify', { kind: 'self_review', candidate_sha256: candidate, review: verdict }, run.host).value;
+  const acceptance = run.state.get('task').value.acceptance.sha256;
+  assert.equal(result.outcome, 'pass');
+  assert.equal(run.receipts.length, 1);
+  assert.deepEqual([run.receipts[0].kind, run.receipts[0].candidate_sha256, run.receipts[0].acceptance_sha256, run.receipts[0].outcome, run.receipts[0].producer.kind],
+    ['self_review', candidate, acceptance, 'pass', 'lead']);
+  assert.equal(run.receipts[0].evidence.sha256, digest(verdict));
+  const decision = run.state.get('task').value.decisions.at(-1);
+  assert.deepEqual([decision.operation, decision.candidate, decision.outcome, run.state.get('task').value.status], ['self_review', candidate, 'pass', 'active']);
 });

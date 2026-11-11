@@ -1,3 +1,6 @@
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -154,7 +157,7 @@ fn store(args: &[String]) -> io::Result<Value> {
     )
 }
 
-const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock | sync [--offline|--rollback] (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
+const MODS_USAGE: &str = "usage: omd install REFERENCE [--version V] [--scope user|project] [--yes] [--details] [--store PATH] | omd mods list | catalog [QUERY] | inspect REFERENCE | enable|disable|update|remove|rollback|revoke|unblock ID | quarantine ID REASON | events | reset-lock | sync [--offline|--rollback] (same flags); REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION], git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH)";
 
 const APPROVAL_REQUIRED: &str = "package_approval_required";
 
@@ -164,13 +167,14 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
     let mut positional = Vec::new();
     let mut scope = "user".to_owned();
     let mut version = None;
-    let mut yes = false;
+    let (mut yes, mut details) = (false, false);
     let (mut offline, mut rollback) = (false, false);
     let mut root = None;
     let mut remaining = args.iter();
     while let Some(argument) = remaining.next() {
         match argument.as_str() {
             "--yes" => yes = true,
+            "--details" => details = true,
             "--offline" => offline = true,
             "--rollback" => rollback = true,
             "--scope" => scope = remaining.next().ok_or_else(usage)?.clone(),
@@ -233,25 +237,43 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                 .into_iter()
                 .flatten()
                 .map(|package| {
+                    let id = package["id"].as_str().unwrap_or("?");
+                    let flags = flags(package["scope"].as_str().unwrap_or("user"));
+                    let failed = package["failed"].as_str();
+                    let (state, note) = if let Some(reason) = package["blocked"].as_str() {
+                        (
+                            "quarantined",
+                            format!(": {reason}; `omd mods unblock {id}{flags}` lifts it"),
+                        )
+                    } else if package["needs_approval"] == true {
+                        (
+                            "needs approval",
+                            format!(": review it with `omd mods update {id}{flags}`"),
+                        )
+                    } else {
+                        (
+                            if package["enabled"] == true {
+                                "on"
+                            } else {
+                                "off"
+                            },
+                            failed
+                                .map(|failed| format!(" failed: {failed}"))
+                                .or_else(|| {
+                                    last_session(package).map(|failed| {
+                                        format!(" failed in the last session: {failed}")
+                                    })
+                                })
+                                .unwrap_or_default(),
+                        )
+                    };
                     format!(
-                        "{} {} {} {}{}{}",
-                        package["id"].as_str().unwrap_or("?"),
+                        "{id} {} {} {state}{}{note}",
                         package["version"].as_str().unwrap_or("-"),
                         package["scope"].as_str().unwrap_or("-"),
-                        if package["enabled"] == true {
-                            "on"
-                        } else {
-                            "off"
-                        },
                         package["source"]
                             .as_str()
                             .map_or(String::new(), |source| format!(" ({source})")),
-                        package["failed"]
-                            .as_str()
-                            .map(|failed| format!(" failed: {failed}"))
-                            .or_else(|| last_session(package)
-                                .map(|failed| format!(" failed in the last session: {failed}")))
-                            .unwrap_or_default()
                     )
                 })
                 .collect::<Vec<_>>();
@@ -322,31 +344,78 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
         "revoke" => {
             let id = first()?;
             store.revoke(&id)?;
+            let flags = flags(&scope);
             done(format!(
-                "Revoked {id}: it is off and its grant is dropped. Install or trust it again to restore it."
+                "Revoked {id}: it is off and its grant is dropped. `omd mods update {id}{flags}` approves it again."
             ))
         }
         "install" | "inspect" | "enable" | "disable" | "update" | "remove" | "rollback" => {
             let target = first()?;
-            let mut arguments = json!({"action": if action == "inspect" { "install" } else { action }, "scope": scope});
+            let locked_scope = store
+                .package_lock()?
+                .packages
+                .get(&target)
+                .map(|package| package.scope.clone());
+            let reviewed = action == "update" && locked_scope.as_deref() != Some(scope.as_str());
+            if reviewed
+                && let Some(other) = &locked_scope
+                && !store.selection_status()?["selections"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|item| {
+                        item["id"] == target.as_str()
+                            && item["scope"] == scope.as_str()
+                            && item["packaged"] != true
+                    })
+            {
+                return Err(io::Error::other(format!(
+                    "package_not_installed: {target} is installed at scope {other}; pass --scope {other}"
+                )));
+            }
+            let mut arguments = json!({"action": match action {
+                "inspect" => "install",
+                _ if reviewed => "trust",
+                _ => action,
+            }, "scope": scope, "target": "shared"});
             if matches!(action, "install" | "inspect") {
                 arguments["reference"] = json!(folder_reference(&target)?);
                 arguments["version"] = json!(version);
             } else {
                 arguments["id"] = json!(target);
             }
-            let preview = package_controls::preview(&store, arguments)?;
-            let summary = describe(&preview.public);
+            let preview = package_controls::preview(&store, arguments).map_err(|error| {
+                let text = error.to_string();
+                let hint = match action {
+                    "rollback" if text == "package_rollback_unavailable" => {
+                        format!(": {target} has no earlier version to go back to")
+                    }
+                    _ if text == "package_unavailable" => {
+                        format!(": {target} is not in the catalog; `omd mods catalog` lists what is")
+                    }
+                    _ if text == "package_version_unavailable" => format!(
+                        ": that version of {target} is not available; `omd mods catalog {target}` shows the latest"
+                    ),
+                    _ => return error,
+                };
+                io::Error::other(text + &hint)
+            })?;
+            let detailed = describe(&preview.public, true);
             if action == "inspect" {
-                return Ok(json!({"display": summary, "preview": preview.public}));
+                return Ok(json!({"display": detailed, "preview": preview.public}));
             }
+            let summary = if details {
+                detailed.clone()
+            } else {
+                describe(&preview.public, false)
+            };
             if action != "disable" && !yes {
                 if !io::IsTerminal::is_terminal(&io::stdin()) {
                     return Err(io::Error::other(format!(
                         "{APPROVAL_REQUIRED}: review `omd mods inspect` or run interactively, then pass --yes\n{summary}"
                     )));
                 }
-                if !confirm(&summary)? {
+                if !confirm(&summary, &detailed)? {
                     return Err(io::Error::other(format!("{APPROVAL_REQUIRED}: declined")));
                 }
             }
@@ -355,13 +424,15 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             let scope = preview.control.scope().unwrap_or(&scope);
             let flags = flags(scope);
             done(match action {
-                "install" => format!(
-                    "Installed {id} ({scope}). It is off: run `omd mods enable {id}{flags}` to turn it on."
-                ),
-                "update" => {
+                "install" | "update" => {
+                    let done = if action == "install" {
+                        format!("Installed {id} ({scope}).")
+                    } else {
+                        format!("Updated {id}.")
+                    };
                     match package_controls::list(&store, None) {
                         Ok(listed)
-                            if listed["packages"].as_array().into_iter().flatten().any(
+                            if !listed["packages"].as_array().into_iter().flatten().any(
                                 |package| {
                                     package["id"] == id.as_str()
                                         && package["scope"] == scope
@@ -369,17 +440,16 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                                 },
                             ) =>
                         {
-                            format!("Updated {id}.")
+                            format!(
+                                "{done} It is off: run `omd mods enable {id}{flags}` to turn it on."
+                            )
                         }
-                        Ok(_) => format!(
-                            "Updated {id}. It is off: run `omd mods enable {id}{flags}` to turn it on."
-                        ),
-                        Err(_) => format!("Updated {id}."),
+                        _ => done,
                     }
                 }
                 "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
                 "rollback" => format!("Rolled {id} back to its previous version."),
-                _ => format!("{id} is {}d.", action),
+                _ => format!("{id} is {action}d."),
             })
         }
         _ => Err(usage()),
@@ -395,10 +465,36 @@ fn folder_reference(reference: &str) -> io::Result<String> {
     } else {
         return Ok(reference.to_owned());
     };
-    Ok(path.canonicalize()?.display().to_string())
+    let resolved = path.canonicalize().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("package_folder_unavailable: {reference}: {error}"),
+        )
+    })?;
+    Ok(resolved.display().to_string())
 }
 
-fn describe(preview: &Value) -> String {
+fn phrases(capabilities: &Value) -> Vec<String> {
+    let capabilities = capabilities
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    codex_omd::package_controls::grant_phrases(&capabilities)
+        .iter()
+        .map(|phrase| {
+            format!(
+                "    {} {}",
+                if phrase["risky"] == true { "!" } else { "-" },
+                phrase["phrase"].as_str().unwrap_or_default()
+            )
+        })
+        .collect()
+}
+
+fn describe(preview: &Value, details: bool) -> String {
     let text = |value: &Value| match value {
         Value::Null => "-".to_owned(),
         Value::String(value) => value.clone(),
@@ -432,16 +528,21 @@ fn describe(preview: &Value) -> String {
             },
             text(&package["version"]["to"])
         ));
-        lines.push(format!("  source: {}", package["source"]["to"]));
-        lines.push(format!(
-            "  integrity: {}",
-            text(&package["integrity"]["to"])
-        ));
         lines.push(format!("  license: {}", text(&package["license"]["to"])));
-        lines.push(format!(
-            "  capabilities: {}",
-            text(&package["capabilities"]["to"])
-        ));
+        let can = phrases(&package["capabilities"]["to"]);
+        if can.is_empty() {
+            lines.push("  It needs no permissions.".to_owned());
+        } else {
+            lines.push("  It can:".to_owned());
+            lines.extend(can);
+        }
+        if details {
+            lines.push(format!("  source: {}", package["source"]["to"]));
+            lines.push(format!(
+                "  integrity: {}",
+                text(&package["integrity"]["to"])
+            ));
+        }
         for exposure in package["authority"]["to"]["exposure"]
             .as_array()
             .into_iter()
@@ -449,9 +550,18 @@ fn describe(preview: &Value) -> String {
         {
             lines.push(format!("  authority: {}", text(exposure)));
         }
+        for (key, value) in package["authority"]["to"].as_object().into_iter().flatten() {
+            if key != "exposure"
+                && !value.is_null()
+                && value.as_object().is_none_or(|fields| !fields.is_empty())
+            {
+                lines.push(format!("  {}: {}", key.replace('_', " "), text(value)));
+            }
+        }
         for (label, key) in [
             ("dependencies", "dependencies"),
             ("install scripts", "lifecycle"),
+            ("exec environment", "exec_environment"),
             ("secret environment", "secret_environment"),
         ] {
             if package[key]["to"]
@@ -466,7 +576,7 @@ fn describe(preview: &Value) -> String {
                 "  needs your approval: new or changed grant, authority or origin".to_owned(),
             );
         }
-        if package["state_version"]["handler_required"] == true {
+        if details && package["state_version"]["handler_required"] == true {
             lines.push(
                 "  state version changes: apply loads this version and refuses it without a migrate handler"
                     .to_owned(),
@@ -490,36 +600,80 @@ fn describe(preview: &Value) -> String {
             text(&changes["version"]["to"])
         ));
     }
+    for (label, key) in [
+        ("source sha256", "sha256"),
+        ("exec environment", "exec_environment"),
+        ("secret environment", "secret_environment"),
+        ("codex config", "codex_config"),
+    ] {
+        if (details || key != "sha256")
+            && !changes[key].is_null()
+            && changes[key]
+                .as_array()
+                .is_none_or(|values| !values.is_empty())
+        {
+            lines.push(format!("  {label}: {}", text(&changes[key])));
+        }
+    }
     if let Some(warning) = preview["identity_warning"].as_str() {
         lines.push(format!("  WARNING: {warning}"));
     }
-    if preview["grants_added"]
-        .as_array()
-        .is_some_and(|grants| !grants.is_empty())
-    {
-        lines.push(format!("  grants: {}", text(&preview["grants_added"])));
+    let added = phrases(&preview["grants_added"]);
+    if !added.is_empty() {
+        lines.push("  New permissions:".to_owned());
+        lines.extend(added);
     }
     lines.join("\n")
 }
 
-fn confirm(summary: &str) -> io::Result<bool> {
+fn confirm(summary: &str, details: &str) -> io::Result<bool> {
     use std::io::{BufRead, Write};
     let mut terminal = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/tty")?;
-    write!(terminal, "{summary}\nProceed? [y/N] ")?;
-    terminal.flush()?;
-    let mut answer = String::new();
-    io::BufReader::new(terminal).read_line(&mut answer)?;
-    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+    let mut reader = io::BufReader::new(terminal.try_clone()?);
+    writeln!(terminal, "{summary}")?;
+    loop {
+        write!(terminal, "Proceed? [y/N] (d shows source and integrity) ")?;
+        terminal.flush()?;
+        let mut answer = String::new();
+        reader.read_line(&mut answer)?;
+        match answer.trim().to_lowercase().as_str() {
+            "d" => writeln!(terminal, "{details}")?,
+            answer => return Ok(matches!(answer, "y" | "yes")),
+        }
+    }
 }
 
+const HELP: &str = "Usage:
+  omd install REFERENCE [--version V] [--scope user|project] [--yes] [--details] [--store PATH]
+  omd mods list | catalog [QUERY] | inspect REFERENCE | events | reset-lock
+  omd mods enable|disable|update|remove|rollback|revoke|unblock ID [FLAGS]
+  omd mods quarantine ID REASON [FLAGS]
+  omd mods sync [--offline|--rollback] [FLAGS]
+      Manage mod packages. REFERENCE is ID[@VERSION] from the curated index, npm:NAME[@VERSION],
+      git+URL[#REF[:DIRECTORY]] or a folder (./PATH or /PATH). FLAGS are those of omd install.
+  omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user]
+      Export or reset one mod's namespaced store without running mod code.
+  omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS]
+      Run a command an enabled mod exports. Model requests and process execution are unavailable here.
+  omd update, omd uninstall [--purge]
+      Update or remove OMD itself.
+  omd --version
+      The OMD, Codex and mod API versions.";
+
 fn run(args: Vec<String>) -> io::Result<Value> {
-    if args.is_empty() || args[0] == "--help" {
-        return Ok(
-            json!({"usage":format!("omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS] | omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user] | {MODS_USAGE}"),"commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here. `omd store` exports or resets one mod's namespaced store without running mod code. `omd install` and `omd mods` manage mod packages; `omd update` updates OMD itself."}),
-        );
+    if args.is_empty() || matches!(args[0].as_str(), "help" | "-h" | "--help") {
+        return Ok(json!({"display": HELP}));
+    }
+    if args[0] == "--version" || args[0] == "-V" {
+        return Ok(json!({"display": format!(
+            "oh-my-diff {} (Codex {}, mod API {})",
+            codex_omd::OMD_HOST_RELEASE,
+            codex_omd::CODEX_HOST_RELEASE,
+            codex_omd::MOD_API_VERSION
+        )}));
     }
     if args[0] == "store" {
         return store(&args[1..]);
@@ -555,24 +709,28 @@ fn run(args: Vec<String>) -> io::Result<Value> {
             _ => payload.push(argument.clone()),
         }
     }
-    let repository = repository.ok_or_else(|| io::Error::other("explicit_repository_required"))?;
+    let unknown = || {
+        io::Error::other(format!(
+            "unknown command: {command} (`omd help` lists the commands; a mod's command needs --repo PATH)"
+        ))
+    };
+    let repository = repository.ok_or_else(unknown)?;
     let root = store_root(store)?;
     let home = home
         .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".codex")));
     let sessions = home.as_ref().map(|path| path.join("sessions"));
-    let mut runtime = ModHost::open(root.clone())?;
+    let mut runtime = ModHost::open(root.clone(), ModOpenOptions::default())?;
     let exports: Vec<_> = runtime
         .commands()
         .into_iter()
         .filter(|(_, export)| export.cli.as_deref() == Some(command))
         .collect();
-    if exports.len() != 1 {
-        return Err(io::Error::other(if exports.is_empty() {
-            "plugin_command_unavailable"
-        } else {
-            "plugin_command_collision"
-        }));
+    if exports.is_empty() {
+        return Err(unknown());
+    }
+    if exports.len() > 1 {
+        return Err(io::Error::other("plugin_command_collision"));
     }
     let (owner, export) = &exports[0];
     let sources: BTreeMap<String, String> = runtime
@@ -594,65 +752,67 @@ fn run(args: Vec<String>) -> io::Result<Value> {
             .ok_or_else(|| io::Error::other("command_owner_missing"))?,
     )?;
     let deadline = Instant::now() + Duration::from_secs(30);
-    runtime.invoke_scoped(
+    runtime.invoke(
         owner,
         runtime.generation(),
         "command",
         &export.name,
         json!(payload),
-        || Instant::now() < deadline,
-        |caller, request| {
-            if !codex_omd::scoped_data::operation(&request.operation) {
-                return Err(io::Error::other("standalone_host_operation_unavailable"));
-            }
-            let needs_sessions = request.operation.starts_with("sessions.");
-            let session_database = if needs_sessions {
-                Some(database(
-                    home.as_deref()
-                        .ok_or_else(|| io::Error::other("session_home_required"))?,
-                    &repository,
-                    sqlite.clone(),
-                    std::env::var_os("CODEX_SQLITE_HOME").map(PathBuf::from),
-                )?)
-            } else {
-                None
-            };
-            if caller == owner {
-                if needs_sessions {
-                    data.session_database = session_database;
+        ModInvokeOptions {
+            active: &|| Instant::now() < deadline,
+            host: ModHostCallback::Scoped(&mut |caller, request| {
+                if !codex_omd::scoped_data::operation(&request.operation) {
+                    return Err(io::Error::other("standalone_host_operation_unavailable"));
                 }
-                return data.call(&request.operation, request.arguments, || {
-                    Instant::now() < deadline
-                });
-            }
-            let source = sources
-                .get(caller)
-                .ok_or_else(|| io::Error::other("service_provider_missing"))?;
-            let provider = match providers.entry(caller.to_owned()) {
-                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(ScopedDataHost::new(
-                        root.clone(),
-                        repository.clone(),
-                        sessions.clone(),
-                        session_database.clone(),
-                        caller.to_owned(),
-                        "user-command".into(),
-                        source.clone(),
+                let needs_sessions = request.operation.starts_with("sessions.");
+                let session_database = if needs_sessions {
+                    Some(database(
+                        home.as_deref()
+                            .ok_or_else(|| io::Error::other("session_home_required"))?,
+                        &repository,
+                        sqlite.clone(),
+                        std::env::var_os("CODEX_SQLITE_HOME").map(PathBuf::from),
                     )?)
+                } else {
+                    None
+                };
+                if caller == owner {
+                    if needs_sessions {
+                        data.session_database = session_database;
+                    }
+                    return data.call(&request.operation, request.arguments, || {
+                        Instant::now() < deadline
+                    });
                 }
-            };
-            if provider.binding.source_sha256 != *source {
-                return Err(io::Error::other("data_selection_changed_or_revoked"));
-            }
-            if needs_sessions {
-                provider.session_database = session_database;
-            }
-            provider.call(&request.operation, request.arguments, || {
-                Instant::now() < deadline
-            })
+                let source = sources
+                    .get(caller)
+                    .ok_or_else(|| io::Error::other("service_provider_missing"))?;
+                let provider = match providers.entry(caller.to_owned()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(ScopedDataHost::new(
+                            root.clone(),
+                            repository.clone(),
+                            sessions.clone(),
+                            session_database.clone(),
+                            caller.to_owned(),
+                            "user-command".into(),
+                            source.clone(),
+                        )?)
+                    }
+                };
+                if provider.binding.source_sha256 != *source {
+                    return Err(io::Error::other("data_selection_changed_or_revoked"));
+                }
+                if needs_sessions {
+                    provider.session_database = session_database;
+                }
+                provider.call(&request.operation, request.arguments, || {
+                    Instant::now() < deadline
+                })
+            }),
+            ..ModInvokeOptions::default()
         },
-        |_| {},
     )
 }
 
@@ -660,20 +820,16 @@ fn main() {
     match run(std::env::args().skip(1).collect()) {
         Ok(value) => {
             if let Some(display) = value.get("display").and_then(Value::as_str) {
-                println!(
-                    "{}",
-                    display
+                codex_omd::print_output(
+                    &display
                         .chars()
-                        .filter(
-                            |character| !character.is_control() || matches!(character, '\n' | '\t')
-                        )
-                        .collect::<String>()
+                        .filter(|character| {
+                            !character.is_control() || matches!(character, '\n' | '\t')
+                        })
+                        .collect::<String>(),
                 );
             } else {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&value).unwrap_or_default()
-                );
+                codex_omd::print_output(&serde_json::to_string_pretty(&value).unwrap_or_default());
             }
         }
         Err(error) => {
@@ -692,11 +848,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn trust_summary_lists_risky_phrases_first_and_keeps_detail_for_d() {
+        let preview = json!({"action": "install", "id": "demo", "changes": {"packages": [{
+            "id": "demo", "version": {"from": null, "to": "1.0.0"}, "source": {"to": "npm:demo"},
+            "integrity": {"to": "sha512-x"}, "license": {"to": "MIT"},
+            "capabilities": {"to": ["fs.read", "os"]},
+            "authority": {"to": {"exposure": ["os: unsandboxed"]}},
+            "state_version": {"handler_required": true}}]}, "grants_added": []});
+        let summary = describe(&preview, false);
+        let risky = summary
+            .find("    ! run listed programs unsandboxed")
+            .unwrap();
+        assert!(risky < summary.find("    - read files in this repository").unwrap());
+        assert!(!summary.contains("integrity") && summary.contains("authority: os: unsandboxed"));
+        let detailed = describe(&preview, true);
+        assert!(
+            detailed.contains("integrity: sha512-x")
+                && detailed.contains("authority: os: unsandboxed")
+        );
+    }
+
+    #[test]
     fn shell_quote_leaves_plain_paths_and_quotes_the_rest() {
         assert_eq!(shell_quote("/Users/me/.omd/store"), "/Users/me/.omd/store");
         assert_eq!(shell_quote("/Users/me/My Store"), "'/Users/me/My Store'");
         assert_eq!(shell_quote("/tmp/it's"), "'/tmp/it'\\''s'");
         assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn version_help_and_unknown_commands_need_no_repository() {
+        let version = format!(
+            "oh-my-diff {} (Codex {}, mod API {})",
+            codex_omd::OMD_HOST_RELEASE,
+            codex_omd::CODEX_HOST_RELEASE,
+            codex_omd::MOD_API_VERSION
+        );
+        for flag in ["--version", "-V"] {
+            assert_eq!(run(vec![flag.into()]).unwrap()["display"], version);
+        }
+        for flag in ["help", "-h", "--help"] {
+            assert!(
+                run(vec![flag.into()]).unwrap()["display"]
+                    .as_str()
+                    .unwrap()
+                    .contains("\n  omd COMMAND --repo PATH")
+            );
+        }
+        let unknown = "unknown command: bogus (`omd help` lists the commands; a mod's command needs --repo PATH)";
+        assert_eq!(run(vec!["bogus".into()]).unwrap_err().to_string(), unknown);
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join("store");
+        codex_omd::ModStore::create(store.clone()).unwrap();
+        let arguments = ["bogus", "--store", store.to_str().unwrap(), "--repo"]
+            .map(str::to_owned)
+            .into_iter()
+            .chain([temp.path().to_str().unwrap().to_owned()])
+            .collect();
+        assert_eq!(run(arguments).unwrap_err().to_string(), unknown);
+        let missing = folder_reference("./definitely-missing-folder")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.starts_with("package_folder_unavailable: ./definitely-missing-folder: "),
+            "{missing}"
+        );
     }
 
     #[test]

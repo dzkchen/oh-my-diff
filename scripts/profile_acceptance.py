@@ -9,13 +9,10 @@ import tempfile
 import time
 import tomllib
 
-from scripts import install_support as support, profiles
+from scripts import acceptance_environment, install_support as support, profiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROVIDER_ENV_PREFIXES = ("OPENAI_", "ANTHROPIC_", "GOOGLE_", "GEMINI_", "AZURE_", "AWS_",
-                         "MISTRAL_", "GROQ_", "CEREBRAS_", "DEEPSEEK_", "TOGETHER_",
-                         "OPENROUTER_", "HF_")
 
 
 def expected_defaults(profile="full"):
@@ -28,17 +25,6 @@ def call(arguments, env, parse=True):
     if result.returncode:
         raise RuntimeError(f"command failed: {arguments[:4]}: {(result.stderr or result.stdout)[-1200:]}")
     return json.loads(result.stdout) if parse else result.stdout.strip()
-
-
-def isolated_environment(base, home, upstream, source=None):
-    inherited = os.environ if source is None else source
-    env = {name: value for name, value in inherited.items()
-           if not name.startswith(("CODEX_", "OMD_", *PROVIDER_ENV_PREFIXES))}
-    env.update(HOME=str(home), CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home),
-               TMPDIR=str(base), XDG_CONFIG_HOME=str(base / "xdg-config"),
-               XDG_DATA_HOME=str(base / "xdg-data"), XDG_CACHE_HOME=str(base / "xdg-cache"))
-    env["PATH"] = str(upstream.parent) + os.pathsep + env.get("PATH", "")
-    return env
 
 
 def managed_recovery(base, profile, store, env, command, mode):
@@ -72,9 +58,9 @@ def managed_recovery(base, profile, store, env, command, mode):
     assert deployed and deployed["tier"] == "append"
     refused = subprocess.run([str(manager), "disable", str(store), deployed["path"]], capture_output=True, text=True)
     assert refused.returncode and "managed_by_policy" in refused.stderr + refused.stdout
-    command(profile, "mod", "disable", "omd_logo")
+    command(profile, "mod", "disable", "omd_logo", "--json")
     assert managed(), "mod-only recovery keeps the managed package"
-    command(profile, "mod", "enable", "omd_logo")
+    command(profile, "mod", "enable", "omd_logo", "--json")
     if mode == "broker":
         call([manager, "policy", "rollback"], env)
         assert call([manager, "policy", "show"], env) is None
@@ -104,7 +90,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         session.write_text('{"type":"preserve-session"}\n')
         shared_hashes = {str(path.relative_to(home)): support.digest(path)
                          for path in (sentinel, auth, session)}
-        env = isolated_environment(base, home, upstream)
+        env = acceptance_environment.isolated_environment(base, home, upstream)
         observations = {}
 
         def command(profile, *args):
@@ -122,7 +108,8 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert [item["id"] for item in platform["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_mods", "omd_update"]
         assert platform["installed_tools"] == ["omd", "omd-contract", "omd-mod"] and platform["plugin_bundle"] is None
         assert call([base / "platform-bin/omd-package", "status", "--json"], env)["profile"] == "platform"
-        assert "omd COMMAND" in call([base / "platform-bin/omd", "help", "--all"], env)["usage"]
+        assert "omd COMMAND" in call([base / "platform-bin/omd", "help", "--all"], env, False)
+        assert call([base / "platform-bin/omd", "--version"], env, False).startswith("oh-my-diff ")
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
         version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
         assert call([base / "platform-bin/codex", "--version"], env, False) == f"codex-cli {version}"
@@ -164,9 +151,9 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         call([manager, "disable", platform_store, broken], env)
         call([manager, "reload", platform_store], env)
         assert command("platform", "status", "--json")["other_active_mods"] == []
-        command("platform", "activate", "direct")
+        command("platform", "activate", "direct", "--json")
         assert command("platform", "status", "--json")["host_mode"] == "upstream_direct"
-        command("platform", "activate", "platform")
+        command("platform", "activate", "platform", "--json")
         assert call([base / "platform-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert platform_store.is_dir()
         observations["platform"] = {"first_party_defaults": ["omd_logo", "omd_mods", "omd_update"], "user_mod_tool": offline["steps"][0]["value"],
@@ -234,7 +221,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
             assert any(item.get("name") == identifier for item in listed["installed"])
             call([base / "full-bin/codex", "plugin", "remove", f"{identifier}@oh-my-diff"], env, False)
         assert call([base / "full-bin/codex", "plugin", "list", "--json"], env)["installed"] == []
-        disabled = command("full", "mod", "disable", "omd_statusline")
+        disabled = command("full", "mod", "disable", "omd_statusline", "--json")
         assert not next(item for item in disabled["packages"] if item["id"] == "omd_statusline")["enabled_in_store"]
         side_by_side = command("full-upgrade", *(install + ["--attach-store"]))
         assert not next(item for item in side_by_side["packages"] if item["id"] == "omd_statusline")["enabled_in_store"]
@@ -242,9 +229,9 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert (base / "full-bin/codex").is_file()
         assert not next(item for item in command("full", "status", "--json")["packages"]
                         if item["id"] == "omd_statusline")["enabled_in_store"]
-        activated = command("full", "activate", "full")
+        activated = command("full", "activate", "full", "--json")
         assert activated["host_mode"] == "omd"
-        direct = command("full", "activate", "direct")
+        direct = command("full", "activate", "direct", "--json")
         assert not any(item["loaded_by_profile"] for item in direct["packages"])
         assert "oh-my-diff" in tomllib.loads((home / "config.toml").read_text()).get("marketplaces", {})
         note = base / "full-prefix/personal-note.txt"
@@ -261,7 +248,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
         assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == sorted(set(expected_defaults()) - {"omd_statusline"})
-        enabled = command("full", "mod", "enable", "omd_statusline")
+        enabled = command("full", "mod", "enable", "omd_statusline", "--json")
         assert next(item for item in enabled["packages"] if item["id"] == "omd_statusline")["loaded_by_profile"]
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         observations["full"] = {"installed_mods": [item["id"] for item in full["packages"]],

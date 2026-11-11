@@ -2,12 +2,13 @@ import type { Json, ModAPI, TerminalComponent, TerminalPatch, TerminalTone } fro
 
 type Release = { version: string; prerelease?: boolean; notes?: string; page?: string; user_mods?: string[]; mod_api?: string };
 type Mods = { omd: string; serial: number; changed?: string[]; notes?: string; page?: string };
+type Changes = { retired?: string[]; left_off?: string[]; capabilities?: Record<string, string[]> };
 type Info = {
   installed?: string; checked_at?: number | null; available?: Release | null; blocked?: { version: string; reasons?: string[] } | null;
   error?: string | null; pending?: { version: string } | null; failed?: { version: string; error?: string; at: number } | null;
-  last?: { from: string; to: string; at: number } | null; held?: { version: string } | null; request_done?: string | null;
+  last?: { from: string; to: string; at: number } & Changes | null; held?: { version: string } | null; request_done?: string | null;
   withdrawn?: { version: string; run?: string | null } | null; mods?: Mods | null;
-  last_mods?: { serial: number; changed?: string[]; at: number } | null; failed_mods?: { omd?: string; serial: number; error?: string; at: number } | null;
+  last_mods?: { serial: number; changed?: string[]; at: number } & Changes | null; failed_mods?: { omd?: string; serial: number; error?: string; at: number } | null;
   held_mods?: { omd: string; serial: number } | null; pending_mods?: { omd: string; serial: number } | null;
 };
 type Saved = {
@@ -27,6 +28,11 @@ export default function activate(api: ModAPI) {
     ? `Oh My Diff ${visible(info.withdrawn.version, 40)} was withdrawn${info.withdrawn.run ? `; run ${visible(info.withdrawn.run, 40)} in a shell` : ''}.` : '';
   const setting = (state: Saved, name: string) => state.overrides[name] ?? String(api.settings[name] ?? '');
   const names = (list: string[] | undefined) => (list ?? []).map(name => visible(name, 64)).join(', ');
+  const changes = (value: Changes | null | undefined) => [
+    ...(value?.retired?.length ? [`Retired and turned off: ${names(value.retired)}.`] : []),
+    ...(value?.left_off?.length ? [`New default mods, left off (turn them on in /mods): ${names(value.left_off)}.`] : []),
+    ...(Object.keys(value?.capabilities ?? {}).length ? [`New permissions: ${Object.entries(value?.capabilities ?? {}).map(([name, added]) => `${visible(name, 64)} (${names(added)})`).join('; ')}.`] : []),
+  ].join(' ');
   const modKey = (mods: Mods) => `mods-${mods.omd}-${mods.serial}`;
   const same = (mods: Mods, other?: { omd?: string; serial: number } | null) => other?.omd === mods.omd && other.serial === mods.serial;
   const offer = (state: Saved, info: Info | null) => info?.available?.version ?? (info?.mods && (setting(state, 'auto') !== 'on'
@@ -52,9 +58,9 @@ export default function activate(api: ModAPI) {
     const available = info?.available;
     const banner: string[] = info?.withdrawn ? [withdrawn(info)] : [];
     if (info?.failed && info.failed.at > state.seen) banner.push(`The update to Oh My Diff ${visible(info.failed.version, 40)} failed and nothing changed. /update shows why.`);
-    if (info?.last && info.last.at > state.seen) banner.push(`Oh My Diff was updated from ${visible(info.last.from, 40)} to ${visible(info.last.to, 40)}.`);
+    if (info?.last && info.last.at > state.seen) banner.push(`Oh My Diff was updated from ${visible(info.last.from, 40)} to ${visible(info.last.to, 40)}. ${changes(info.last)}`.trim());
     if (info?.failed_mods && info.failed_mods.at > state.seen) banner.push('The first-party mod update failed and nothing changed. /update shows why.');
-    if (info?.last_mods && info.last_mods.at > state.seen) banner.push(`First-party mods were updated: ${names(info.last_mods.changed)}.`);
+    if (info?.last_mods && info.last_mods.at > state.seen) banner.push(`First-party mods were updated: ${names(info.last_mods.changed)}. ${changes(info.last_mods)}`.trim());
     const offered = offer(state, info);
     const due = offered && setting(state, 'checks') !== 'off' && state.skipped !== offered
       && !(state.snoozed?.version === offered && now < state.snoozed.until)
@@ -122,8 +128,7 @@ export default function activate(api: ModAPI) {
   const when = (seconds: number | null | undefined) => seconds ? new Date(seconds * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'never';
 
   const release = (state: Saved, available: Release): TerminalComponent[] => [
-    line('available', 'Available', `Oh My Diff ${visible(available.version, 80)}${available.prerelease ? ' (prerelease)' : ''} is out. To install it, quit OMD and run:`, 'accent', 2),
-    { type: 'code', id: 'omd_update_command', label: 'Update command', text: 'omd update', language: 'sh' },
+    line('available', 'Available', `Oh My Diff ${visible(available.version, 80)}${available.prerelease ? ' (prerelease)' : ''} is out. Choose Update now, then restart codex; or quit and run omd update in a shell.`, 'accent', 2),
     ...(available.notes ? [line('notes', 'Release notes', available.notes, 'normal', 8)] : []),
     ...(available.page ? [line('page', 'Release page', available.page, 'muted', 2)] : []),
     ...(available.user_mods?.length ? [line('user_mods', 'Incompatible mods', `These enabled mods do not support mod API ${visible(available.mod_api, 40)} and stop loading after the update: ${available.user_mods.map(name => visible(name, 64)).join(', ')}.`, 'attention', 3)] : []),
@@ -133,7 +138,7 @@ export default function activate(api: ModAPI) {
     button('skip', 'Skip this version'),
   ];
   const modUpdates = (info: Info, mods: Mods): TerminalComponent[] => [
-    line('mods', 'Mod updates', `Updates to first-party mods are out: ${names(mods.changed)}. Your Oh My Diff version stays the same.`, 'accent', 3),
+    line('mods_out', 'Mod updates', `Updates to first-party mods are out: ${names(mods.changed)}. Your Oh My Diff version stays the same.`, 'accent', 3),
     ...(same(mods, info.pending_mods) ? [line('mods_pending', 'Downloaded', 'Downloaded and verified; they install the next time OMD starts with no other session open.', 'success', 2)] : []),
     ...(same(mods, info.held_mods) ? [line('mods_held', 'Rolled back', 'You rolled these back; automatic updates skip them. Choose Update mods to install them again.', 'muted', 2)] : []),
     ...(mods.notes ? [line('mods_notes', 'Notes', mods.notes, 'normal', 8)] : []),
@@ -148,11 +153,13 @@ export default function activate(api: ModAPI) {
     const status = !info ? [line('unmanaged', 'Installation', 'This Oh My Diff was not installed by the OMD installer, so it has no update checks.', 'muted')]
       : [
         line('installed', 'Installed', `Installed ${visible(info.installed, 40)} · last check ${when(info.checked_at)}`, 'normal', 1),
+        ...(info.last && changes(info.last) ? [line('last', 'Last update', `From ${visible(info.last.from, 40)}: ${changes(info.last)}`, 'normal', 4)] : []),
+        ...(info.last_mods && changes(info.last_mods) ? [line('last_mods', 'Last mod update', changes(info.last_mods), 'normal', 4)] : []),
         ...(info.withdrawn ? [line('withdrawn', 'Withdrawn', withdrawn(info), 'attention', 2)] : []),
         ...(info.held ? [line('held', 'Rolled back', `You rolled back from ${visible(info.held.version, 40)}; automatic updates skip it. Run omd update to install it again.`, 'muted', 2)] : []),
         ...(info.failed ? [line('failed', 'Last update', `The update to ${visible(info.failed.version, 40)} failed and nothing changed: ${visible(info.failed.error, 300)}`, 'failure', 4)] : []),
         ...(info.failed_mods ? [line('failed_mods', 'Last mod update', `The first-party mod update failed and nothing changed: ${visible(info.failed_mods.error, 300)}`, 'failure', 4)] : []),
-        ...(info.available ? release(state, info.available) : info.mods ? modUpdates(info, info.mods)
+        ...(info.available ? release(state, info.available) : info.mods ? modUpdates(info, info.mods) : info.blocked && !info.error ? []
           : [line('current', 'Status', info.error ? `The last check failed: ${visible(info.error, 200)}` : info.checked_at ? 'You have the newest release for your settings.' : 'No check has run yet; run omd update check in a shell.', info.error ? 'attention' : 'muted', 3)]),
         ...(info.blocked ? [line('blocked', 'Not compatible', `Oh My Diff ${visible(info.blocked.version, 40)} needs: ${(info.blocked.reasons ?? []).map(reason => visible(reason, 120)).join('; ')}`, 'attention', 4)] : []),
       ];

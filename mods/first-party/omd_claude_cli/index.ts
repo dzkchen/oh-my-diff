@@ -11,6 +11,10 @@ export const cliSupported = (version: string | null | undefined) => {
 };
 export const CLI_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash';
 export const CLI_ENV_OVERRIDE = /^ANTHROPIC_|^CLAUDE_(CONFIG_DIR|SECURESTORAGE_CONFIG_DIR)$|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
+export const PLANS: Record<string, string> = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
+export const signedIn = (status: Record<string, unknown>, billing: unknown) => status.loggedIn === true && status.apiProvider === 'firstParty' && (billing === 'api'
+  ? status.authMethod === 'api_key' && status.apiKeySource === '/login managed key'
+  : status.authMethod === 'claude.ai' && typeof status.subscriptionType === 'string' && status.subscriptionType in PLANS);
 export const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
 export const loginCommand = (billing: unknown, name?: unknown) => `/claude login${billing === 'api' ? ' api' : ''}${typeof name === 'string' && name !== 'default' ? ` ${name}` : ''}`;
 const NODE_MISSING = 'Node.js was not found on PATH. Install it (brew install node, or from nodejs.org), restart OMD, then try again';
@@ -78,6 +82,16 @@ export function localId(id: string): string {
 
 const SEALED = new Set(['collaboration/spawn_agent', 'collaboration/send_message', 'collaboration/followup_task']);
 
+export function flatSchema(schema: unknown): unknown {
+  if (!plain(schema)) return schema;
+  const { anyOf, oneOf, allOf, ...rest } = schema;
+  const branches = [anyOf, oneOf, allOf].flatMap(list => Array.isArray(list) ? list.filter(plain) : []);
+  if (!branches.length) return schema;
+  const properties = Object.assign({}, ...branches.map(branch => plain(branch.properties) ? branch.properties : {}), plain(rest.properties) ? rest.properties : {});
+  const required = [...new Set([...(Array.isArray(rest.required) ? rest.required : []), ...(Array.isArray(allOf) ? allOf.filter(plain).flatMap(branch => Array.isArray(branch.required) ? branch.required : []) : [])])];
+  return { ...rest, type: 'object', properties, ...required.length ? { required } : {} };
+}
+
 export function reasoningItem(block: Row, id: string): Row {
   return { type: 'reasoning', id, summary: block.thinking ? [{ type: 'summary_text', text: block.thinking }] : [] };
 }
@@ -105,7 +119,7 @@ export function translateRequest(request: Row, model: string | undefined): Row {
     if (reverse[name]) throw new Error('duplicate_host_tool');
     const schema = spec.type === 'custom'
       ? { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] }
-      : spec.parameters ?? { type: 'object', properties: {} };
+      : flatSchema(spec.parameters ?? { type: 'object', properties: {} });
     if (!plain(schema)) throw new Error('invalid_host_tool_schema');
     reverse[name] = { namespace, name: spec.name ?? name, kind };
     const description = typeof spec.description === 'string' ? spec.description : '';
@@ -371,12 +385,18 @@ export default function activate(api: ModAPI): void {
     const found = api.host.tryCall('process.which', { names: ['node'], sandbox: 'none' });
     const node = found.ok ? found.value.found[0] : null;
     if (!node) return void say(`Claude login did not start: ${found.ok ? NODE_MISSING : found.error}`, true);
-    const checked = cli([]);
+    const dir = mod && `${mod.replace(/\/sources\/[^/]+\/?$/, '')}/routes/claude/accounts/${account}`;
+    const checked = cli([dir]);
     const unusable = checked.error ?? cliProblem(checked.version);
     if (unusable) return void say(`Claude login did not start: ${unusable}`, true);
+    let status: Row = {};
+    try { status = JSON.parse(checked.auth?.[0] ?? '{}'); } catch {}
+    if (signedIn(status, billing)) {
+      say(`Already signed in to Claude${status.email ? ` as ${status.email}` : ''}; skipping the browser login`);
+      return void finish({ billing, account, dir }, '');
+    }
     const argv = billing === 'api' ? ['auth', 'login', '--console'] : ['auth', 'login'];
     const id = `claude_login_${api.session().process_id.replace(/[^\w-]/g, '_').slice(0, 32)}_${Date.now()}`;
-    const dir = mod && `${mod.replace(/\/sources\/[^/]+\/?$/, '')}/routes/claude/accounts/${account}`;
     const started = api.host.tryCall('process.start', { session: id, name: 'node', path: node.path, sha256: node.sha256,
       arguments: ['--input-type=module', '-e', loginScript, JSON.stringify(argv), dir], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
     if (!started.ok) return void say(`Claude login did not start: ${started.error}`, true);

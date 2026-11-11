@@ -39,7 +39,7 @@ async function until(find) {
   throw new Error('timed out');
 }
 
-function fakeHost({ padding = '', view = {}, overloadedResumes = 0 } = {}) {
+function fakeHost({ padding = '', view = {}, overloadedResumes = 0, restartOwners = false, droppedRenderer } = {}) {
   const seen = [];
   const protocols = [];
   const sockets = new Set();
@@ -51,7 +51,7 @@ function fakeHost({ padding = '', view = {}, overloadedResumes = 0 } = {}) {
     protocols.push(request.headers['sec-websocket-protocol']);
     socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${accept}`,
       ...(protocols.at(-1) ? ['Sec-WebSocket-Protocol: codex-app-server'] : []), '', ''].join('\r\n'));
-    const host = { epoch: String(epoch), token: 'token-0', used: 0, send: message => socket.write(encodeFrame(1, Buffer.from(JSON.stringify(message)), false)) };
+    const host = { epoch: String(epoch), token: 'token-0', used: 0, drop: () => socket.destroy(), send: message => socket.write(encodeFrame(1, Buffer.from(JSON.stringify(message)), false)) };
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
     socket.on('data', frameReader((opcode, payload) => {
@@ -64,8 +64,18 @@ function fakeHost({ padding = '', view = {}, overloadedResumes = 0 } = {}) {
     seen.push({ epoch: host.epoch, ...message });
     const reply = result => host.send({ id: message.id, result });
     if (message.method === 'initialize') reply({ userAgent: 'fake' });
+    else if (message.method === 'omd/client/attach' && message.params.renderer?.kind === 'invalid') host.send({ id: message.id, error: { code: -32602, message: 'invalid params: renderer.kind' } });
+    else if (message.method === 'omd/client/attach' && droppedRenderer && message.params.renderer?.kind === droppedRenderer) {
+      droppedRenderer = undefined;
+      host.drop();
+    }
     else if (message.method === 'omd/client/attach') {
-      reply({ clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
+      const terminalToken = restartOwners ? `owner-${host.epoch}` : 'owner-retained';
+      if (message.params.terminalToken && message.params.terminalToken !== terminalToken) {
+        host.send({ id: message.id, error: { code: -32600, message: 'terminal_owner_unknown' } });
+        return;
+      }
+      reply({ terminalToken, clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
       host.send({ method: 'omd/view/updated', params: { epoch: host.epoch, revision: 1, snapshot: { view, padding }, actionToken: host.token } });
     } else if (message.method === 'thread/resume' && host.epoch !== '1' && overloadedResumes > 0 && overloadedResumes--) host.send({ id: message.id, error: { code: -32001, message: 'Server overloaded; retry later.' } });
     else if (message.method === 'omd/action') {
@@ -152,9 +162,79 @@ test('unix client answers pings, reads large views and reconnects with attach, u
     assert.deepEqual(reconnected, { epoch: '2', previousEpoch: '1' });
     const second = host.seen.filter(message => message.epoch === '2' && message.method).map(message => message.method);
     assert.deepEqual(second, ['initialize', 'initialized', 'omd/client/attach', 'omd/client/update', 'thread/resume']);
+    assert.equal(host.seen.find(message => message.epoch === '2' && message.method === 'omd/client/attach').params.terminalToken, 'owner-retained');
     assert.equal(host.seen.findLast(message => message.method === 'thread/resume').params.threadId, 'thread-1');
     await until(() => views.some(view => view.epoch === '2'));
     assert.equal(session.actionToken, 'token-0');
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a refused reattach leaves the last accepted parameters, owner token included, for reconnect', async () => {
+  const host = fakeHost({ restartOwners: true });
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  let reconnected;
+  const session = await connect({
+    url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer,
+    onView() {}, onRoster() {}, onMirrored() {},
+    onReconnect: change => { reconnected = change; },
+  });
+  try {
+    await assert.rejects(session.attach({ terminalToken: 'owner-1', renderer: { ...renderer, kind: 'invalid' } }), { code: -32602 });
+    assert.deepEqual(session.attached.renderer, renderer);
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected || session.closed);
+    assert.equal(session.closed, false, 'the refused reattach must not poison the reconnect');
+    const attempts = host.seen.filter(message => message.epoch === '2' && message.method === 'omd/client/attach');
+    assert.deepEqual(attempts.map(message => [message.params.renderer, message.params.terminalToken]), [[renderer, 'owner-1'], [renderer, undefined]]);
+    assert.deepEqual(session.attached, { name: 'sdk-test', renderer, operations: [], terminalToken: 'owner-2' });
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a reattach cut off by a disconnect is replayed on reconnect', async () => {
+  const host = fakeHost({ droppedRenderer: 'gui' });
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  let reconnected;
+  const session = await connect({
+    url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer,
+    onView() {}, onRoster() {}, onMirrored() {},
+    onReconnect: change => { reconnected = change; },
+  });
+  const gui = { ...renderer, kind: 'gui' };
+  try {
+    await assert.rejects(session.attach({ renderer: gui }), /client_disconnected/);
+    await until(() => reconnected || session.closed);
+    assert.equal(session.closed, false);
+    assert.deepEqual(host.seen.findLast(message => message.method === 'omd/client/attach').params.renderer, gui);
+    assert.deepEqual(session.attached.renderer, gui);
+    assert.equal(session.epoch, '2');
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a reattach resets the viewport and focus that reconnect replays', async () => {
+  const host = fakeHost();
+  await new Promise(resolve => host.server.listen(0, '127.0.0.1', resolve));
+  let reconnected;
+  const session = await connect({
+    url: `ws://127.0.0.1:${host.server.address().port}`, name: 'sdk-test', renderer,
+    onView() {}, onRoster() {}, onMirrored() {},
+    onReconnect: change => { reconnected = change; },
+  });
+  try {
+    await session.update({ viewport: { width: 80, height: 24, unit: 'cell' }, focus: true });
+    await session.attach({ renderer: { ...renderer, kind: 'gui' } });
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected || session.closed);
+    assert.equal(session.closed, false);
+    assert.equal(host.seen.some(message => message.epoch === '2' && message.method === 'omd/client/update'), false);
   } finally {
     session.close();
     host.server.close();
@@ -212,5 +292,32 @@ test('server replies stay with the connection that requested them', async t => {
         host.server.close();
       }
     });
+  }
+});
+
+
+test('reconnect drops an expired owner token only after the host refuses it', async () => {
+  const host = fakeHost({ restartOwners: true });
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-owner-reconnect-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let reconnected;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-owner', renderer, onView() {}, onRoster() {}, onMirrored() {}, onReconnect: change => { reconnected = change; } });
+  try {
+    assert.equal(session.attachment.terminalToken, 'owner-1');
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected);
+    const attempts = host.seen.filter(message => message.epoch === '2' && message.method === 'omd/client/attach');
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts[0].params.terminalToken, 'owner-1');
+    assert.equal(attempts[1].params.terminalToken, undefined);
+    assert.equal(session.attachment.terminalToken, 'owner-2');
+    await session.detach();
+    assert.equal(session.attachment, null);
+    await session.attach();
+    assert.equal(host.seen.filter(message => message.method === 'omd/client/attach').at(-1).params.terminalToken, undefined);
+  } finally {
+    session.close();
+    for (const socket of host.sockets) socket.destroy();
+    await new Promise(resolve => host.server.close(resolve));
   }
 });

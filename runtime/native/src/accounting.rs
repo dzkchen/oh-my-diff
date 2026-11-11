@@ -76,10 +76,53 @@ fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
     Ok(())
 }
 
+static COST_WRITES: Mutex<BTreeMap<std::path::PathBuf, Arc<Mutex<()>>>> =
+    Mutex::new(BTreeMap::new());
+
+fn cost_write_lock(path: &std::path::Path) -> Arc<Mutex<()>> {
+    COST_WRITES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(path.to_path_buf())
+        .or_default()
+        .clone()
+}
+
+#[cfg(test)]
+type CostReplaceHook = (std::path::PathBuf, Box<dyn FnOnce() + Send>);
+
+#[cfg(test)]
+pub(crate) static BEFORE_COST_REPLACE: Mutex<Option<CostReplaceHook>> = Mutex::new(None);
+
 fn write_cost_capture(account: &Account, durability: Durability) -> Result<(), TransportError> {
+    let writing = cost_write_lock(&account.cost_capture);
+    let guard = writing.lock();
+    let result = write_cost_snapshot(account, durability);
+    drop(guard);
+    let mut locks = COST_WRITES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if Arc::strong_count(&writing) == 2 {
+        locks.remove(&account.cost_capture);
+    }
+    result
+}
+
+fn write_cost_snapshot(account: &Account, durability: Durability) -> Result<(), TransportError> {
     let bytes =
         serde_json::to_vec(&account.task.cost_capture().map_err(denied)?).map_err(denied)?;
-    codex_omd::fsio::write_bytes(&account.cost_capture, &bytes, durability).map_err(denied)
+    codex_omd::fsio::write_bytes_before(&account.cost_capture, &bytes, durability, || {
+        #[cfg(test)]
+        if let Some((_, hook)) = BEFORE_COST_REPLACE
+            .lock()
+            .ok()
+            .and_then(|mut hook| hook.take_if(|(path, _)| *path == account.cost_capture))
+        {
+            hook();
+        }
+        Ok(())
+    })
+    .map_err(denied)
 }
 
 pub(crate) fn billing(rates: Option<&Rates>) -> &'static str {
@@ -92,6 +135,7 @@ pub(crate) fn billing(rates: Option<&Rates>) -> &'static str {
 
 #[derive(Clone)]
 pub struct Account {
+    pub(crate) mod_runtime: Option<RuntimeBinding>,
     pub task: Arc<Task>,
     pub owner: String,
     pub model: String,
@@ -213,7 +257,25 @@ pub fn global() -> Arc<Accounts> {
 
 pub type ModDispatcher = codex_omd::host::SessionDispatcher;
 
-pub type ModNotifier = Arc<dyn Fn(&'static str, Value) + Send + Sync>;
+pub type ModNotifier = Arc<dyn Fn(Option<&str>, &'static str, Value) + Send + Sync>;
+
+#[derive(Clone)]
+pub(crate) struct RuntimeBinding {
+    pub terminal_owner: Option<String>,
+    pub runtime: Arc<Mutex<codex_omd::ModHost>>,
+    pub required: Arc<Mutex<Vec<&'static str>>>,
+}
+
+#[derive(Clone)]
+struct RequestAccount(Option<Account>);
+
+impl RuntimeBinding {
+    fn required(&self, surface: &str) -> bool {
+        self.required
+            .lock()
+            .map_or(true, |required| required.contains(&surface))
+    }
+}
 
 type RequiredSurfaces = Arc<Mutex<Vec<&'static str>>>;
 
@@ -456,8 +518,8 @@ impl Accounts {
         &self,
         mods: &Mutex<codex_omd::ModHost>,
         owner: Option<&str>,
+        required: bool,
     ) -> Result<Option<codex_omd::SendPolicy>, TransportError> {
-        let required = self.required("model_send");
         let deadline = Instant::now()
             + if required {
                 SEND_POLICY_WAIT
@@ -491,6 +553,10 @@ impl Accounts {
     }
 
     /// Runs `model_send` over the exact body about to be sent, page by page, until no policy edits it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Each argument is a distinct piece of request context"
+    )]
     fn police(
         &self,
         mods: &Mutex<codex_omd::ModHost>,
@@ -499,8 +565,13 @@ impl Accounts {
         request_id: &str,
         attempt: u32,
         value: &mut Value,
+        binding: Option<&RuntimeBinding>,
     ) -> Result<bool, TransportError> {
-        let Some(policy) = self.send_policy(mods, account.map(|account| account.owner.as_str()))?
+        let Some(policy) = self.send_policy(
+            mods,
+            account.map(|account| account.owner.as_str()),
+            self.required_for(binding, "model_send"),
+        )?
         else {
             return Ok(false);
         };
@@ -514,7 +585,9 @@ impl Accounts {
             denied(format!("final_request_refused: {reason}"))
         };
         if let Some(reason) = policy.unavailable {
-            return Err(refuse(format!("request_policy_unavailable: {reason}")));
+            return Err(refuse(format!(
+                "request_policy_unavailable: {reason}; turn the mod off or reload it in /omd"
+            )));
         }
         let scope = match account {
             Some(account) => payload_scope(account, thread),
@@ -550,6 +623,7 @@ impl Accounts {
                 .map_err(|error| refuse(error.to_string()))?;
         }
         let dispatcher = self.dispatcher();
+        let terminal_owner = binding.and_then(|binding| binding.terminal_owner.clone());
         let active = || account.is_none_or(|account| account.task.check_active().is_ok());
         let _thread =
             codex_omd::StateThread::enter((!thread.is_empty()).then(|| thread.to_owned()));
@@ -613,7 +687,15 @@ impl Accounts {
                     origin.clone(),
                     active,
                     |caller, call| match &dispatcher {
-                        Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
+                        Some(dispatch) => dispatch(
+                            terminal_owner.as_deref(),
+                            thread,
+                            caller,
+                            None,
+                            None,
+                            call,
+                            &active,
+                        ),
                         None => Err(std::io::Error::other(
                             "host_operation_unavailable: no session dispatcher",
                         )),
@@ -680,6 +762,81 @@ impl Accounts {
             "req-{}-{}",
             process_id(),
             self.next_request.fetch_add(1, Ordering::Relaxed) + 1
+        )
+    }
+
+    pub(crate) fn capture_task(
+        &self,
+        thread: &str,
+        store: &codex_extension_api::ExtensionData,
+    ) -> Result<(), String> {
+        let account = self
+            .by_thread
+            .lock()
+            .map_err(|_| "account lock poisoned")?
+            .get(thread)
+            .cloned();
+        store.get_or_init(|| RequestAccount(account));
+        Ok(())
+    }
+
+    fn captured_account(
+        &self,
+        context: &http::Extensions,
+        thread: &str,
+    ) -> Result<Option<Account>, TransportError> {
+        let captured = context
+            .get::<RequestAccount>()
+            .map(|account| account.0.clone())
+            .or_else(|| {
+                context
+                    .get::<Arc<codex_extension_api::ExtensionData>>()
+                    .and_then(|store| store.get::<RequestAccount>())
+                    .map(|account| account.0.clone())
+            });
+        let live = self
+            .by_thread
+            .lock()
+            .map_err(|_| denied("account lock poisoned"))?
+            .get(thread)
+            .cloned();
+        Ok(match (captured, live) {
+            (Some(Some(captured)), Some(live)) if live.owner == captured.owner => Some(live),
+            (Some(captured), _) => captured,
+            (None, live) => live,
+        })
+    }
+
+    fn request_runtime(
+        &self,
+        request: &mut Request,
+    ) -> Result<Option<RuntimeBinding>, TransportError> {
+        if let Some(binding) = request.policy_context.get::<RuntimeBinding>() {
+            return Ok(Some(binding.clone()));
+        }
+        let binding = match request
+            .policy_context
+            .get::<Arc<codex_extension_api::ExtensionData>>()
+        {
+            Some(store) => crate::clients::request_runtime(store).map_err(denied)?,
+            None => None,
+        };
+        if let Some(binding) = &binding {
+            request.policy_context.insert(binding.clone());
+        }
+        Ok(binding)
+    }
+
+    fn mods_for(&self, binding: Option<&RuntimeBinding>) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
+        binding
+            .map(|binding| binding.runtime.clone())
+            .or_else(|| self.mods())
+    }
+
+    fn required_for(&self, binding: Option<&RuntimeBinding>, surface: &str) -> bool {
+        binding.map_or_else(
+            || self.required(surface),
+            |binding| binding.required(surface),
         )
     }
 
@@ -846,7 +1003,7 @@ impl Accounts {
             &self.holders,
             account,
             "model_request",
-            self.required("model_request"),
+            self.required_for(account.mod_runtime.as_ref(), "model_request"),
         )?
         else {
             return Ok(Intercepted::default());
@@ -880,6 +1037,10 @@ impl Accounts {
             "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) }});
         account.task.check_active().map_err(denied)?;
         let dispatcher = self.dispatcher();
+        let terminal_owner = account
+            .mod_runtime
+            .as_ref()
+            .and_then(|binding| binding.terminal_owner.clone());
         let active = || account.task.check_active().is_ok();
         let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
         let state = self.requests.clone();
@@ -891,7 +1052,7 @@ impl Accounts {
             origin,
             active,
             |caller, call| match &dispatcher {
-                Some(dispatch) => dispatch(thread, caller, None, None, call, &active),
+                Some(dispatch) => dispatch(terminal_owner.as_deref(), thread, caller, None, None, call, &active),
                 None => Err(std::io::Error::other(
                     "host_operation_unavailable: no session dispatcher",
                 )),
@@ -1003,30 +1164,36 @@ impl ResponseObserver for Accounts {
         request: &mut Request,
         body: &mut Option<EncodedJsonBody>,
     ) -> Result<(), TransportError> {
+        let binding = self.request_runtime(request)?;
         let thread = request
             .headers
             .get("thread-id")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
             .unwrap_or_default();
-        let Some(mut account) = self
-            .by_thread
-            .lock()
-            .map_err(|_| denied("account lock poisoned"))?
-            .get(&thread)
-            .cloned()
-        else {
+        let Some(mut account) = self.captured_account(&request.policy_context, &thread)? else {
+            request.policy_context.insert(RequestAccount(None));
             // Unenrolled internal requests (titles, reviews, guardians) still pass the final-request stage.
-            let (Some(mods), Some(encoded)) = (self.mods(), body.as_ref()) else {
+            let (Some(mods), Some(encoded)) = (self.mods_for(binding.as_ref()), body.as_ref())
+            else {
                 return Ok(());
             };
             let mut value: Value = serde_json::from_slice(encoded.as_bytes()).map_err(denied)?;
             let request_id = self.request_id();
-            if self.police(&mods, None, &thread, &request_id, 1, &mut value)? {
+            if self.police(
+                &mods,
+                None,
+                &thread,
+                &request_id,
+                1,
+                &mut value,
+                binding.as_ref(),
+            )? {
                 *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
             }
             return Ok(());
         };
+        account.mod_runtime = binding;
         let mut value: Value = serde_json::from_slice(
             body.as_ref()
                 .ok_or_else(|| denied("missing JSON request"))?
@@ -1048,7 +1215,7 @@ impl ResponseObserver for Accounts {
             account.provider = route.provider;
             edited = true;
         }
-        let mods = self.mods();
+        let mods = self.mods_for(account.mod_runtime.as_ref());
         if let Some(mods) = &mods
             && let Some(items) = value["input"].as_array()
             && let Hook::Ran(result) = Self::middleware(
@@ -1125,6 +1292,9 @@ impl ResponseObserver for Accounts {
                 request
                     .headers
                     .insert(SYNTHETIC_HEADER, request_id.parse().map_err(denied)?);
+                request
+                    .policy_context
+                    .insert(RequestAccount(Some(account.clone())));
                 return Ok(());
             }
             if let Some((given, effective)) = intercepted.sections {
@@ -1229,12 +1399,14 @@ impl ResponseObserver for Accounts {
                 &request_id,
                 attempt,
                 &mut value,
+                account.mod_runtime.as_ref(),
             )?;
         }
         if edited {
             *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
         }
         codex_omd::model_request::commit_queued_sections(&thread, &request_id, &carried);
+        request.policy_context.insert(RequestAccount(Some(account)));
         Ok(())
     }
 
@@ -1243,6 +1415,7 @@ impl ResponseObserver for Accounts {
         request: &mut Request,
         body: Option<&EncodedJsonBody>,
     ) -> Result<Option<Box<dyn ResponseAttempt>>, TransportError> {
+        let binding = self.request_runtime(request)?;
         let Some(thread) = request
             .headers
             .get("thread-id")
@@ -1259,15 +1432,10 @@ impl ResponseObserver for Accounts {
         {
             return Err(denied(reason));
         }
-        let Some(account) = self
-            .by_thread
-            .lock()
-            .map_err(|_| denied("account lock poisoned"))?
-            .get(&thread)
-            .cloned()
-        else {
+        let Some(mut account) = self.captured_account(&request.policy_context, &thread)? else {
             return Ok(None);
         };
+        account.mod_runtime = binding;
         let header = |request: &Request, name: &str| {
             request
                 .headers
@@ -1587,20 +1755,64 @@ impl ResponseObserver for Accounts {
             .map(|(_, events)| events)
     }
 
-    fn police_unary(&self, thread: Option<&str>, body: &mut Value) -> Result<(), TransportError> {
-        let Some(mods) = self.mods() else {
+    fn police_unary(
+        &self,
+        thread: Option<&str>,
+        body: &mut Value,
+        context: &http::Extensions,
+    ) -> Result<(), TransportError> {
+        let binding = match context.get::<RuntimeBinding>() {
+            Some(binding) => Some(binding.clone()),
+            None => match context.get::<Arc<codex_extension_api::ExtensionData>>() {
+                Some(store) => crate::clients::request_runtime(store).map_err(denied)?,
+                None => None,
+            },
+        };
+        let Some(mods) = self.mods_for(binding.as_ref()) else {
             return Ok(());
         };
         let thread = thread.unwrap_or_default();
-        let account = self
-            .by_thread
-            .lock()
-            .map_err(|_| denied("account lock poisoned"))?
-            .get(thread)
-            .cloned();
+        let mut account = self.captured_account(context, thread)?;
+        if let Some(account) = &mut account {
+            account.mod_runtime = binding.clone();
+        }
         let request_id = self.request_id();
-        self.police(&mods, account.as_ref(), thread, &request_id, 1, body)
-            .map(drop)
+        self.police(
+            &mods,
+            account.as_ref(),
+            thread,
+            &request_id,
+            1,
+            body,
+            binding.as_ref(),
+        )
+        .map(drop)
+    }
+
+    fn policed_for(&self, context: &http::Extensions) -> Option<String> {
+        let binding = match context.get::<RuntimeBinding>() {
+            Some(binding) => Some(binding.clone()),
+            None => match context.get::<Arc<codex_extension_api::ExtensionData>>() {
+                Some(store) => match crate::clients::request_runtime(store) {
+                    Ok(binding) => binding,
+                    Err(_) => return Some("terminal request runtime unavailable".into()),
+                },
+                None => None,
+            },
+        };
+        if let Some(binding) = binding {
+            if !binding.required("model_send") {
+                return None;
+            }
+            return Some(
+                binding
+                    .runtime
+                    .try_lock()
+                    .map(|runtime| runtime.policy_owners().join(", "))
+                    .unwrap_or_else(|_| "an enabled mod".into()),
+            );
+        }
+        self.policed()
     }
 
     fn policed(&self) -> Option<String> {
@@ -1623,7 +1835,22 @@ impl ResponseObserver for Accounts {
         })
     }
 
-    fn requires_observation(&self, thread: Option<&str>) -> bool {
+    fn requires_observation(&self, thread: Option<&str>, context: &http::Extensions) -> bool {
+        if let Some(account) = context.get::<RequestAccount>() {
+            return account
+                .0
+                .as_ref()
+                .is_some_and(|account| account.rates.is_some());
+        }
+        if let Some(account) = context
+            .get::<Arc<codex_extension_api::ExtensionData>>()
+            .and_then(|store| store.get::<RequestAccount>())
+        {
+            return account
+                .0
+                .as_ref()
+                .is_some_and(|account| account.rates.is_some());
+        }
         thread.is_some_and(|thread| {
             self.by_thread.lock().map_or(true, |accounts| {
                 accounts
@@ -1654,6 +1881,7 @@ struct Attempt {
     holders: Arc<AtomicUsize>,
     dispatcher: Option<ModDispatcher>,
     notifier: Option<ModNotifier>,
+    terminal_owner: Option<String>,
     state: Arc<Mutex<RequestState>>,
     required: bool,
     synthetic: Option<String>,
@@ -1685,6 +1913,12 @@ impl Accounts {
         admission: Option<Admission>,
         synthetic: Option<String>,
     ) -> Attempt {
+        let mods = self.mods_for(account.mod_runtime.as_ref());
+        let required = self.required_for(account.mod_runtime.as_ref(), "response_stream");
+        let terminal_owner = account
+            .mod_runtime
+            .as_ref()
+            .and_then(|binding| binding.terminal_owner.clone());
         Attempt {
             account,
             thread,
@@ -1692,12 +1926,13 @@ impl Accounts {
             attempt,
             admission,
             model,
-            mods: self.mods(),
+            mods,
             holders: self.holders.clone(),
             dispatcher: self.dispatcher(),
             notifier: self.notifier(),
+            terminal_owner,
             state: self.requests.clone(),
-            required: self.required("response_stream"),
+            required,
             synthetic,
             subscription: false,
             settled: false,
@@ -1836,7 +2071,7 @@ impl Attempt {
                 };
                 self.account
                     .task
-                    .settle(&admission, usage.clone(), amount)
+                    .settle(&admission, usage, amount)
                     .map_err(denied)?;
                 self.settled = true;
                 self.microusd = Some(amount);
@@ -2088,6 +2323,11 @@ impl Attempt {
             return Ok(None);
         };
         let dispatcher = self.dispatcher.clone();
+        let terminal_owner = self
+            .account
+            .mod_runtime
+            .as_ref()
+            .and_then(|binding| binding.terminal_owner.clone());
         let thread = self.thread.clone();
         let task = self.account.task.clone();
         let active = || task.check_active().is_ok();
@@ -2102,7 +2342,15 @@ impl Attempt {
             origin,
             active,
             |caller, call| match &dispatcher {
-                Some(dispatch) => dispatch(&thread, caller, None, None, call, &active),
+                Some(dispatch) => dispatch(
+                    terminal_owner.as_deref(),
+                    &thread,
+                    caller,
+                    None,
+                    None,
+                    call,
+                    &active,
+                ),
                 None => Err(std::io::Error::other(
                     "host_operation_unavailable: no session dispatcher",
                 )),
@@ -2251,7 +2499,7 @@ impl Attempt {
             collected.push(kept);
         }
         if let Some(notify) = &self.notifier {
-            notify("model_response", payload);
+            notify(self.terminal_owner.as_deref(), "model_response", payload);
         }
     }
 

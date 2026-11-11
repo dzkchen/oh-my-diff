@@ -119,11 +119,10 @@ pub fn secret_name(name: &str) -> bool {
             segments.push(String::new());
         }
         previous_lower = character.is_ascii_lowercase() || character.is_ascii_digit();
-        if !matches!(character, '_' | '-' | '.') {
-            segments
-                .last_mut()
-                .expect("segments start non-empty")
-                .push(character.to_ascii_lowercase());
+        if !matches!(character, '_' | '-' | '.')
+            && let Some(segment) = segments.last_mut()
+        {
+            segment.push(character.to_ascii_lowercase());
         }
     }
     segments.iter().enumerate().any(|(index, segment)| {

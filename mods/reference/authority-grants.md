@@ -28,7 +28,8 @@ those runs have external network access.
 
 Requires the `os` and `exec` capabilities. `os` without `os_access`, or the reverse, fails with `invalid_os_access`.
 
-- A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
+- A program is `*`, a bare name resolved on `PATH` outside the
+  [repository](state-and-storage.md#session-directory-and-repository), or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
 - Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
@@ -65,7 +66,8 @@ without `approves`, or the reverse, fails with `invalid_approves`.
 - `server/tool` of an MCP call.
 
 Patterns may be `*` or `prefix*`. A bare name or `prefix*` also matches an absolute path that `PATH` resolves that
-name to outside the repository, but never a same-named file elsewhere.
+name to outside the [repository](state-and-storage.md#session-directory-and-repository), but never a same-named file
+elsewhere.
 
 ### Ending and showing the grants
 
@@ -74,7 +76,7 @@ Three settings limit or end the authority grants:
 - `omd-mod trust ... --expires SECONDS` ends the authority grants at that time.
 - Project scope limits them to one repository.
 - `omd-mod revoke STORE MOD_ID_OR_PACKAGE` disables the mod and drops its grant at once. Its capabilities and secret
-  environment are cleared, and enabling it again needs a new trust or install.
+  environment are cleared, and enabling it again needs a new trust (`omd mods update ID`) or install.
 
 Trust output, the TUI trust dialog and status state what the grant exposes. In status, `mods[].authority` lists
 `os_access`, `approves`, `expires_at`, `current` and `exposure`.

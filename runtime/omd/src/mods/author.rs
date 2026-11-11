@@ -156,75 +156,76 @@ impl OfflineHost {
         let intrinsic = !self.replies.contains_key(&call.operation)
             && (matches!(call.operation.as_str(), "events.schedule" | "events.cancel")
                 || call.operation == "environment.read" && self.environment.is_some());
-        let response = if intrinsic {
-            None
-        } else {
-            let replies = self.replies.entry(call.operation.clone()).or_default();
-            while replies.front().is_some_and(|reply| {
-                reply["optional"] == true
-                    && reply
-                        .get("arguments")
-                        .is_some_and(|expected| expected != &call.arguments)
-            }) {
-                replies.pop_front();
-            }
-            let Some(response) = replies.front() else {
-                let reason = format!(
-                    "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
-                    call.operation
-                );
-                self.violations.push(reason.clone());
-                return Err(failure(reason));
-            };
-            if response
-                .get("arguments")
-                .is_some_and(|expected| expected != &call.arguments)
-            {
-                let reason = format!(
-                    "offline_mock_arguments_mismatch: {}: expected {}, got {}",
-                    call.operation, response["arguments"], call.arguments
-                );
-                self.violations.push(reason.clone());
-                return Err(failure(reason));
-            }
-            replies.pop_front()
+        if intrinsic {
+            operation_validation::validate(&call.operation, "arguments", &call.arguments)
+                .map_err(failure)?;
+            return self.intrinsic(caller, &call);
+        }
+        let replies = self.replies.entry(call.operation.clone()).or_default();
+        while replies.front().is_some_and(|reply| {
+            reply["optional"] == true
+                && reply
+                    .get("arguments")
+                    .is_some_and(|expected| expected != &call.arguments)
+        }) {
+            replies.pop_front();
+        }
+        let Some(response) = replies.pop_front() else {
+            let reason = format!(
+                "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
+                call.operation
+            );
+            self.violations.push(reason.clone());
+            return Err(failure(reason));
         };
-        if !response
-            .as_ref()
-            .is_some_and(|reply| reply["unsafe"]["arguments"] == true)
+        if let Some(expected) = response.get("arguments")
+            && expected != &call.arguments
         {
+            let reason = format!(
+                "offline_mock_arguments_mismatch: {}: expected {expected}, got {}",
+                call.operation, call.arguments
+            );
+            replies.push_front(response);
+            self.violations.push(reason.clone());
+            return Err(failure(reason));
+        }
+        if response["unsafe"]["arguments"] != true {
             operation_validation::validate(&call.operation, "arguments", &call.arguments)
                 .map_err(failure)?;
         }
+        if let Some(error) = response.get("error").and_then(Value::as_str) {
+            return Err(failure(error));
+        }
+        Ok(response["result"].clone())
+    }
+
+    fn intrinsic(&mut self, caller: &str, call: &ModHostCall) -> Result<Value> {
         let key = call.arguments["key"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        if intrinsic
-            && call.operation == "environment.read"
-            && let Some(environment) = &self.environment
-        {
-            let names = call.arguments["names"]
-                .as_array()
-                .filter(|names| (1..=16).contains(&names.len()))
-                .ok_or_else(|| failure("environment_names_invalid"))?;
-            let values = names
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|name| {
-                    let value = environment.get(name);
-                    let entry = if crate::host::secret_like(name) {
-                        json!({"set": value.is_some()})
-                    } else {
-                        json!({"set": value.is_some(), "value": value})
-                    };
-                    (name.to_owned(), entry)
-                })
-                .collect::<serde_json::Map<_, _>>();
-            return Ok(json!({"values": values}));
-        }
-        match (intrinsic, call.operation.as_str()) {
-            (true, "events.schedule") => {
+        match (call.operation.as_str(), &self.environment) {
+            ("environment.read", Some(environment)) => {
+                let names = call.arguments["names"]
+                    .as_array()
+                    .filter(|names| (1..=16).contains(&names.len()))
+                    .ok_or_else(|| failure("environment_names_invalid"))?;
+                let values = names
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|name| {
+                        let value = environment.get(name);
+                        let entry = if crate::host::secret_like(name) {
+                            json!({"set": value.is_some()})
+                        } else {
+                            json!({"set": value.is_some(), "value": value})
+                        };
+                        (name.to_owned(), entry)
+                    })
+                    .collect::<serde_json::Map<_, _>>();
+                Ok(json!({"values": values}))
+            }
+            ("events.schedule", _) => {
                 let delay = call.arguments["delay_ms"]
                     .as_u64()
                     .filter(|delay| (16..=86_400_000).contains(delay))
@@ -237,22 +238,16 @@ impl OfflineHost {
                     (self.timer_thread(caller), caller.to_owned(), key.clone()),
                     (deadline, call.arguments.get("data").cloned()),
                 );
-                return Ok(json!({"key": key, "delay_ms": delay}));
+                Ok(json!({"key": key, "delay_ms": delay}))
             }
-            (true, "events.cancel") => {
+            _ => {
                 let cancelled = self
                     .timers
                     .remove(&(self.timer_thread(caller), caller.to_owned(), key))
                     .is_some();
-                return Ok(json!({"cancelled": cancelled}));
+                Ok(json!({"cancelled": cancelled}))
             }
-            _ => {}
         }
-        let response = response.expect("mocked operation reply");
-        if let Some(error) = response.get("error").and_then(Value::as_str) {
-            return Err(failure(error));
-        }
-        Ok(response["result"].clone())
     }
 }
 
@@ -276,53 +271,21 @@ impl ModHost {
     }
 
     pub fn capability_explanation(code: &str) -> Value {
-        let (cause, fix) = if code.starts_with("capability_denied") {
-            (
-                "The package requested authority that the manifest or explicit trust grant does not include.",
-                "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant.",
-            )
-        } else if code.starts_with("undeclared_operation_use") {
-            (
-                "Source analysis found a literal host operation whose capability is not declared.",
-                "Add the operation's documented capability or remove the call; rerun check before asking for trust.",
-            )
-        } else if code.starts_with("undeclared_service_use") {
-            (
-                "Source analysis found a service call without a matching manifest import.",
-                "Declare the service name and compatible version under services.imports or remove the call.",
-            )
-        } else if code.starts_with("undeclared_environment_use") {
-            (
-                "Source analysis found environment access outside the manifest declaration.",
-                "Remove the access or declare an admitted environment feature; network, filesystem, process and DOM access are intentionally unavailable.",
-            )
-        } else if code.starts_with("state_capability_denied") {
-            (
-                "The callback changed persistent state without the state capability.",
-                "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
-            )
-        } else if code.starts_with("state_thread_unavailable") {
-            (
-                "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
-                "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
-            )
-        } else if code.starts_with("repository_provenance_mismatch") {
-            (
-                "A Git install requires mod.json provenance.source to name the repository it is installed from.",
-                "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
-            )
-        } else if code.starts_with("host_operation_unavailable") {
-            (
-                "The callback ran without an active native task capable of servicing that host operation.",
-                "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
-            )
-        } else {
-            (
-                "The host denied or could not classify the requested authority.",
-                "Use omd-mod report and omd-mod events, then compare the literal operation, manifest declaration and user-approved grant.",
-            )
+        let known = EXPLANATIONS
+            .iter()
+            .find(|(prefix, _, _)| code.starts_with(prefix));
+        let unknown;
+        let (cause, fix) = match known {
+            Some((_, cause, fix)) => (*cause, *fix),
+            None => {
+                unknown = format!("OMD has no explanation for {code}; its cause is unknown.");
+                (
+                    unknown.as_str(),
+                    "Run omd-mod report STORE and omd-mod events STORE to see which mod or host step raised it.",
+                )
+            }
         };
-        json!({"code":code,"cause":cause,"fix":fix,
+        json!({"code":code,"known":known.is_some(),"cause":cause,"fix":fix,
             "guarantee":"Author tooling can explain a denial but cannot grant authority, change trust, or bypass host enforcement."})
     }
 
@@ -380,7 +343,7 @@ impl ModHost {
                 .loaded
                 .get(id)
                 .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
-            tiers.insert(id.clone(), (tier, loaded.selection.clone()));
+            tiers.insert(id.clone(), (tier, (*loaded.selection).clone()));
         }
         self.tier_selections = tiers
             .iter()
@@ -395,8 +358,9 @@ impl ModHost {
                 .get_mut(&id)
                 .filter(|loaded| loaded.selection.scope == MANAGED_SCOPE)
             {
-                loaded.selection.scope = selection.scope;
-                loaded.selection.tier = selection.tier;
+                let current = Arc::make_mut(&mut loaded.selection);
+                current.scope = selection.scope;
+                current.tier = selection.tier;
             }
         }
         self.virtual_time_ms = None;
@@ -426,8 +390,9 @@ impl ModHost {
         for (index, step) in steps.iter().enumerate() {
             for (id, (tier, _)) in tiers {
                 if let Some(loaded) = self.loaded.get_mut(id) {
-                    loaded.selection.scope = MANAGED_SCOPE.to_owned();
-                    loaded.selection.tier = Some(*tier);
+                    let selection = Arc::make_mut(&mut loaded.selection);
+                    selection.scope = MANAGED_SCOPE.to_owned();
+                    selection.tier = Some(*tier);
                 }
             }
             let kind = step
@@ -527,15 +492,19 @@ impl ModHost {
                     if let Some(data) = data {
                         payload["data"] = data;
                     }
-                    let value = self.invoke_scoped(
+                    let value = self.invoke(
                         &owner,
                         self.generation,
                         "timer",
                         "",
                         payload,
-                        || active,
-                        |caller, call| host.call(caller, call),
-                        |_| {},
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     );
                     fired.push(match value {
                         Ok(_) => json!({"mod": owner, "key": key, "at_ms": due}),
@@ -708,15 +677,19 @@ impl ModHost {
                 let mut values = Vec::new();
                 for id in ids {
                     let generation = self.generation;
-                    let value = self.invoke_scoped(
+                    let value = self.invoke(
                         &id,
                         generation,
                         event,
                         "",
                         payload.clone(),
-                        || active,
-                        |caller, call| host.call(caller, call),
-                        |_| {},
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     values.push(json!({"mod":id,"value":value}));
                 }
@@ -726,15 +699,17 @@ impl ModHost {
                 let id = required_string(step, "mod")?;
                 let event = required_string(step, "event")?;
                 let name = required_string(step, "name")?;
-                self.invoke_scoped(
+                self.invoke(
                     id,
                     self.generation,
                     event,
                     name,
                     payload,
-                    || active,
-                    |caller, call| host.call(caller, call),
-                    |_| {},
+                    ModInvokeOptions {
+                        active: &|| active,
+                        host: ModHostCallback::Scoped(&mut |caller, call| host.call(caller, call)),
+                        ..ModInvokeOptions::default()
+                    },
                 )
             }
             "component" => {
@@ -751,21 +726,19 @@ impl ModHost {
                     "client": host.owner, "props": step.get("props").cloned().unwrap_or(Value::Null),
                     "now": *now_ms, "columns": size("columns", 80), "rows": size("rows", 0),
                     "events": step.get("events").cloned().unwrap_or_else(|| json!([]))});
-                let result = self.invoke_scoped(
-                    id,
-                    self.generation,
-                    "component",
-                    module,
-                    frame,
-                    || active,
-                    |_, call| {
-                        Err(failure(format!(
-                            "host_operation_unavailable: {} is not available to component modules",
-                            call.operation
-                        )))
-                    },
-                    |_| {},
-                )?;
+                let mut host = |_: &str, call: ModHostCall| {
+                    Err(failure(format!(
+                        "host_operation_unavailable: {} is not available to component modules",
+                        call.operation
+                    )))
+                };
+                let options = ModInvokeOptions {
+                    active: &|| active,
+                    host: ModHostCallback::Scoped(&mut host),
+                    ..ModInvokeOptions::default()
+                };
+                let result =
+                    self.invoke(id, self.generation, "component", module, frame, options)?;
                 render::checked_tree(&result)?;
                 Ok(result)
             }
@@ -777,17 +750,19 @@ impl ModHost {
                         .entry("clients")
                         .or_insert_with(|| json!(host.clients));
                 }
-                let view = self.invoke_scoped(
+                let view = self.invoke(
                     id,
                     self.generation,
                     "terminal",
                     "",
                     payload,
-                    || active,
-                    |caller, call| host.call(caller, call),
-                    |_| {},
+                    ModInvokeOptions {
+                        active: &|| active,
+                        host: ModHostCallback::Scoped(&mut |caller, call| host.call(caller, call)),
+                        ..ModInvokeOptions::default()
+                    },
                 )?;
-                ModViewPatch::parse(view.clone())?;
+                ModViewPatch::parse(&view)?;
                 let parsed = ModView::parse(view.clone())?;
                 if kind == "terminal_mount" {
                     return Ok(view);
@@ -834,15 +809,19 @@ impl ModHost {
                         Some(_) => return Err(failure("offline_client_not_attached")),
                         None => event["origin"] = json!("user"),
                     }
-                    let result = self.invoke_scoped(
+                    let result = self.invoke(
                         id,
                         self.generation,
                         "component_event",
                         "",
                         event.clone(),
-                        || active,
-                        |caller, call| host.call(caller, call),
-                        |_| {},
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     return Ok(json!({"event": event, "result": result}));
                 }
@@ -870,15 +849,19 @@ impl ModHost {
                 if let Some(command) = action.get("command").and_then(Value::as_str) {
                     let (owner, name) = command.split_once(':').unwrap_or((id, command));
                     let args = action.get("args").cloned().unwrap_or_else(|| json!(""));
-                    let result = self.invoke_scoped(
+                    let result = self.invoke(
                         owner,
                         self.generation,
                         "command",
                         name,
                         args,
-                        || active,
-                        |caller, call| host.call(caller, call),
-                        |_| {},
+                        ModInvokeOptions {
+                            active: &|| active,
+                            host: ModHostCallback::Scoped(&mut |caller, call| {
+                                host.call(caller, call)
+                            }),
+                            ..ModInvokeOptions::default()
+                        },
                     )?;
                     Ok(json!({"action":action,"result":result}))
                 } else {
@@ -1038,6 +1021,117 @@ fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]
             }
         }
         _ => {}
+    }
+}
+
+const EXPLANATIONS: &[(&str, &str, &str)] = &[
+    (
+        "capability_denied",
+        "The package requested authority that the manifest or explicit trust grant does not include.",
+        "Declare the exact capability in mod.json, inspect the source-use report, then have the user approve the new digest and exact grant; a revoked mod is approved again with omd mods update ID.",
+    ),
+    (
+        "undeclared_operation_use",
+        "Source analysis found a literal host operation whose capability is not declared.",
+        "Add the operation's documented capability or remove the call; rerun check before asking for trust.",
+    ),
+    (
+        "undeclared_service_use",
+        "Source analysis found a service call without a matching manifest import.",
+        "Declare the service name and compatible version under services.imports or remove the call.",
+    ),
+    (
+        "undeclared_environment_use",
+        "Source analysis found environment access outside the manifest declaration.",
+        "Remove the access or declare an admitted environment feature; network, filesystem, process and DOM access are intentionally unavailable.",
+    ),
+    (
+        "state_capability_denied",
+        "The callback changed persistent state without the state capability.",
+        "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
+    ),
+    (
+        "state_thread_unavailable",
+        "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
+        "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
+    ),
+    (
+        "repository_provenance_mismatch",
+        "A Git install requires mod.json provenance.source to name the repository it is installed from.",
+        "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
+    ),
+    (
+        "host_operation_unavailable",
+        "The callback ran without an active native task capable of servicing that host operation.",
+        "Run it inside a task/tool callback or supply an explicit offline host-operation mock in tests.",
+    ),
+    (
+        "package_blocked",
+        "The installed version was quarantined with omd mods quarantine, so it cannot be enabled, reinstalled or rolled back to.",
+        "If the reason no longer applies, run omd mods unblock ID, then omd mods enable ID.",
+    ),
+    (
+        "package_not_installed",
+        "No installed mod has this id in the chosen scope.",
+        "`omd mods list` shows installed mods and their scopes, and `omd install ID` installs one.",
+    ),
+    (
+        "package_approval_required",
+        "Installing or turning on the mod needs your approval, and the command ran without a terminal to ask in.",
+        "Review it with `omd mods inspect REFERENCE`, then run the command again with --yes or in a terminal.",
+    ),
+    (
+        "package_rollback_unavailable",
+        "The mod has no earlier version to go back to.",
+        "Install a specific version with `omd install ID --version V`.",
+    ),
+    (
+        "source_changed",
+        "The package's files no longer match the digest the user trusted.",
+        "Review the change and approve it again in /omd or with omd mods update ID.",
+    ),
+    (
+        "package_not_trusted",
+        "The store has no trusted selection for that mod or folder.",
+        "Install it with omd install REFERENCE, or trust a folder with omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV.",
+    ),
+    (
+        "managed_by_policy",
+        "Administrator policy requires this mod, so it cannot be turned off locally.",
+        "Run omd-mod policy explain STORE to see the policy, then ask your administrator to change it.",
+    ),
+    (
+        "explicit_repository_required",
+        "The command works on one repository's data or runs a mod's shell command, and no repository was given.",
+        "Pass --repo PATH. For `omd store` data that isn't tied to a repository, pass --scope user.",
+    ),
+    (
+        "explicit_mod_store_required",
+        "No mod store was given and OMD_MOD_STORE is not set.",
+        "Pass --store PATH, or use the installed omd launcher, which sets OMD_MOD_STORE.",
+    ),
+];
+
+#[cfg(test)]
+mod explanation_tests {
+    use super::*;
+
+    #[test]
+    fn explain_answers_cli_codes_and_admits_unknown_ones() {
+        let blocked = ModHost::capability_explanation("package_blocked: m: testing");
+        assert_eq!(blocked["known"], true);
+        assert!(
+            blocked["fix"]
+                .as_str()
+                .unwrap()
+                .contains("omd mods unblock")
+        );
+        let unknown = ModHost::capability_explanation("nonsense_code");
+        assert_eq!(unknown["known"], false);
+        assert_eq!(
+            unknown["cause"],
+            "OMD has no explanation for nonsense_code; its cause is unknown."
+        );
     }
 }
 

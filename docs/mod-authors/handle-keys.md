@@ -1,7 +1,8 @@
 # Handle keys in a terminal view
 
-How to edit text from key input in a terminal view, save it from a key, and bind keys that work on macOS terminals.
-It assumes a mod that already draws a view, as in [Build a notes mod](notes-mod.md).
+Add key and paste handlers to a mod's terminal view, then bind a key to save its text. Start with a mod that already
+draws a view, such as [the notes mod](notes-mod.md). On macOS, check the
+[Option-key settings](#bind-alt-keys-that-work-on-macos) before choosing Alt bindings.
 
 ## Before you begin
 

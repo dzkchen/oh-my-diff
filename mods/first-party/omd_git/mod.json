@@ -1,11 +1,14 @@
 {
   "schema": 1,
   "id": "omd_git",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "A lazygit-style Git panel in the workspace dock: files and hunks, branches, commits, stash, push and pull, and adding a selection to the prompt",
+  "description": "Git panel in the workspace dock (/git): files and hunks, branches, commits, stash, push and pull, and add to prompt",
+  "contributes": {
+    "commands": [{ "name": "git", "description": "Show the Git panel status or refresh it" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_git"},
   "assets": ["git.ts", "view.ts"],

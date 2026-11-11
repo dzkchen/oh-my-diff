@@ -1,6 +1,6 @@
 import type { Json, ModAPI, RenderEvent, RenderExecCall, RenderParsedCommand, RenderToolCall, TerminalComponent, TerminalSpan } from '../../api.d.ts';
 
-type Row = { name: string; args: string; marker: (string | null)[]; failed: boolean; running: boolean };
+type Row = { name: string; args: string; marker: (string | null)[]; failed: boolean; running: boolean; reason?: string | null };
 
 const ASCII = /^[\x20-\x7e]*$/;
 const bytes = (text: string) => { let size = 0; for (const char of text) { const point = char.codePointAt(0)!; size += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4; } return size; };
@@ -8,16 +8,13 @@ const bytes = (text: string) => { let size = 0; for (const char of text) { const
 const WIDE = /[ᄀ-ᅟ\u17A4⺀-꓏ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3ffff}]|\p{Extended_Pictographic}|\p{Emoji_Presentation}/u;
 const ZERO = /[\u1160-\u11ff\uD7B0-\uD7FF\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]/u;
 const EMOJI = /^(?:[\p{Extended_Pictographic}\p{Regional_Indicator}]|[#*0-9]\uFE0F?\u20E3)[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]*$/u;
-// ICU objects are built on first use: every callback evaluates the module in a fresh context.
 let segments: Intl.Segmenter | undefined;
 const segmenter = () => segments ??= new Intl.Segmenter();
-// The native renderer treats variation-selector-1 quotes as two cells.
 const widthOf = (text: string) => ASCII.test(text) ? text.length : [...segmenter().segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
   : [...segment.replace(/([‘’“”])\uFE01/gu, '$1$1')].reduce((width, char) => width + (char !== '\u115F' && ZERO.test(char) ? 0 : char === '\u17D8' ? 3 : WIDE.test(char) ? 2 : 1), 0)), 0);
 
 const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   if (cells < 1 || chars < 1 || limit < 3) return '';
-  // Slice before flattening: renders refit the same command every frame, so a huge heredoc must not be scanned whole each time. Kept output never exceeds min(chars, limit) code units, so one past that bound is enough to detect truncation.
   const bound = Math.min(chars, limit) + 1;
   const cut = text.length > bound;
   let sliced = cut ? text.slice(0, bound) : text;
@@ -42,6 +39,8 @@ const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   }
   return `${kept.join('')}…`;
 };
+
+const lastLine = (text: string | null | undefined) => text?.split('\n').map(part => part.trim()).filter(Boolean).at(-1) ?? null;
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : noun === 'search' ? 'es' : 's'}`;
 const lines = (count: number | null, status: RenderToolCall['status']) => count == null || status === 'running' ? null : plural(count, 'line');
@@ -79,7 +78,7 @@ const exec = (call: RenderExecCall): Row => {
   return {
     name, args: name === 'Shell' ? call.command : parsed.map(parsedArgs).join(', '),
     marker: [outcome(call.status, call.exit_code), lines(call.output_lines, call.status), duration(call.duration_ms)],
-    failed: call.status === 'failed', running: call.status === 'running',
+    failed: call.status === 'failed', running: call.status === 'running', reason: call.status === 'failed' ? lastLine(call.output_tail) : null,
   };
 };
 
@@ -100,9 +99,9 @@ const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null =>
     }
     case 'web_search': return { name: SEARCH_ACTIONS[props.action] ?? 'Web', args: props.query, marker: [outcome(props.status)], ...base };
     case 'agent': return { name: AGENT_TOOLS[props.tool] ?? 'Agent', args: [props.agents.join(', '), props.prompt].filter(Boolean).join(' · '), marker: [outcome(props.status)], ...base };
-    case 'mcp': return { name: `${props.server}.${props.tool}`, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], ...base };
-    case 'dynamic': return { name: props.tool, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], ...base };
-    case 'image': return { name: props.tool === 'view_image' ? 'View image' : 'Generate image', args: props.path ?? props.prompt ?? '', marker: [outcome(props.status)], ...base };
+    case 'mcp': return { name: `${props.server}.${props.tool}`, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], reason: props.status === 'failed' ? props.error?.split('\n').map(part => part.trim()).find(Boolean) : null, ...base };
+    case 'dynamic': return { name: props.tool, args: argument(props.arguments), marker: [outcome(props.status), lines(props.output_lines, props.status), duration(props.duration_ms)], reason: props.status === 'failed' ? props.error?.split('\n').map(part => part.trim()).find(Boolean) : null, ...base };
+    case 'image': return props.tool === 'view_image' ? null : { name: 'Generate image', args: props.path ?? props.prompt ?? '', marker: [outcome(props.status)], ...base };
     default: return null;
   }
 };
@@ -110,6 +109,7 @@ const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null =>
 const group = (calls: RenderExecCall[]): Row => {
   const failed = calls.filter(call => call.status === 'failed' || call.status === 'interrupted');
   const interrupted = calls.filter(call => call.status === 'interrupted');
+  const latestFailed = calls.filter(call => call.status === 'failed').at(-1);
   const running = calls.filter(call => call.status === 'running');
   const latest = running.at(-1) ?? failed.at(-1) ?? calls.at(-1)!;
   const counts = new Map<string, number>();
@@ -123,9 +123,10 @@ const group = (calls: RenderExecCall[]): Row => {
     args: exec(latest).args,
     marker: [running.length ? `${running.length} running` : null,
       failed.length > interrupted.length ? `${failed.length - interrupted.length} failed` : null,
+      latestFailed?.exit_code ? `exit ${latestFailed.exit_code}` : null,
       interrupted.length ? `${interrupted.length} interrupted` : failed.length || running.length ? null : 'ok',
       duration(calls.reduce((total, call) => total + (call.duration_ms ?? 0), 0))],
-    failed: failed.length > 0, running: running.length > 0,
+    failed: failed.length > 0, running: running.length > 0, reason: lastLine(latestFailed?.output_tail),
   };
 };
 
@@ -135,7 +136,6 @@ const line = (id: string, item: Row, columns: number): TerminalComponent => {
   const marker = fit(item.marker.filter(Boolean).join(' · '), available - 5 - Math.min(12, widthOf(item.name)), 96);
   const name = fit(item.name, Math.min(48, available - 2 - (marker ? widthOf(marker) + 3 : 0)));
   const used = widthOf(bullet) + (name ? widthOf(name) + 1 : 0) + (marker ? widthOf(marker) + 3 : 0);
-  // A line holds at most 256 characters across its spans.
   const args = fit(item.args, Math.max(0, available - used - 1), 249 - [...name].length - [...marker].length);
   const spans: TerminalSpan[] = [
     { text: bullet, tone: item.failed ? 'failure' : item.running ? 'accent' : 'muted' },
@@ -144,6 +144,11 @@ const line = (id: string, item: Row, columns: number): TerminalComponent => {
   if (args) spans.push({ text: ` ${args}` });
   if (marker) spans.push({ text: ` · ${marker}`, tone: item.failed ? 'failure' : 'muted' });
   return { type: 'line', id, label: fit(`${item.name} ${args}`, 120, 120, 120), spans };
+};
+
+const reason = (id: string, text: string, columns: number): TerminalComponent => {
+  const shown = fit(text, Math.max(0, Math.min(columns, 256) - 4), 240);
+  return { type: 'line', id, label: fit(text, 120, 120, 120), spans: [{ text: `  └ ${shown}`, tone: 'muted' }] };
 };
 
 export default function activate(api: ModAPI) {
@@ -155,7 +160,8 @@ export default function activate(api: ModAPI) {
       const rows = props.kind === 'explore' && props.calls.length > 1 ? [group(props.calls)]
         : props.kind === 'explore' ? props.calls.map(exec) : [row(props)];
       if (rows.length && rows.every((item): item is Row => item !== null)) {
-        return { tree: rows.map((item, index) => line(`tool_lines_${index}`, item, viewport.columns)) };
+        return { tree: rows.flatMap((item, index) => [line(`tool_lines_${index}`, item, viewport.columns),
+          ...item.reason ? [reason(`tool_lines_${index}_reason`, item.reason, viewport.columns)] : []]) };
       }
     } catch {}
     return next(event);

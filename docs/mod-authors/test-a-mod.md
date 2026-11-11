@@ -1,7 +1,7 @@
 # Test a mod
 
-How to test a mod offline, with a `mod.test.json` scenario, a TypeScript test, or both. Tests never call a model
-and never touch your mod store: each run builds a throwaway store. For every field and helper, see
+Test a mod offline with a `mod.test.json` scenario, a TypeScript test, or both. Each run builds a throwaway store
+and makes no model calls. For scenario fields and test helpers, see
 [offline scenarios](../../mods/reference/authoring.md#offline-scenarios) and
 [TypeScript tests](../../mods/reference/authoring.md#typescript-tests) in the reference.
 

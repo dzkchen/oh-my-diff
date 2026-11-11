@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { cut, mention, parseStatus, summary } from './git.ts';
@@ -21,6 +24,11 @@ function run(event, payload, { state = null, name, world = {} } = {}) {
   const host = ({ operation, arguments: args }) => {
     calls.push({ operation, arguments: args });
     if (operation === 'exec.run') {
+      if (world.real) {
+        const result = spawnSync(args.program, args.argv, { cwd: args.cwd, input: args.stdin, encoding: 'utf8' });
+        assert.ifError(result.error);
+        return { exit_code: result.status, stdout: result.stdout, stderr: result.stderr };
+      }
       if (world.noGit) throw new Error('exec_program_unavailable: git');
       if (args.argv[0] === 'rev-parse') return world.missing ? { exit_code: 128, stdout: '', stderr: 'fatal: not a git repository' } : { exit_code: 0, stdout: `${TOP}\n${TOP}/.git\n`, stderr: '' };
       const argv = args.argv.slice(args.argv.indexOf('color.ui=false') + 1);
@@ -47,7 +55,11 @@ function run(event, payload, { state = null, name, world = {} } = {}) {
     if (operation === 'mods.service') return args.method === 'panels' ? { panels: [{ id: 'git' }] } : { registered: 'git' };
     if (operation === 'workspace.watch') return { watch_id: world.watch ?? 'w1' };
     if (operation === 'session.info') return { thread_id: 't1', cwd: world.cwd ?? TOP, root: TOP };
-    if (operation === 'terminal.prompt') return world.answer === undefined ? { status: 'declined' } : { status: 'accepted', value: world.answer };
+    if (operation === 'terminal.prompt') {
+      world.onPrompt?.();
+      if (world.confirmDiff) world.diff = world.confirmDiff;
+      return world.answer === undefined ? { status: 'declined' } : { status: 'accepted', value: world.answer };
+    }
     if (operation === 'terminal.pty') return args.action === 'start' ? { session: 'signin', running: true } : args.action === 'read' ? { text: world.exited ? 'Username: u\nfatal: Authentication failed\n' : '', running: !world.exited, exit_code: world.exited ? 128 : null } : { stopped: true };
     if (operation === 'composer.read') return { text: '', cursor: 0, selection: null, revision: 3, attachments: [], suggestion: null };
     if (operation === 'composer.write') return { text: args.edit.text, cursor: 0, revision: 4 };
@@ -179,11 +191,63 @@ test('Enter lists the hunks, Space stages one through git apply, @ adds it to th
   assert.match(text(find(draw(escaped.state), 'omd_git_main')), /^diff --git/);
 });
 
+test('hunk actions refuse changed content with identical headers, including edits during confirmation', () => {
+  const state = key(started(), 'Enter').state;
+  const changed = DIFF.replace('+new', '+unreviewed');
+  for (const [action, world] of [
+    ['d', { answer: true, confirmDiff: changed }],
+    ['d', { answer: true, diff: changed }],
+    ['Space', { diff: changed }],
+    ['@', { diff: changed }],
+  ]) {
+    const result = key(state, action, world);
+    assert.equal(result.calls.some(call => call.arguments?.argv?.includes('apply') || call.operation === 'composer.write'), false);
+    assert.equal(notice(draw(result.state)), 'The file changed: look again');
+  }
+  assert.ok(key(state, 'd', { answer: true }).calls.some(call => call.arguments?.argv?.includes('apply')));
+});
+
 test('Enter on a binary file says Space stages it whole', () => {
   const world = { diff: 'diff --git a/src/a.ts b/src/a.ts\nindex 1..2 100644\nBinary files a/src/a.ts and b/src/a.ts differ\n' };
   const entered = key(started(world), 'Enter', world);
   assert.equal(notice(draw(entered.state)), 'A binary file has no text hunks: Space stages it whole');
   assert.equal(find(draw(entered.state), 'omd_git_side1_box').title, '[2] Files');
+});
+
+test('discarding a displayed hunk preserves an edit made in the confirmation dialog in a real repository', () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-git-hunk-'));
+  const git = (...argv) => {
+    const result = spawnSync('git', ['-C', root, ...argv], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  try {
+    git('init', '-q');
+    writeFileSync(join(root, 'file'), 'base\n');
+    git('add', 'file');
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'base');
+    writeFileSync(join(root, 'file'), 'reviewed\n');
+    const world = { real: true, cwd: root, answer: true };
+    const displayed = key(started(world), 'Enter', world).state;
+    const result = key(displayed, 'd', { ...world, onPrompt: () => writeFileSync(join(root, 'file'), 'unreviewed\n') });
+    assert.equal(readFileSync(join(root, 'file'), 'utf8'), 'unreviewed\n');
+    assert.equal(result.state.repo.notice, 'The file changed: look again');
+    const fresh = key(result.state, 'R', world);
+    key(fresh.state, 'd', world);
+    assert.equal(readFileSync(join(root, 'file'), 'utf8'), 'base\n');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('hunk actions refuse lines and hunks omitted from the bounded display', () => {
+  for (const diff of [DIFF.replace('+new', `+${'x'.repeat(250)}`), DIFF.replace('+new', `+${'x\n'.repeat(1200)}`), DIFF.replace('+new', `+${'\t'.repeat(60)}TAIL`)]) {
+    const world = { diff, answer: true };
+    const state = key(started(world), 'Enter', world).state;
+    for (const action of ['d', 'Space', '@']) {
+      const result = key(state, action, world);
+      assert.equal(result.calls.some(call => call.arguments?.argv?.includes('apply') || call.operation === 'composer.write'), false);
+    }
+  }
 });
 
 test('@ on a file inserts a mention relative to the working directory, quoted when it has a space', () => {

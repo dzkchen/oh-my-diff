@@ -249,5 +249,5 @@ it needs and its registry status. An operation marked experimental may change in
 | `workspace.snapshot` | `fs.read` | frozen |
 | `workspace.stat` | `fs.read`; `fs.external` for `root` | frozen |
 | `workspace.transaction` | `fs.write`; `fs.external` for `root` | frozen |
-| `workspace.unwatch` | `fs.read` | experimental |
+| `workspace.unwatch` | `fs.read` | frozen; experimental fields: `key` |
 | `workspace.watch` | `fs.read` | frozen; experimental fields: `key`, `git` |

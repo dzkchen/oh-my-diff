@@ -9,9 +9,9 @@ Read it if you're building a mod that animates
 It's an API `1.0.0` mod that uses only the public mod API, like any outside author's mod
 ([host primitives](../../reference/host-model.md#host-primitives)), and it uses no first-party mod. It shows:
 
-- The command hops through `events.publish` to the mod's own `channel` handler, which schedules the first `timer`
-  tick 100 ms later, so the state the command wrote is in place before the first tick. After a frame is shown, each
-  tick reschedules itself 16 ms later. A failed blit reschedules after 250 ms.
+- The command publishes an event with `events.publish`. The mod's `channel` handler receives it and schedules the
+  first `timer` tick 100 ms later, allowing the command's state write to finish first. After showing a frame, each
+  tick schedules the next one 16 ms later. A failed blit schedules another tick after 250 ms.
 - Each tick draws a whole frame: one `▀` per cell with the top and bottom pixel as foreground and background, packed
   as little-endian u32 `[codePoint, fg, bg]` triplets and base64-encoded with a small helper, since the runner has
   no `btoa`.

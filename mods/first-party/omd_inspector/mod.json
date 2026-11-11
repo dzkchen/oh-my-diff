@@ -6,6 +6,10 @@
   "state_version": 1,
   "state_scope": "thread",
   "description": "/inspect shows the session mode, install profile, active mods, workflow contract, limits and ledger",
+  "contributes": {
+    "commands": [{ "name": "inspect", "description": "See the session mode, install profile, active mods, workflow contract and limits" }],
+    "keys": [{ "key": "Alt+i", "description": "Close the inspector" }]
+  },
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_inspector" },
   "capabilities": ["agents", "commands", "contracts", "store", "terminal", "events", "lifecycle"],

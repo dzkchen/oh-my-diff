@@ -2,6 +2,9 @@ use super::*;
 use crate::mods::DISPATCHER_TEST;
 use codex_extension_api::ToolLifecycleContributor as _;
 use codex_extension_api::ToolOutputContributor;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
+use codex_omd::ModOpenOptions;
 use codex_omd::ModStore;
 use std::path::Path;
 
@@ -65,11 +68,21 @@ fn fixture_with_registry(
     packages: &[Package<'_>],
     registry: Option<&mut ExtensionRegistryBuilder<Config>>,
 ) -> Option<Fixture> {
+    fixture_in(packages, registry, true)
+}
+
+fn fixture_in(
+    packages: &[Package<'_>],
+    registry: Option<&mut ExtensionRegistryBuilder<Config>>,
+    git: bool,
+) -> Option<Fixture> {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().canonicalize().unwrap();
-    let repository = base.join("repo");
-    std::fs::create_dir(&repository).unwrap();
-    std::fs::create_dir(repository.join(".git")).unwrap();
+    let repository = if git { base.join("repo") } else { base.clone() };
+    if git {
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::create_dir(repository.join(".git")).unwrap();
+    }
     let store = ModStore::create(base.join("store")).unwrap();
     let sources = base.join("packages");
     std::fs::create_dir(&sources).unwrap();
@@ -79,7 +92,7 @@ fn fixture_with_registry(
     let root = base.join("store").canonicalize().unwrap();
     let host = Arc::new(Host {
         root: root.clone(),
-        repository: repository.clone(),
+        repository,
         repository_identity: "fixture".into(),
         config: config::HostConfig::default(),
         routes: Mutex::new(crate::RouteTable {
@@ -94,19 +107,31 @@ fn fixture_with_registry(
     let core = if let Some(registry) = registry {
         initialize(registry, host.clone()).unwrap().core.clone()
     } else {
-        let runtime = ModHost::open(root.clone()).unwrap();
+        let runtime = ModHost::open(root.clone(), ModOpenOptions::default()).unwrap();
         let environment = runtime.environment();
         let runtime = Arc::new(Mutex::new(runtime));
-        let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
-        let persist_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+        let input_runtime = Arc::new(Mutex::new(
+            ModHost::open(root.clone(), ModOpenOptions::default()).unwrap(),
+        ));
+        let persist_runtime = Arc::new(Mutex::new(
+            ModHost::open(root, ModOpenOptions::default()).unwrap(),
+        ));
         let persist_required = persist_runtime.lock().unwrap().required_surfaces();
-        let views = Arc::new(view::Views::new());
+        let views = Arc::new(view::Views::new(true));
+        let runtime_required = runtime.lock().unwrap().required_surfaces();
         Arc::new_cyclic(|core| Core {
+            sessions: Arc::default(),
+            turns: Arc::default(),
+            provider_switches: Arc::default(),
+            terminal_owner: None,
             session_runtime: tokio::runtime::Handle::try_current().ok(),
             agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
             host: host.clone(),
+            runtime_required,
             runtime,
             input_runtime,
+            disabled_modes: Arc::default(),
+            removed_features: Arc::default(),
             persist_runtime,
             persist_required,
             environment,
@@ -114,7 +139,7 @@ fn fixture_with_registry(
             services: services::Services::default(),
             views,
             expansion: State::default(),
-            inventory: inventory::Inventory::default(),
+            inventory: Arc::default(),
             autonomy: autonomy::Queues::default(),
             peering: peering::Registry::default(),
             this: core.clone(),
@@ -122,13 +147,6 @@ fn fixture_with_registry(
     };
     let thread = ThreadId::new();
     let session = host.open_session(thread, false).unwrap();
-    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
-        root,
-        repository,
-        None,
-        None,
-        thread.to_string(),
-    ));
     let lead = Lead {
         host,
         session,
@@ -150,8 +168,7 @@ fn mods(core: &Arc<Core>) -> Mods {
     Mods {
         registration: Mutex::new(None),
         core: core.clone(),
-        turns: Mutex::new(BTreeMap::new()),
-        sessions: Mutex::new(BTreeMap::new()),
+        initialized_threads: Mutex::default(),
         workspace_before: Mutex::new(BTreeMap::new()),
         worktrees: Mutex::new(BTreeMap::new()),
         pending: Mutex::new(BTreeMap::new()),
@@ -159,7 +176,6 @@ fn mods(core: &Arc<Core>) -> Mods {
         child_errors: Mutex::new(BTreeMap::new()),
         settled: Mutex::new(BTreeMap::new()),
         elicitations: Mutex::default(),
-        provider_switches: Mutex::default(),
     }
 }
 
@@ -620,6 +636,7 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
     let thread = fixture.lead.thread.to_string();
     let call = |source: &str, operation: &str, arguments: Value| {
         codex_omd::host::session_call(
+            None,
             &thread,
             "control",
             Some(source),
@@ -676,6 +693,7 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
     let policy =
         serde_json::to_value(codex_protocol::models::PermissionProfile::read_only()).unwrap();
     let read = codex_omd::host::session_call(
+        None,
         &thread,
         "control",
         Some(&source),
@@ -701,6 +719,7 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
         .await
         .unwrap();
     let read_snapshot = codex_omd::host::session_call(
+            None,
         &thread, "control", Some(&source), Some(&policy), ModHostCall {
             operation: "exec.run".into(),
             arguments: json!({"snapshot": snapshot["snapshot"], "program": "sh", "argv": ["-c", "printf %s \"$FIXTURE_VALUE\""]}),
@@ -709,6 +728,7 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
     assert_eq!(read_snapshot["exit_code"], 0);
     assert_eq!(read_snapshot["stdout"], "scoped");
     let denied = codex_omd::host::session_call(
+        None,
         &thread,
         "control",
         Some(&source),
@@ -847,14 +867,18 @@ fn command(core: &Core, id: &str, name: &str) -> Value {
     let mut runtime = core.runtime.lock().unwrap();
     let generation = runtime.generation();
     runtime
-        .invoke_with(
+        .invoke(
             id,
             generation,
             "command",
             name,
             Value::Null,
-            || true,
-            |_| Err(std::io::Error::other("unexpected_host_call")),
+            ModInvokeOptions {
+                host: ModHostCallback::Own(&mut |_| {
+                    Err(std::io::Error::other("unexpected_host_call"))
+                }),
+                ..ModInvokeOptions::default()
+            },
         )
         .unwrap()
 }
@@ -912,6 +936,7 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -993,10 +1018,10 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         ),
         "an answer whose value exceeds 64 KiB is invalid, so the call runs"
     );
-    assert!(mods.wants_value("call-huge"));
-    assert!(!mods.wants_value("call-none"));
+    assert!(mods.wants_value("call-huge", &ExtensionData::new("turn")));
+    assert!(!mods.wants_value("call-none", &ExtensionData::new("turn")));
     mods.replace_tool_output(output("call-huge", "ok")).await;
-    assert!(!mods.wants_value("call-huge"));
+    assert!(!mods.wants_value("call-huge", &ExtensionData::new("turn")));
     assert!(matches!(
         mods.intercept_tool(start("call-nullish", &NULLISH))
             .await
@@ -1024,7 +1049,7 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         .await
         .unwrap();
     assert!(
-        !unread.wants_value("call-plain"),
+        !unread.wants_value("call-plain", &ExtensionData::new("turn")),
         "only an interceptor whose mod requires code_mode_values_v1 gets the value"
     );
     unread
@@ -1059,8 +1084,14 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         .grants("budget")
         .unwrap()
         .source_sha256;
-    let mut scope = fixture.lead.session.data.0.lock().unwrap();
-    let hosts = scope.as_mut().unwrap();
+    let mut hosts = operations::data_hosts(
+        &fixture.lead,
+        crate::workspace_operations::WorkspaceAuthority::for_platform(
+            &fixture.lead.host.repository,
+            PermissionProfile::default(),
+        )
+        .unwrap(),
+    );
     let reference = hosts
         .text_evidence("budget", &source, "probe", "hello world")
         .unwrap();
@@ -1123,7 +1154,7 @@ impl codex_extension_api::ToolInvoker for RecordingInvoker {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
-    let Some(fixture) = fixture(&[
+    let Some(mut fixture) = fixture(&[
         Package {
             id: "retry",
             capabilities: &["interception", "store"],
@@ -1139,8 +1170,8 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     ]) else {
         return;
     };
-    *fixture.lead.session.contract.lock().unwrap() =
-        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let _manager = attach_thread(&mut fixture).await;
+    fixture.core.expansion.thread_started(&fixture.lead);
     let mods = mods(&fixture.core);
     let (session_store, thread_store, turn_store) = (
         ExtensionData::new("session".to_owned()),
@@ -1160,6 +1191,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1250,7 +1282,10 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         })
         .await
         .map(|r| r.text);
-    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
+    assert_eq!(
+        serde_json::from_str::<Value>(seen.as_deref().unwrap()).unwrap(),
+        structured
+    );
     let long = "y".repeat(codex_omd::TOOL_OUTPUT_BYTES - 8);
     assert_eq!(
         mods.intercept_tool(start("call-coded-long", &CODED))
@@ -1367,7 +1402,7 @@ async fn tool_output_without_owner_is_not_offered() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
-    let Some(fixture) = fixture(&[Package {
+    let Some(mut fixture) = fixture(&[Package {
         id: "keeper",
         capabilities: &["interception", "store"],
         manifest: Value::Null,
@@ -1375,8 +1410,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     }]) else {
         return;
     };
-    *fixture.lead.session.contract.lock().unwrap() =
-        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let _manager = attach_thread(&mut fixture).await;
     let mods = mods(&fixture.core);
     let (session_store, thread_store, turn_store) = (
         ExtensionData::new("session".to_owned()),
@@ -1388,6 +1422,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         arguments: r#"{"path":"a.txt"}"#.to_owned(),
     };
     let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1456,8 +1491,10 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         .source_sha256;
     let (mut paged, mut cursor, mut pages) = (String::new(), 0, 0);
     {
-        let mut scope = fixture.lead.session.data.0.lock().unwrap();
-        let hosts = scope.as_mut().unwrap();
+        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(&fixture.lead)
+            .await
+            .unwrap();
+        let mut hosts = operations::data_hosts(&fixture.lead, authority);
         loop {
             let page = hosts
                 .call(
@@ -1502,6 +1539,127 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         answered.starts_with("tool_original_unavailable"),
         "{answered}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shared_parent_child_sessions_bind_data_and_tool_output_to_each_thread() {
+    let mut fixture = fixture(&[Package {
+        id: "keeper",
+        capabilities: &["interception", "store"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }])
+    .unwrap();
+    let manager = attach_thread(&mut fixture).await;
+    let config = manager
+        .get_thread(fixture.lead.thread)
+        .await
+        .unwrap()
+        .config()
+        .await;
+    let started = manager
+        .start_thread(codex_core::StartThreadOptions::new((*config).clone()))
+        .await
+        .unwrap();
+    let parent = fixture.lead.clone();
+    let child = Lead {
+        thread: started.thread_id,
+        depth: 1,
+        ..parent.clone()
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    for first_child in [false, true] {
+        let session = parent.host.open_session(ThreadId::new(), false).unwrap();
+        *session.contract.lock().unwrap() =
+            crate::contract::SessionContract::resolve(&parent.host, &[]);
+        let parent = Lead {
+            session: session.clone(),
+            ..parent.clone()
+        };
+        let child = Lead {
+            session,
+            ..child.clone()
+        };
+        let order = if first_child {
+            [&child, &parent]
+        } else {
+            [&parent, &child]
+        };
+        for lead in order {
+            for operation in ["evidence.write", "tools.original"] {
+                let grants = fixture
+                    .core
+                    .runtime
+                    .lock()
+                    .unwrap()
+                    .grants("keeper")
+                    .unwrap();
+                let source = grants.source_sha256.clone();
+                let caller = Caller {
+                    id: "keeper",
+                    source: &source,
+                    grants: Some(grants),
+                    generation: fixture.core.runtime.lock().unwrap().generation(),
+                    origin: Origin::Event,
+                    record_changes: false,
+                };
+                let call_id = format!("call-{}-{operation}", lead.thread);
+                fixture.core.expansion.originals.lock().unwrap().insert(
+                    (lead.thread.to_string(), call_id.clone()),
+                    Arc::from("scoped output"),
+                );
+                let arguments = if operation == "evidence.write" {
+                    json!({"media_type": "text/plain", "content": "scoped output"})
+                } else {
+                    json!({"call_id": call_id})
+                };
+                let result = CHAIN_CALL
+                    .scope(
+                        call_id,
+                        operations::dispatch(
+                            &fixture.core,
+                            lead,
+                            caller,
+                            None,
+                            ModHostCall {
+                                operation: operation.into(),
+                                arguments,
+                            },
+                            &cancelled,
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                let reference = if operation == "tools.original" {
+                    result["reference"].clone()
+                } else {
+                    result
+                };
+                for reader in [&parent, &child] {
+                    let authority =
+                        crate::workspace_operations::WorkspaceAuthority::for_lead(reader)
+                            .await
+                            .unwrap();
+                    let mut data = codex_omd::scoped_data::ScopedDataHost::new(
+                        reader.host.root.clone(),
+                        authority.repository,
+                        authority.session_root,
+                        authority.session_database,
+                        "keeper".into(),
+                        reader.thread.to_string(),
+                        source.clone(),
+                    )
+                    .unwrap();
+                    let page = data.call("evidence.read", json!({"reference": reference}), || true);
+                    if reader.thread == lead.thread {
+                        assert!(page.unwrap().to_string().contains("scoped output"));
+                    } else {
+                        assert_eq!(page.unwrap_err().to_string(), "resource_scope_mismatch");
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1571,6 +1729,7 @@ async fn replacement_over_the_core_limit_is_dropped_with_a_diagnostic() {
     };
     static BIG: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("big"));
     mods.intercept_tool(ToolStartInput {
+        serving_assessment: None,
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
@@ -1671,6 +1830,7 @@ async fn channel_events_reach_subscribers_in_order() {
             &mut runtime,
             &core.host,
             &core.views,
+            core.terminal_owner.as_deref(),
             "idle",
             Value::Null,
             || true,
@@ -2053,6 +2213,7 @@ async fn approval_middleware_tightens_and_reports_results() {
     thread_store.insert(fixture.lead.clone());
     let gate = |call_id: &'static str, kind: &'static str, details: Value| {
         mods.gate_approval(codex_extension_api::ApprovalGateInput {
+            turn_store: &thread_store,
             session_store: &session_store,
             thread_store: &thread_store,
             call_id,
@@ -2141,8 +2302,11 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
     };
     let mods = mods(&fixture.core);
     let thread_store = ExtensionData::new("thread".to_owned());
-    assert_eq!(mods.adjust_tool_specs(&thread_store, &[]), None);
-    thread_store.insert(fixture.lead.clone());
+    assert_eq!(
+        mods.adjust_tool_specs(&thread_store, &thread_store, &[]),
+        None
+    );
+    thread_store.insert(fixture.lead);
     let view = |name: &str| ToolSpecView {
         name: name.to_owned(),
         description: String::new(),
@@ -2154,6 +2318,7 @@ async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
     };
     let adjustment = mods
         .adjust_tool_specs(
+            &thread_store,
             &thread_store,
             &[view("read"), grep, view("mcp__srv__search")],
         )
@@ -2184,9 +2349,9 @@ async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates
     };
     let mods = mods(&fixture.core);
     let thread_store = ExtensionData::new("thread".to_owned());
-    assert!(!mods.observing(&thread_store));
+    assert!(!mods.observing(&thread_store, &thread_store));
     thread_store.insert(fixture.lead.clone());
-    assert!(mods.observing(&thread_store));
+    assert!(mods.observing(&thread_store, &thread_store));
     let schema =
         json!({"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]});
     let entry =
@@ -2211,7 +2376,7 @@ async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates
         entry("patch", &Value::Null, Some((&Value::Null, false))),
         entry("loose", &schema, Some((&replaced, false))),
     ];
-    mods.observe_tool_inventory(&thread_store, &tools);
+    mods.observe_tool_inventory(&thread_store, &thread_store, &tools);
     let listed = tool_specs::list(&fixture.core, &fixture.lead).unwrap();
     assert_eq!(listed["thread_id"], fixture.lead.thread.to_string());
     assert_eq!(listed["tools"][1]["effective"], Value::Null);
@@ -2223,7 +2388,7 @@ async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates
         serde_json::to_vec(&listed).unwrap()
     );
     std::fs::write(&stored, "sentinel").unwrap();
-    mods.observe_tool_inventory(&thread_store, &tools);
+    mods.observe_tool_inventory(&thread_store, &thread_store, &tools);
     assert_eq!(std::fs::read(&stored).unwrap(), b"sentinel");
     let validate = |tool: &str, arguments: Value, rewritten: bool| {
         fixture
@@ -2252,8 +2417,8 @@ async fn tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates
         runtime.reload().unwrap();
         fixture.core.expansion.refresh(&runtime);
     }
-    assert!(!mods.observing(&thread_store));
-    mods.observe_tool_inventory(&thread_store, &tools);
+    assert!(!mods.observing(&thread_store, &thread_store));
+    mods.observe_tool_inventory(&thread_store, &thread_store, &tools);
     assert_eq!(validate("loose", json!({}), false), Ok(()));
     mods.on_thread_stop(ThreadStopInput {
         session_store: &ExtensionData::new("session".to_owned()),
@@ -2809,9 +2974,9 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         .unwrap()
         .refresh(&|| true)
         .unwrap();
-    assert!(!extension.rewrites_persisted_text());
+    assert!(!extension.rewrites_persisted_text(None));
     let held = fixture.core.persist_runtime.lock().unwrap();
-    assert!(extension.rewrites_persisted_text());
+    assert!(extension.rewrites_persisted_text(None));
     drop(held);
     let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
     install(
@@ -2824,7 +2989,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
             source: "export default api => api.command('noop', () => null)",
         },
     );
-    assert!(extension.rewrites_persisted_text());
+    assert!(extension.rewrites_persisted_text(None));
     let entries = [codex_extension_api::PersistedText {
         kind: "message",
         role: Some("user".to_owned()),
@@ -2832,6 +2997,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         text: "hi".to_owned(),
     }];
     let input = || codex_extension_api::PersistedTextInput {
+        turn_store: None,
         thread_id: "thread",
         entries: &entries,
     };
@@ -2850,7 +3016,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         panic!("poison the persist runtime");
     })
     .join();
-    assert!(extension.rewrites_persisted_text());
+    assert!(extension.rewrites_persisted_text(None));
     assert_eq!(extension.rewrite_persisted_text(input()).await, None);
     fixture
         .core
@@ -2889,32 +3055,37 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
             let state = fixture.core.host.root.join("state-writer.json");
             let before = std::fs::read(&state).ok();
             let active = std::cell::Cell::new(true);
-            let result = runtime.invoke_with(
+            let result = runtime.invoke(
                 "writer",
                 generation,
                 "command",
                 "run",
                 Value::Null,
-                || active.get(),
-                |_| {
-                    match change {
-                        "disable" => store.enable(&path, false)?,
-                        "revoke" => {
-                            let config = fixture.core.host.root.join("mods.json");
-                            let mut value: Value =
-                                serde_json::from_slice(&std::fs::read(&config)?)?;
-                            value["mods"][0]["capabilities"] = json!(["commands", "store"]);
-                            std::fs::write(config, serde_json::to_vec(&value)?)?;
+                ModInvokeOptions {
+                    active: &|| active.get(),
+                    host: ModHostCallback::Own(&mut |_| {
+                        match change {
+                            "disable" => store.enable(&path, false)?,
+                            "revoke" => {
+                                let config = fixture.core.host.root.join("mods.json");
+                                let mut value: Value =
+                                    serde_json::from_slice(&std::fs::read(&config)?)?;
+                                value["mods"][0]["capabilities"] = json!(["commands", "store"]);
+                                std::fs::write(config, serde_json::to_vec(&value)?)?;
+                            }
+                            "replace" => {
+                                std::fs::write(path.join("index.ts"), "export default () => {}")?;
+                                std::thread::sleep(std::time::Duration::from_millis(2100));
+                            }
+                            "broken" => {
+                                std::fs::write(fixture.core.host.root.join("mods.json"), "{")?
+                            }
+                            "cancel" => active.set(false),
+                            _ => unreachable!(),
                         }
-                        "replace" => {
-                            std::fs::write(path.join("index.ts"), "export default () => {}")?;
-                            std::thread::sleep(std::time::Duration::from_millis(2100));
-                        }
-                        "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
-                        "cancel" => active.set(false),
-                        _ => unreachable!(),
-                    }
-                    Ok(Value::Null)
+                        Ok(Value::Null)
+                    }),
+                    ..ModInvokeOptions::default()
                 },
             );
             assert!(result.is_err(), "{lane} {change}");
@@ -2922,14 +3093,16 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
             if change == "broken" {
                 assert!(runtime.refresh(&|| true).is_err());
             }
-            let next = runtime.invoke_with(
+            let next = runtime.invoke(
                 "writer",
                 generation,
                 "command",
                 "run",
                 Value::Null,
-                || true,
-                |_| Ok(Value::Null),
+                ModInvokeOptions {
+                    host: ModHostCallback::Own(&mut |_| Ok(Value::Null)),
+                    ..ModInvokeOptions::default()
+                },
             );
             assert_eq!(
                 next.is_ok(),
@@ -2962,6 +3135,7 @@ async fn dropping_persistence_cancels_callback_state_commit() {
             worker_runtime,
             required,
             codex_extension_api::PersistedTextInput {
+                turn_store: None,
                 thread_id: "t",
                 entries: &entries,
             },
@@ -3457,9 +3631,12 @@ async fn dynamic_tools_are_defined_invoked_and_removed_by_their_mod() {
         "tool",
         "search",
         json!({"q": "x"}),
-        || true,
-        |_, _| Err(std::io::Error::other("unexpected_host_call")),
-        |_| {},
+        codex_omd::ModInvokeOptions {
+            host: codex_omd::ModHostCallback::Scoped(&mut |_, _| {
+                Err(std::io::Error::other("unexpected_host_call"))
+            }),
+            ..codex_omd::ModInvokeOptions::default()
+        },
     )
     .unwrap();
     assert_eq!(value, json!({"called": "search", "arguments": {"q": "x"}}));
@@ -3909,7 +4086,7 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
 
     use codex_extension_api::AgentRoleContributor as _;
     use codex_extension_api::ToolSpecContributor as _;
-    let offered = mods.offered_agent_roles(&thread_store);
+    let offered = mods.offered_agent_roles(&thread_store, &thread_store);
     assert_eq!(offered.len(), 1);
     assert_eq!(offered[0].name, "reviewer/review");
     assert_eq!(
@@ -3919,14 +4096,29 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
     let role = std::fs::read_to_string(&offered[0].config_file).unwrap();
     assert!(role.contains("Review carefully."), "{role}");
     assert!(
-        mods.resolve_agent_role(&thread_store, "auditor/review")
+        mods.resolve_agent_role(&thread_store, None, "auditor/review")
             .is_some()
     );
     assert!(
-        mods.resolve_agent_role(&thread_store, "missing/review")
+        mods.resolve_agent_role(&thread_store, None, "missing/review")
             .is_none()
     );
-    assert!(mods.resolve_agent_role(&thread_store, "explorer").is_none());
+    assert!(
+        mods.resolve_agent_role(&thread_store, None, "explorer")
+            .is_none()
+    );
+    let config = fixture.core.host.root.join("mods.json");
+    let shared = std::fs::read(&config).unwrap();
+    std::fs::write(&config, "{").unwrap();
+    assert_eq!(
+        mods.offered_agent_roles(&thread_store, &thread_store).len(),
+        1
+    );
+    assert!(
+        mods.resolve_agent_role(&thread_store, None, "auditor/review")
+            .is_some()
+    );
+    std::fs::write(&config, &shared).unwrap();
 
     static SPAWN: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("spawn_agent"));
@@ -3935,6 +4127,7 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
             arguments: arguments.to_owned(),
         }));
         ToolStartInput {
+            serving_assessment: None,
             session_store: &session_store,
             thread_store: &thread_store,
             turn_store: &turn_store,
@@ -4004,7 +4197,7 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
     )
     .unwrap();
     assert!(
-        mods.resolve_agent_role(&thread_store, "omd-agent-foreign")
+        mods.resolve_agent_role(&thread_store, None, "omd-agent-foreign")
             .is_none(),
         "a plan from another session's workspace is refused"
     );
@@ -4029,6 +4222,7 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
         mods.native_agent_started(child, &source, store);
         let hidden = mods
             .adjust_tool_specs(
+                store,
                 store,
                 &[
                     codex_extension_api::ToolSpecView {
@@ -4244,7 +4438,8 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
         Some("user"),
         "a busy thread keeps its queue"
     );
-    core.autonomy.turn_ended(core, &fixture.lead, true);
+    core.autonomy
+        .turn_ended(core, &fixture.lead, "test-turn", true);
     assert_eq!(
         pick(&grants).0,
         None,
@@ -4253,7 +4448,8 @@ async fn autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt(
     core.autonomy.user_turn(&thread);
     let (first, _) = pick(&grants);
     assert_eq!(first.unwrap()["key"], "triage");
-    core.autonomy.turn_ended(core, &fixture.lead, false);
+    core.autonomy
+        .turn_ended(core, &fixture.lead, "test-turn", false);
     assert_eq!(
         core.autonomy.running(&thread).as_deref(),
         Some("monitor"),
@@ -4557,6 +4753,7 @@ async fn model_spawns_are_refused_past_the_depth_and_concurrency_limits() {
                 arguments: r#"{"message":"go"}"#.to_owned(),
             };
             mods.intercept_tool(ToolStartInput {
+                serving_assessment: None,
                 session_store,
                 thread_store: &store,
                 turn_store: &ExtensionData::new("turn".to_owned()),
@@ -4652,6 +4849,75 @@ fn the_agent_inventory_prunes_only_stale_snapshots_and_staging_files() {
     assert!(directory.path().join("role.toml").exists());
     assert!(!directory.path().join("stale.json").exists());
     assert!(!directory.path().join(staging).exists());
+}
+
+#[test]
+fn sibling_agent_callbacks_never_persist_an_older_inventory_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let inventory = Arc::new(inventory::Inventory::default());
+    inventory.persist_to(directory.path().to_path_buf());
+    let model = json!({"origin": "model", "parent": {"thread_id": "root", "agent_id": null}});
+    inventory.start("child", model.clone());
+    inventory.start("other", model);
+    let (staged, paused) = std::sync::mpsc::channel();
+    let (finished, resume) = std::sync::mpsc::channel::<()>();
+    *inventory::BEFORE_INVENTORY_REPLACE.lock().unwrap() = Some((
+        directory.path().to_path_buf(),
+        Box::new({
+            let inventory = inventory.clone();
+            move || {
+                staged.send(()).unwrap();
+                if inventory.persisting.try_lock().is_ok() {
+                    let _ = resume.recv();
+                }
+            }
+        }),
+    ));
+    let describing = std::thread::spawn({
+        let inventory = inventory.clone();
+        move || inventory.describe("other", "provider", "model", None)
+    });
+    paused.recv().unwrap();
+    let ending = std::thread::spawn(move || {
+        inventory.end("child", "completed", None);
+        let _ = finished.send(());
+    });
+    describing.join().unwrap();
+    ending.join().unwrap();
+    let persisted: Vec<Value> =
+        serde_json::from_slice(&std::fs::read(directory.path().join("root.json")).unwrap())
+            .unwrap();
+    let child = persisted
+        .iter()
+        .find(|record| record["thread_id"] == "child");
+    assert_eq!(child.unwrap()["status"], "completed");
+}
+
+#[test]
+fn a_new_thread_keeps_old_thread_store_data() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    let archived = fixture.lead.host.root.join("data/threads/archived/owner");
+    std::fs::create_dir_all(&archived).unwrap();
+    std::fs::write(archived.join("store.json"), "{}").unwrap();
+    for path in [
+        archived.join("store.json"),
+        archived.clone(),
+        archived.parent().unwrap().to_path_buf(),
+    ] {
+        std::fs::File::open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    fixture
+        .lead
+        .host
+        .open_session(ThreadId::new(), false)
+        .unwrap();
+    assert!(archived.join("store.json").exists());
 }
 
 #[test]
@@ -4939,9 +5205,11 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
     let form = |server: &'static str, schema: Value| async move {
         let request = json!({"mode": "form", "message": "who?", "requested_schema": schema});
         mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
+            turn_store: thread_store,
             turn_id: "turn-2",
             server,
             request_id: "7",
+            request_key: "7",
             request: &request,
             session_store,
             thread_store,
@@ -4966,8 +5234,10 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         "secret forms are never offered to mods"
     );
     mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
+        turn_store: None,
         server: "docs",
         request_id: "7",
+        request_key: "7",
         action: "accept",
         content: Some(&json!({"token": "hunter2"})),
         by: None,
@@ -4979,9 +5249,11 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         {"type": "object", "properties": {"token": {"type": "string", "format": "password"}}}});
     for id in (0..=64).rev() {
         mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
+            turn_store: thread_store,
             turn_id: "turn-2",
             server: "bulk",
             request_id: &format!("{id:02}"),
+            request_key: &format!("{id:02}"),
             request: &request,
             session_store,
             thread_store,
@@ -4990,8 +5262,10 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
     }
     for id in ["64", "00"] {
         mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
+            turn_store: None,
             server: "bulk",
             request_id: id,
+            request_key: id,
             action: "accept",
             content: Some(&json!({"token": "hunter2"})),
             by: None,
@@ -5456,6 +5730,7 @@ async fn thread_config_keeps_the_users_sandbox() {
         &mut config,
         None,
         None,
+        &codex_extension_api::ExtensionDataInit::default(),
     )
     .unwrap();
     assert_eq!(config.permissions.effective_permission_profile(), profile);
@@ -5479,6 +5754,45 @@ async fn thread_config_keeps_the_users_sandbox() {
 }
 
 #[tokio::test]
+async fn thread_config_denies_a_store_under_a_launch_folder_outside_git() {
+    let Some(fixture) = fixture_in(&[], None, false) else {
+        return;
+    };
+    let launch = fixture.lead.host.repository.clone();
+    if codex_omd::git_work_tree(&launch).is_some() {
+        return;
+    }
+    assert!(fixture.lead.host.root.starts_with(&launch));
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(launch.join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(launch),
+            sandbox_mode: Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    codex_extension_api::ConfigContributor::prepare_thread_config(
+        &mods(&fixture.core),
+        &mut config,
+        None,
+        None,
+        &codex_extension_api::ExtensionDataInit::default(),
+    )
+    .unwrap();
+    assert!(
+        config.permissions.sandbox_denied_paths.contains(
+            &codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+                &fixture.lead.host.root
+            )
+            .unwrap()
+        )
+    );
+}
+
+#[tokio::test]
 async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
     let Some(fixture) = fixture(&[]) else {
         return;
@@ -5495,8 +5809,14 @@ async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
         .unwrap();
     let mods = mods(&fixture.core);
     let prepare = |config: &mut codex_core::config::Config| {
-        codex_extension_api::ConfigContributor::prepare_thread_config(&mods, config, None, None)
-            .unwrap();
+        codex_extension_api::ConfigContributor::prepare_thread_config(
+            &mods,
+            config,
+            None,
+            None,
+            &codex_extension_api::ExtensionDataInit::default(),
+        )
+        .unwrap();
     };
     config.tool_output_token_limit = Some(777);
     prepare(&mut config);
@@ -5515,4 +5835,1414 @@ async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
     config.tool_output_token_limit = Some(200_000);
     prepare(&mut config);
     assert_eq!(config.tool_output_token_limit, Some(200_000));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_configuration_routes_independent_tasks_and_reconnected_clients() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "control",
+            capabilities: &["lifecycle", "commands", "store"],
+            manifest: json!({"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
+            source: "export default api => { api.on('start', () => api.state.set({starts:(api.state.get()?.starts ?? 0)+1})); api.command('starts', () => api.state.get()?.starts ?? 0); }",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let shared = std::fs::read(fixture.core.host.root.join("mods.json")).unwrap();
+    let shared_files: Vec<_> = [
+        "mod-status.json".to_owned(),
+        "mod-view.json".to_owned(),
+        codex_omd::builtins_snapshot(&fixture.core.host.repository),
+    ]
+    .into_iter()
+    .map(|name| {
+        let path = fixture.core.host.root.join(name);
+        let bytes = std::fs::read(&path).ok();
+        (path, bytes)
+    })
+    .collect();
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+    );
+    let b = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000002".parse().unwrap(),
+    );
+    clients::bind("terminal-a", a.clone()).unwrap();
+    clients::bind("terminal-b", b.clone()).unwrap();
+    clients::for_owner(&a)
+        .unwrap()
+        .expansion
+        .thread_started(&fixture.lead);
+    clients::select_thread(a.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::select_thread(b.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        clients::for_owner(&a)
+            .unwrap()
+            .expansion
+            .current()
+            .unwrap()
+            .thread,
+        fixture.lead.thread
+    );
+    assert_eq!(
+        clients::for_owner(&b)
+            .unwrap()
+            .expansion
+            .current()
+            .unwrap()
+            .thread,
+        fixture.lead.thread
+    );
+    {
+        let _thread = codex_omd::StateThread::enter(Some(fixture.lead.thread.to_string()));
+        assert_eq!(
+            command(&clients::for_owner(&a).unwrap().core, "control", "starts"),
+            json!(1)
+        );
+        assert_eq!(
+            command(&clients::for_owner(&b).unwrap().core, "control", "starts"),
+            json!(1)
+        );
+    }
+    clients::select_thread(b.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    {
+        let _thread = codex_omd::StateThread::enter(Some(fixture.lead.thread.to_string()));
+        assert_eq!(
+            command(&clients::for_owner(&b).unwrap().core, "control", "starts"),
+            json!(1)
+        );
+    }
+    clients::configuration("terminal-a", json!({"action":"write","id":"control","values":{"choice":"local"},"target":"terminal","reset":[]})).unwrap();
+    let read_choice = |client: &str| {
+        let response = clients::configuration(client, json!({"action":"read"})).unwrap();
+        response["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "control")
+            .unwrap()["settings"]["choice"]
+            .clone()
+    };
+    assert_eq!(read_choice("terminal-a"), json!("local"));
+    assert_eq!(read_choice("terminal-b"), json!("saved"));
+    let selection = codex_omd::ModStore::open(fixture.core.host.root.clone())
+        .unwrap()
+        .configuration()
+        .unwrap()
+        .mods
+        .into_iter()
+        .find(|selection| selection.path.ends_with("control"))
+        .unwrap();
+    clients::for_owner(&a)
+        .unwrap()
+        .input_runtime
+        .lock()
+        .unwrap()
+        .configuration_overrides()
+        .lock()
+        .unwrap()
+        .set_enabled(&selection, false)
+        .unwrap();
+    let recovery_row = |client| {
+        clients::recovery_read(client).unwrap()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "control")
+            .unwrap()
+            .clone()
+    };
+    let recovered_a = recovery_row("terminal-a");
+    assert_eq!(recovered_a["enabled"], false);
+    assert_eq!(recovered_a["inherited_enabled"], true);
+    assert_eq!(recovered_a["overrides"]["enabled"], false);
+    assert_eq!(recovered_a["settings"]["choice"], "local");
+    assert_eq!(recovery_row("terminal-b")["enabled"], true);
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(),
+        shared
+    );
+    clients::for_owner(&a)
+        .unwrap()
+        .input_runtime
+        .lock()
+        .unwrap()
+        .configuration_overrides()
+        .lock()
+        .unwrap()
+        .set_enabled(&selection, true)
+        .unwrap();
+
+    let task_a = ExtensionData::new("same-thread-turn-a");
+    task_a.insert(a.clone());
+    let task_b = ExtensionData::new("same-thread-turn-b");
+    task_b.insert(b.clone());
+    let owner_a = clients::for_store(&task_a).unwrap();
+    let owner_b = clients::for_store(&task_b).unwrap();
+    assert!(!Arc::ptr_eq(&owner_a, &owner_b));
+    let mut admitted_config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    codex_extension_api::ConfigContributor::prepare_turn_config(
+        owner_a.as_ref(),
+        &mut admitted_config,
+        &task_a,
+        &task_a,
+    )
+    .unwrap();
+    codex_extension_api::ConfigContributor::prepare_turn_config(
+        owner_b.as_ref(),
+        &mut admitted_config,
+        &task_b,
+        &task_b,
+    )
+    .unwrap();
+    let shared_thread = ExtensionData::new(fixture.lead.thread.to_string());
+    shared_thread.insert(fixture.lead.clone());
+    shared_thread.insert_arc(owner_a.clone());
+    let mut changed_config = admitted_config.clone();
+    changed_config.model = Some("terminal-b-model".into());
+    for owner in [&owner_a, &owner_b] {
+        let delivery = owner.expansion.delivery.lock().unwrap().take();
+        if let Some(mut delivery) = delivery {
+            delivery.task.abort();
+            let _ = (&mut delivery.task).await;
+        }
+    }
+    let pending_a = owner_a.expansion.pending.lock().unwrap().len();
+    let pending_b = owner_b.expansion.pending.lock().unwrap().len();
+    codex_extension_api::ConfigContributor::on_config_changed(
+        &mods(&fixture.core),
+        &shared_thread,
+        &shared_thread,
+        &admitted_config,
+        &changed_config,
+        Some(&b),
+    );
+    assert_eq!(owner_a.expansion.pending.lock().unwrap().len(), pending_a);
+    assert_eq!(
+        owner_b.expansion.pending.lock().unwrap().len(),
+        pending_b + 1
+    );
+    codex_extension_api::ConfigContributor::on_config_changed(
+        &mods(&fixture.core),
+        &shared_thread,
+        &shared_thread,
+        &admitted_config,
+        &changed_config,
+        None,
+    );
+    assert_eq!(
+        owner_a.expansion.pending.lock().unwrap().len(),
+        pending_a + 1
+    );
+    assert_eq!(
+        owner_b.expansion.pending.lock().unwrap().len(),
+        pending_b + 1
+    );
+    assert!(Arc::ptr_eq(&owner_a.turns, &owner_b.turns));
+    owner_a.turns.lock().unwrap().insert(
+        fixture.lead.thread.to_string(),
+        TurnRecord {
+            turn_id: "native-active-turn".into(),
+            error: None,
+            evidence: None,
+        },
+    );
+    assert_eq!(
+        owner_b
+            .turns
+            .lock()
+            .unwrap()
+            .get(&fixture.lead.thread.to_string())
+            .unwrap()
+            .turn_id,
+        "native-active-turn"
+    );
+    owner_a
+        .turns
+        .lock()
+        .unwrap()
+        .remove(&fixture.lead.thread.to_string());
+    assert!(Arc::ptr_eq(
+        &owner_a.provider_switches,
+        &owner_b.provider_switches
+    ));
+    assert!(Arc::ptr_eq(&owner_a.inventory, &owner_b.inventory));
+    assert!(Arc::ptr_eq(&owner_a.inventory, &fixture.core.inventory));
+    let shared_view = std::fs::read(fixture.core.host.root.join("mod-view.json")).ok();
+    owner_a.views.diagnostic(
+        &owner_a.host,
+        "terminal-test",
+        Some("only terminal A".into()),
+    );
+    assert!(
+        owner_a
+            .views
+            .published()
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|message| message == "only terminal A")
+    );
+    assert!(owner_b.views.published().is_none_or(|view| {
+        !view
+            .diagnostics
+            .iter()
+            .any(|message| message == "only terminal A")
+    }));
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mod-view.json")).ok(),
+        shared_view
+    );
+
+    *owner_a.disabled_modes.lock().unwrap() = vec!["plan".into()];
+    let busy_a = owner_a.input_runtime.lock().unwrap();
+    let busy_b = owner_b.input_runtime.lock().unwrap();
+    assert_eq!(
+        owner_a.disabled_collaboration_modes(Some(&a)),
+        vec!["plan".to_owned()]
+    );
+    assert!(owner_b.disabled_collaboration_modes(Some(&b)).is_empty());
+    drop((busy_a, busy_b));
+    assert_ne!(read_choice("terminal-a"), read_choice("terminal-b"));
+    let next_conversation = ExtensionData::new("another-conversation-turn");
+    next_conversation.insert(a.clone());
+    assert!(Arc::ptr_eq(
+        &owner_a,
+        &clients::for_store(&next_conversation).unwrap()
+    ));
+    let next_lead = Lead {
+        thread: ThreadId::new(),
+        ..fixture.lead.clone()
+    };
+    fixture.core.expansion.thread_started(&next_lead);
+    clients::select_thread(a.clone(), &next_lead.thread.to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        owner_a.expansion.current().unwrap().thread,
+        next_lead.thread
+    );
+    assert_eq!(
+        owner_b.expansion.current().unwrap().thread,
+        fixture.lead.thread
+    );
+    assert_eq!(read_choice("terminal-a"), json!("local"));
+    clients::detached("terminal-a");
+    clients::bind("reconnected-a", a.clone()).unwrap();
+    assert!(Arc::ptr_eq(&owner_a, &clients::for_owner(&a).unwrap()));
+    assert_eq!(read_choice("reconnected-a"), json!("local"));
+    let plain_rpc_owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000005".parse().unwrap(),
+    );
+    assert!(clients::for_owner(&plain_rpc_owner).is_none());
+    clients::select_thread(plain_rpc_owner.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    assert!(clients::for_owner(&plain_rpc_owner).is_some());
+    clients::release_owner(plain_rpc_owner);
+    let child = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000003".parse().unwrap(),
+    );
+    clients::bind("child", child.clone()).unwrap();
+    assert_eq!(read_choice("child"), read_choice("terminal-b"));
+    let native_child = ThreadId::new();
+    let child_store = ExtensionData::new(native_child.to_string());
+    child_store.insert(child.clone());
+    let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: fixture.lead.thread,
+        depth: 1,
+        agent_path: None,
+        agent_nickname: None,
+        agent_role: None,
+    });
+    let session_store = ExtensionData::new("native-child-session");
+    codex_extension_api::ThreadLifecycleContributor::on_thread_start(
+        &mods(&fixture.core),
+        codex_extension_api::ThreadStartInput {
+            config: &admitted_config,
+            session_source: &source,
+            persistent_thread_state_available: true,
+            environments: &[],
+            mcp_resource_client: None,
+            extension_metrics: None,
+            session_store: &session_store,
+            thread_store: &child_store,
+        },
+    )
+    .await;
+    let child_lead = child_store
+        .get::<Lead>()
+        .expect("fresh owner retains native parent linkage");
+    assert!(Arc::ptr_eq(&child_lead.session, &fixture.lead.session));
+    assert_eq!(child_lead.owner, format!("agent:{native_child}"));
+    assert!(
+        fixture
+            .core
+            .host
+            .accounts
+            .by_thread
+            .lock()
+            .unwrap()
+            .contains_key(&native_child.to_string())
+    );
+    let child_binding = clients::request_runtime(&child_store).unwrap().unwrap();
+    assert_eq!(child_binding.terminal_owner, Some(child.0.to_string()));
+    assert!(!Arc::ptr_eq(&child_binding.runtime, &owner_a.runtime));
+    clients::configuration("reconnected-a", json!({"action":"package","request":{"action":"disable","id":"control","scope":"user","target":"terminal"}})).unwrap();
+    {
+        let mut runtime = owner_a.runtime.lock().unwrap();
+        runtime.reload().unwrap();
+        super::publish(
+            &mut runtime,
+            &owner_a.host,
+            &owner_a.views,
+            owner_a.terminal_owner.as_deref(),
+            "owner-test",
+            Value::Null,
+            || true,
+        );
+    }
+    for (path, bytes) in shared_files {
+        assert_eq!(std::fs::read(path).ok(), bytes);
+    }
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(),
+        shared
+    );
+    let mut required: Value = serde_json::from_slice(&shared).unwrap();
+    required["mods"][0]["required"] = json!(true);
+    let source =
+        std::path::PathBuf::from(required["mods"][0]["path"].as_str().unwrap()).join("index.ts");
+    let original_source = std::fs::read(&source).unwrap();
+    std::fs::write(
+        &source,
+        "export default () => { throw new Error('changed'); }",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.core.host.root.join("mods.json"),
+        serde_json::to_vec(&required).unwrap(),
+    )
+    .unwrap();
+    let quarantined_child = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000004".parse().unwrap(),
+    );
+    let quarantined = clients::ensure_owner(&quarantined_child).unwrap();
+    assert!(!Arc::ptr_eq(&quarantined.core, &fixture.core));
+    assert!(
+        quarantined
+            .runtime
+            .lock()
+            .unwrap()
+            .grants("control")
+            .is_none()
+    );
+    assert!(
+        quarantined.runtime.lock().unwrap().status()["rejected"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    );
+    std::fs::write(fixture.core.host.root.join("mods.json"), "{").unwrap();
+    let rejected_child = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000006".parse().unwrap(),
+    );
+    assert!(clients::ensure_owner(&rejected_child).is_err());
+    assert!(clients::for_owner(&rejected_child).is_none());
+    let denied_task = ExtensionData::new("denied-child-task");
+    denied_task.insert(rejected_child);
+    assert!(
+        codex_extension_api::ConfigContributor::prepare_turn_config(
+            owner_a.as_ref(),
+            &mut admitted_config,
+            &task_a,
+            &denied_task
+        )
+        .is_err()
+    );
+    assert!(clients::for_store(&denied_task).is_none());
+    std::fs::write(&source, original_source).unwrap();
+    std::fs::write(fixture.core.host.root.join("mods.json"), &shared).unwrap();
+    clients::release_owner(quarantined_child);
+    clients::release_owner(a.clone());
+    assert!(clients::for_owner(&a).is_none());
+    assert!(Arc::ptr_eq(&owner_a, &clients::for_store(&task_a).unwrap()));
+    assert!(Arc::ptr_eq(&owner_b, &clients::for_store(&task_b).unwrap()));
+    assert_ne!(
+        clients::for_store(&task_a).unwrap().terminal_owner,
+        fixture.core.terminal_owner
+    );
+    clients::release_owner(b);
+    clients::release_owner(child);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_external_modules_render_and_receive_events_in_their_owner() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "module_owner",
+            capabilities: &["terminal"],
+            manifest: json!({"compatibility":{"required_features":["component_modules_v1"]},"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
+            source: "export default api => { api.component('screen', { init: () => 0, key: n => n + 1, view: n => [{type:'text',id:'value',label:'Value',text:api.settings.choice + ':' + n}] }); api.on('terminal', () => ({sites:{above_composer:{components:[{type:'module',id:'screen',label:'Screen',module:'screen',keys:true}]}}})); }",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000061".parse().unwrap(),
+    );
+    let b = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000062".parse().unwrap(),
+    );
+    clients::bind("module-a", a.clone()).unwrap();
+    clients::bind("module-b", b.clone()).unwrap();
+    clients::select_thread(a.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::select_thread(b.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::configuration(
+        "module-a",
+        json!({"action":"write","id":"module_owner","values":{"choice":"local"},"target":"terminal"}),
+    )
+    .unwrap();
+    for owner in [&a, &b] {
+        let mods = clients::for_owner(owner).unwrap();
+        let mut runtime = mods.runtime.lock().unwrap();
+        runtime.refresh(&|| true).unwrap();
+        super::publish(
+            &mut runtime,
+            &mods.host,
+            &mods.views,
+            mods.terminal_owner.as_deref(),
+            "module_owner-test",
+            Value::Null,
+            || true,
+        );
+    }
+    let render = |client: &str| {
+        clients::render(client, "module", json!({"component":"screen"})).unwrap()["tree"][0]["text"]
+            .clone()
+    };
+    assert_eq!(render("module-a"), "local:0");
+    assert_eq!(render("module-b"), "saved:0");
+    assert!(
+        clients::resource("module-a", "not-in-this-view")
+            .unwrap_err()
+            .contains("resource_not_in_view")
+    );
+    clients::component_event(
+        "module-a",
+        "screen",
+        json!({"kind":"key","key":"x","text":"x"}),
+    )
+    .unwrap();
+    assert_eq!(render("module-a"), "local:1");
+    assert_eq!(render("module-b"), "saved:0");
+    clients::detached("module-a");
+    assert!(clients::render("module-a", "module", json!({"component":"screen"})).is_err());
+    assert_eq!(render("module-b"), "saved:0");
+    clients::detached("module-b");
+    clients::release_owner(a);
+    clients::release_owner(b);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn embedded_session_dispatch_uses_explicit_terminal_owner_and_preserves_authority() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(mut fixture) = fixture_with_registry(
+        &[Package {
+            id: "probe",
+            capabilities: &["inventory"],
+            manifest: Value::Null,
+            source: "export default () => {}",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    fixture.core.expansion.thread_started(&fixture.lead);
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000011".parse().unwrap(),
+    );
+    let b = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000012".parse().unwrap(),
+    );
+    clients::bind("session-a", a.clone()).unwrap();
+    clients::bind("session-b", b.clone()).unwrap();
+    clients::select_thread(a.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::select_thread(b.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    let source = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("probe")
+        .unwrap()
+        .source_sha256;
+    let thread = fixture.lead.thread.to_string();
+    let call = |owner: &codex_protocol::turn_input::TerminalOwner, source: &str| {
+        codex_omd::host::session_call(
+            Some(&owner.0.to_string()),
+            &thread,
+            "probe",
+            Some(source),
+            None,
+            ModHostCall {
+                operation: "session.info".into(),
+                arguments: Value::Null,
+            },
+            &|| true,
+        )
+    };
+    assert_eq!(call(&a, &source).unwrap()["thread_id"], json!(thread));
+    assert_eq!(call(&b, &source).unwrap()["thread_id"], json!(thread));
+    assert!(call(&a, "changed-source").is_err());
+    clients::configuration("session-b", json!({"action":"package","request":{"action":"disable","id":"probe","scope":"user","target":"terminal"}})).unwrap();
+    assert!(call(&b, &source).is_err());
+    assert_eq!(call(&a, &source).unwrap()["thread_id"], json!(thread));
+    let unknown = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000013".parse().unwrap(),
+    );
+    assert!(call(&unknown, &source).is_err());
+    let admitted = clients::for_owner(&a).unwrap();
+    clients::release_owner(a.clone());
+    assert!(clients::for_owner(&a).is_none());
+    assert_eq!(call(&a, &source).unwrap()["thread_id"], json!(thread));
+    drop(admitted);
+    clients::release_owner(b);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_user_commands_admit_settings_and_confirmed_package_controls() {
+    struct Confirm;
+    impl codex_omd::client_surface::ClientSurface for Confirm {
+        fn submit(&self, call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
+            assert_eq!(call.operation, "packages.apply");
+            assert!(call.terminal_user);
+            let owner = call.terminal_owner.as_deref().unwrap();
+            let preview = clients::terminal_package_preview(owner, call.arguments.clone())?;
+            let result = clients::terminal_package_apply(owner, &preview.control);
+            call.reply.send(result).map_err(|e| e.to_string())
+        }
+    }
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[
+            Package {
+                id: "command_control",
+                capabilities: &["commands", "packages"],
+                manifest: json!({"settings_schema":{"type":"object","properties":{"choice":{"type":"string","default":"saved"}}}}),
+                source: "export default api => api.command('configuration_probe', arg => { if(arg==='write') return api.host.call('settings.write',{values:{choice:'local'},target:'terminal'}); if(arg==='reload') return api.host.call('packages.reload',null); const listed=api.host.call('packages.list',null); return api.host.call('packages.apply',{action:'disable',id:'controlled_subject',target:'terminal',expected_generation:listed.generation}); });",
+            },
+            Package {
+                id: "controlled_subject",
+                capabilities: &[],
+                manifest: json!({}),
+                source: "export default () => {}",
+            },
+        ],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let _surface = codex_omd::client_surface::register(Arc::new(Confirm));
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000071".parse().unwrap(),
+    );
+    clients::bind("command_control-client", a.clone()).unwrap();
+    clients::select_thread(a.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    let shared = std::fs::read(fixture.core.host.root.join("mods.json")).unwrap();
+    clients::configuration(
+        "command_control-client",
+        json!({"action":"command","command":"configuration_probe","args":"write"}),
+    )
+    .unwrap();
+    let read = clients::configuration("command_control-client", json!({"action":"read"})).unwrap();
+    assert_eq!(
+        read["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "command_control")
+            .unwrap()["settings"]["choice"],
+        "local"
+    );
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(),
+        shared
+    );
+    clients::configuration(
+        "command_control-client",
+        json!({"action":"command","command":"configuration_probe","args":"reload"}),
+    )
+    .unwrap();
+    let shared = std::fs::read(fixture.core.host.root.join("mods.json")).unwrap();
+    clients::configuration(
+        "command_control-client",
+        json!({"action":"command","command":"configuration_probe","args":"toggle"}),
+    )
+    .unwrap();
+    let read = clients::configuration("command_control-client", json!({"action":"read"})).unwrap();
+    assert_eq!(
+        read["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "controlled_subject")
+            .unwrap()["enabled"],
+        false
+    );
+    assert_eq!(
+        std::fs::read(fixture.core.host.root.join("mods.json")).unwrap(),
+        shared
+    );
+    clients::detached("command_control-client");
+    clients::release_owner(a);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_subagents_follow_the_parent_and_unowned_threads_use_shared_defaults() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    type Captured = Arc<Mutex<Option<(codex_protocol::turn_input::TerminalOwner, Arc<Mods>)>>>;
+    struct Capture(Captured);
+    impl ThreadLifecycleContributor<Config> for Capture {
+        fn on_thread_start<'a>(
+            &'a self,
+            input: ThreadStartInput<'a, Config>,
+        ) -> ExtensionFuture<'a, ()> {
+            Box::pin(async move {
+                let owner = input
+                    .thread_store
+                    .get::<codex_protocol::turn_input::TerminalOwner>()
+                    .unwrap();
+                *self.0.lock().unwrap() = Some((
+                    (*owner).clone(),
+                    clients::for_store(input.thread_store).unwrap(),
+                ));
+            })
+        }
+    }
+    struct Reject(Captured, Arc<std::sync::atomic::AtomicBool>);
+    impl codex_extension_api::ConfigContributor<Config> for Reject {
+        fn prepare_thread_config(
+            &self,
+            _config: &mut Config,
+            _thread: Option<&str>,
+            _forked_from: Option<&str>,
+            init: &codex_extension_api::ExtensionDataInit,
+        ) -> Result<(), String> {
+            if self.1.load(std::sync::atomic::Ordering::SeqCst) {
+                let owner = init
+                    .get::<codex_protocol::turn_input::TerminalOwner>()
+                    .unwrap();
+                *self.0.lock().unwrap() =
+                    Some(((*owner).clone(), clients::for_owner(&owner).unwrap()));
+                return Err("later contributor rejected native startup".into());
+            }
+            Ok(())
+        }
+    }
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "child_defaults",
+            capabilities: &["commands"],
+            manifest: json!({"settings_schema":{"type":"object","properties":{"mode":{"type":"string","default":"saved"}}}}),
+            source: "export default api => api.command('mode', () => api.settings.mode)",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let parent = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000091".parse().unwrap(),
+    );
+    clients::bind("native-parent", parent.clone()).unwrap();
+    clients::select_thread(parent.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    clients::configuration("native-parent", json!({"action":"write","id":"child_defaults","values":{"mode":"shared"},"target":"shared","reset":[]})).unwrap();
+    clients::configuration("native-parent", json!({"action":"write","id":"child_defaults","values":{"mode":"local"},"target":"terminal","reset":[]})).unwrap();
+    clients::for_owner(&parent)
+        .unwrap()
+        .runtime
+        .lock()
+        .unwrap()
+        .refresh(&|| true)
+        .unwrap();
+    assert_eq!(
+        command(
+            &clients::for_owner(&parent).unwrap().core,
+            "child_defaults",
+            "mode"
+        ),
+        json!("local")
+    );
+    let captured: Captured = Arc::default();
+    registry.thread_lifecycle_contributor(Arc::new(Capture(captured.clone())));
+    let reject = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    registry.config_contributor(Arc::new(Reject(captured.clone(), reject.clone())));
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("native-codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    config.model_provider.base_url = Some("http://127.0.0.1:9/v1".into());
+    let manager = codex_core::test_support::with_extensions(
+        codex_core::test_support::thread_manager_with_models_provider(
+            codex_login::CodexAuth::from_api_key("test"),
+            config.model_provider.clone(),
+        ),
+        Arc::new(registry.build()),
+    );
+    let rejected = manager
+        .start_thread(codex_core::StartThreadOptions {
+            environments: Some(Vec::new()),
+            ..codex_core::StartThreadOptions::new(config.clone())
+        })
+        .await;
+    assert!(rejected.is_err());
+    let (rejected_owner, captured_runtime) = captured.lock().unwrap().take().unwrap();
+    assert!(clients::for_owner(&rejected_owner).is_none());
+    assert!(Arc::ptr_eq(
+        &clients::session_owner(&rejected_owner).unwrap(),
+        &captured_runtime
+    ));
+    drop(captured_runtime);
+    assert!(clients::session_owner(&rejected_owner).is_none());
+    reject.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut parent_init = codex_extension_api::ExtensionDataInit::default();
+    parent_init.insert(parent.clone());
+    let lead = manager
+        .start_thread(codex_core::StartThreadOptions {
+            environments: Some(Vec::new()),
+            thread_extension_init: parent_init,
+            ..codex_core::StartThreadOptions::new(config.clone())
+        })
+        .await
+        .unwrap();
+    captured.lock().unwrap().take();
+    let child = manager
+        .start_thread(codex_core::StartThreadOptions {
+            session_source: Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: lead.thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            })),
+            environments: Some(Vec::new()),
+            ..codex_core::StartThreadOptions::new(config.clone())
+        })
+        .await
+        .unwrap();
+    let (owner, inherited) = captured.lock().unwrap().take().unwrap();
+    assert_eq!(owner, parent);
+    assert_eq!(
+        command(&inherited.core, "child_defaults", "mode"),
+        json!("local")
+    );
+    drop(inherited);
+    child.thread.shutdown_and_wait().await.unwrap();
+    lead.thread.shutdown_and_wait().await.unwrap();
+    let started = manager
+        .start_thread(codex_core::StartThreadOptions {
+            environments: Some(Vec::new()),
+            ..codex_core::StartThreadOptions::new(config.clone())
+        })
+        .await
+        .unwrap();
+    let (owner, admitted) = captured.lock().unwrap().take().unwrap();
+    assert_ne!(owner, parent);
+    assert_eq!(
+        command(&admitted.core, "child_defaults", "mode"),
+        json!("shared")
+    );
+    assert!(
+        admitted
+            .host
+            .accounts
+            .by_thread
+            .lock()
+            .unwrap()
+            .contains_key(&started.thread_id.to_string())
+    );
+    let task = ExtensionData::new("admitted-native-task");
+    task.insert(owner.clone());
+    task.insert_arc(admitted.clone());
+    let detached = manager
+        .start_thread(codex_core::StartThreadOptions {
+            session_source: Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: started.thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            })),
+            environments: Some(Vec::new()),
+            ..codex_core::StartThreadOptions::new(config.clone())
+        })
+        .await
+        .unwrap();
+    captured.lock().unwrap().take();
+    started.thread.shutdown_and_wait().await.unwrap();
+    assert!(
+        clients::for_owner(&owner).is_some(),
+        "the detached child still runs turns as this owner"
+    );
+    detached.thread.shutdown_and_wait().await.unwrap();
+    assert!(clients::for_owner(&owner).is_none());
+    assert!(Arc::ptr_eq(&clients::for_store(&task).unwrap(), &admitted));
+    assert!(Arc::ptr_eq(
+        &clients::session_owner(&owner).unwrap(),
+        &admitted
+    ));
+    assert_eq!(
+        command(&admitted.core, "child_defaults", "mode"),
+        json!("shared")
+    );
+    assert!(clients::for_owner(&parent).is_some());
+    clients::release_owner(parent);
+}
+
+#[tokio::test]
+async fn terminal_owner_native_config_baselines_restore_child_defaults_and_native_edits() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("baseline-codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    config.update_plan_enabled = false;
+    config.agent_completion_wake = false;
+    config.tool_output_token_limit = Some(123);
+    let native_features = config.features.enabled_features();
+    let mut metadata_only = config.clone();
+    metadata_only.extension_baselines.data.insert(42_u8);
+    assert_eq!(metadata_only, config);
+    *fixture.core.codex_config.lock().unwrap() = [
+        codex_omd::CODEX_CONFIG_UPDATE_PLAN,
+        codex_omd::CODEX_CONFIG_COMPLETION_WAKE,
+        codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    fixture
+        .core
+        .apply_native_configuration(&mut config)
+        .unwrap();
+    assert!(config.update_plan_enabled && config.agent_completion_wake);
+    assert_eq!(
+        config.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)
+    );
+    let mut child = config.clone();
+    fixture.core.codex_config.lock().unwrap().clear();
+    fixture.core.apply_native_configuration(&mut child).unwrap();
+    assert!(!child.update_plan_enabled && !child.agent_completion_wake);
+    assert_eq!(child.tool_output_token_limit, Some(123));
+    assert_eq!(child.features.enabled_features(), native_features);
+    fixture.core.apply_native_configuration(&mut child).unwrap();
+    assert_eq!(child.tool_output_token_limit, Some(123));
+    config.update_plan_enabled = false;
+    config.tool_output_token_limit = Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS + 17);
+    fixture
+        .core
+        .apply_native_configuration(&mut config)
+        .unwrap();
+    assert!(!config.update_plan_enabled && !config.agent_completion_wake);
+    assert_eq!(
+        config.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS + 17)
+    );
+    config.update_plan_enabled = true;
+    config.agent_completion_wake = true;
+    fixture
+        .core
+        .apply_native_configuration(&mut config)
+        .unwrap();
+    assert!(config.update_plan_enabled && config.agent_completion_wake);
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_native_configuration_refreshes_before_turn_and_conversation_admission() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "native_config",
+            capabilities: &[],
+            source: "export default () => {}",
+            manifest: json!({"codex_config":{"tools.update_plan.enabled":true,"agents.completion_wake":true,"tool_output_token_limit.raise":true},"compatibility":{"required_features":["codex_config_v1"]}}),
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
+    let selection = store.configuration().unwrap().mods[0].clone();
+    store.enable(&selection.path, false).unwrap();
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-0000000000a1".parse().unwrap(),
+    );
+    clients::bind("native_config-client", owner.clone()).unwrap();
+    clients::configuration("native_config-client",json!({"action":"package","request":{"action":"enable","id":"native_config","scope":"user","target":"terminal"}})).unwrap();
+    let original = std::fs::read(store.root().join("mods.json")).unwrap();
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("refresh-codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    config.update_plan_enabled = false;
+    config.agent_completion_wake = false;
+    config.tool_output_token_limit = Some(123);
+    let selected = clients::for_owner(&owner).unwrap();
+    let held = selected.input_runtime.lock().unwrap();
+    let worker_owner = owner.clone();
+    let mut waiting_config = config.clone();
+    let worker_mods = mods(&fixture.core);
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let store = ExtensionData::new("contended-turn");
+        store.insert(worker_owner);
+        entered_tx.send(()).unwrap();
+        let result = codex_extension_api::ConfigContributor::prepare_turn_config(
+            &worker_mods,
+            &mut waiting_config,
+            &ExtensionData::new("thread"),
+            &store,
+        );
+        finished_tx.send((result, waiting_config)).unwrap();
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(matches!(
+        finished_rx.recv_timeout(std::time::Duration::from_millis(50)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    drop(held);
+    let (result, admitted) = finished_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    result.unwrap();
+    worker.join().unwrap();
+    assert!(admitted.update_plan_enabled && admitted.agent_completion_wake);
+    assert_eq!(
+        admitted.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)
+    );
+    let mut turn = config.clone();
+    let turn_store = ExtensionData::new("next-turn");
+    turn_store.insert(owner.clone());
+    codex_extension_api::ConfigContributor::prepare_turn_config(
+        &mods(&fixture.core),
+        &mut turn,
+        &ExtensionData::new("thread"),
+        &turn_store,
+    )
+    .unwrap();
+    assert!(turn.update_plan_enabled && turn.agent_completion_wake);
+    assert_eq!(
+        turn.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)
+    );
+    let mut thread_init = codex_extension_api::ExtensionDataInit::default();
+    thread_init.insert(owner.clone());
+    codex_extension_api::ConfigContributor::prepare_thread_config(
+        &mods(&fixture.core),
+        &mut config,
+        None,
+        None,
+        &thread_init,
+    )
+    .unwrap();
+    assert!(config.update_plan_enabled && config.agent_completion_wake);
+    clients::configuration("native_config-client",json!({"action":"package","request":{"action":"disable","id":"native_config","scope":"user","target":"terminal"}})).unwrap();
+    codex_extension_api::ConfigContributor::prepare_turn_config(
+        &mods(&fixture.core),
+        &mut turn,
+        &ExtensionData::new("thread"),
+        &turn_store,
+    )
+    .unwrap();
+    assert!(!turn.update_plan_enabled && !turn.agent_completion_wake);
+    assert_eq!(turn.tool_output_token_limit, Some(123));
+    assert_eq!(
+        std::fs::read(store.root().join("mods.json")).unwrap(),
+        original
+    );
+    clients::detached("native_config-client");
+    clients::release_owner(owner);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_views_follow_roster_changes_without_a_mod_event() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "roster_view",
+            capabilities: &["terminal"],
+            manifest: Value::Null,
+            source: "export default api => api.on('terminal', ({clients}) => ({sites:{above_composer:{components:[{type:'text',id:'focus',label:'Focus',text:clients.some(client => client.id === 'roster-client' && client.focused) ? 'focused' : 'blurred'}]}}}));",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let a = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000071".parse().unwrap(),
+    );
+    let b = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000072".parse().unwrap(),
+    );
+    clients::bind("roster-a", a.clone()).unwrap();
+    clients::bind("roster-b", b.clone()).unwrap();
+    let entry = codex_omd::client_surface::attach(codex_omd::client_surface::ClientEntry {
+        id: "roster-client".into(),
+        name: "Roster client".into(),
+        renderer: json!({}),
+        viewport: Value::Null,
+        operations: Vec::new(),
+        attached_ms: 0,
+        focused: false,
+        terminal: Value::Null,
+    });
+    for owner in [&a, &b] {
+        let mods = clients::for_owner(owner).unwrap();
+        publish(
+            &mut mods.runtime.lock().unwrap(),
+            &mods.host,
+            &mods.views,
+            mods.terminal_owner.as_deref(),
+            "start",
+            Value::Null,
+            || true,
+        );
+    }
+    let text = |client: &str| {
+        json!(clients::published_for(client).unwrap().view)["sites"]["above_composer"]["components"]
+            [0]["text"]
+            .clone()
+    };
+    assert_eq!(text("roster-a"), "blurred");
+    assert_eq!(text("roster-b"), "blurred");
+    codex_omd::client_surface::update("roster-client", None, None, Some(true), None);
+    let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while text("roster-a") != "focused" || text("roster-b") != "focused" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    drop(entry);
+    clients::detached("roster-a");
+    clients::detached("roster-b");
+    clients::release_owner(a);
+    clients::release_owner(b);
+    assert!(
+        refreshed.is_ok(),
+        "roster focus changes must rerender every terminal owner's view"
+    );
+    drop(fixture);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_views_follow_client_fact_changes() {
+    struct Sized(std::sync::atomic::AtomicU16);
+    impl codex_omd::client_surface::ClientSurface for Sized {
+        fn submit(&self, _call: codex_omd::client_surface::SurfaceCall) -> Result<(), String> {
+            Err("unused".into())
+        }
+        fn client(&self) -> Value {
+            json!({"kind": "terminal", "columns": self.0.load(std::sync::atomic::Ordering::Relaxed), "rows": 40})
+        }
+    }
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "client_view",
+            capabilities: &["terminal"],
+            manifest: Value::Null,
+            source: "export default api => api.on('terminal', ({client}) => ({sites:{above_composer:{components:[{type:'text',id:'size',label:'Size',text:`${client?.columns}`}]}}}));",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let surface = Arc::new(Sized(std::sync::atomic::AtomicU16::new(160)));
+    let _surface = codex_omd::client_surface::register(surface.clone());
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-000000000073".parse().unwrap(),
+    );
+    clients::bind("client-a", owner.clone()).unwrap();
+    let mods = clients::for_owner(&owner).unwrap();
+    publish(
+        &mut mods.runtime.lock().unwrap(),
+        &mods.host,
+        &mods.views,
+        mods.terminal_owner.as_deref(),
+        "start",
+        Value::Null,
+        || true,
+    );
+    let text = || {
+        json!(clients::published_for("client-a").unwrap().view)["sites"]["above_composer"]["components"][0]["text"]
+            .clone()
+    };
+    assert_eq!(text(), "160");
+    surface.0.store(200, std::sync::atomic::Ordering::Relaxed);
+    codex_omd::client_surface::client_changed();
+    let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while text() != "200" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    clients::detached("client-a");
+    clients::release_owner(owner);
+    assert!(
+        refreshed.is_ok(),
+        "a terminal resize must rerender the owner's view with the new client facts"
+    );
+    drop(fixture);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn headless_owner_views_get_their_own_clients_terminal_facts() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "chat_view",
+            capabilities: &["terminal"],
+            manifest: Value::Null,
+            source: "export default api => api.on('terminal', ({client}) => ({sites:{above_composer:{components:[{type:'text',id:'chat',label:'Chat',text:`${client?.chat?.columns}`}]}}}));",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    let owners = [
+        ("facts-a", "00000000-0000-4000-8000-000000000074"),
+        ("facts-b", "00000000-0000-4000-8000-000000000075"),
+    ]
+    .map(|(client, owner)| {
+        (
+            client,
+            codex_protocol::turn_input::TerminalOwner(owner.parse().unwrap()),
+        )
+    });
+    let mut entries = Vec::new();
+    for (client, owner) in &owners {
+        clients::bind(client, owner.clone()).unwrap();
+        entries.push(codex_omd::client_surface::attach(
+            codex_omd::client_surface::ClientEntry {
+                id: (*client).into(),
+                name: "Remote terminal".into(),
+                renderer: json!({}),
+                viewport: Value::Null,
+                operations: Vec::new(),
+                attached_ms: 0,
+                focused: false,
+                terminal: Value::Null,
+            },
+        ));
+    }
+    let chat = |columns: u16| {
+        Some(
+            json!({"kind": "terminal", "columns": columns, "rows": 40, "chat": {"x": 0, "y": 0, "columns": columns, "rows": 30}}),
+        )
+    };
+    codex_omd::client_surface::update("facts-a", None, None, None, chat(90));
+    codex_omd::client_surface::update("facts-b", None, None, None, chat(70));
+    for (_, owner) in &owners {
+        let mods = clients::for_owner(owner).unwrap();
+        publish(
+            &mut mods.runtime.lock().unwrap(),
+            &mods.host,
+            &mods.views,
+            mods.terminal_owner.as_deref(),
+            "start",
+            Value::Null,
+            || true,
+        );
+    }
+    let text = |client: &str| {
+        json!(clients::published_for(client).unwrap().view)["sites"]["above_composer"]["components"]
+            [0]["text"]
+            .clone()
+    };
+    let initial = (text("facts-a"), text("facts-b"));
+    codex_omd::client_surface::update("facts-a", None, None, None, chat(120));
+    let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while text("facts-a") != "120" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let other = text("facts-b");
+    drop(entries);
+    for (client, owner) in owners {
+        clients::detached(client);
+        clients::release_owner(owner);
+    }
+    assert_eq!(initial, (json!("90"), json!("70")));
+    assert!(
+        refreshed.is_ok(),
+        "a remote client's new terminal facts must rerender its owner's view"
+    );
+    assert_eq!(other, "70");
+    drop(fixture);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn elicitation_redaction_isolates_threads_and_typed_ids() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["lifecycle", "approvals", "store"],
+        manifest: json!({}),
+        source: "export default api => api.on('elicitation_result', e => api.state.set([...(api.state.get() ?? []), e]));",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let session = ExtensionData::new("session");
+    let first = ExtensionData::new("first");
+    let second = ExtensionData::new("second");
+    first.insert(fixture.lead.clone());
+    second.insert(Lead {
+        thread: ThreadId::new(),
+        ..fixture.lead.clone()
+    });
+    for (store, key, secret) in [
+        (&first, "7", true),
+        (&second, "7", false),
+        (&first, "\"7\"", false),
+    ] {
+        let request = json!({"mode": "form", "requested_schema": {"properties": {"token": {"type": "string", "writeOnly": secret}}}});
+        mods.intercept_elicitation(codex_extension_api::ElicitationInterceptInput {
+            turn_store: store,
+            turn_id: "turn",
+            server: "docs",
+            request_id: "7",
+            request_key: key,
+            request: &request,
+            session_store: &session,
+            thread_store: store,
+        })
+        .await;
+    }
+    mods.on_elicitation_result(codex_extension_api::ElicitationResultInput {
+        turn_store: None,
+        server: "docs",
+        request_id: "7",
+        request_key: "7",
+        action: "accept",
+        content: Some(&json!({"token": "cross-thread-secret"})),
+        by: None,
+        session_store: &session,
+        thread_store: &first,
+    })
+    .await;
+    let log = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .state("observer")
+        .cloned()
+        .unwrap();
+    assert_eq!(log[0]["content"]["token"], "[redacted]");
+    assert_eq!(mods.elicitations.lock().unwrap().len(), 2);
 }

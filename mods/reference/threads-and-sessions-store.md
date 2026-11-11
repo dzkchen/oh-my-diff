@@ -42,8 +42,8 @@ The `resume` event fires when the lead thread is resumed.
 When a saved thread is resumed, the host reopens that thread's task [ledger](routes.md#ledger) instead of starting a
 new one. The ledger keeps its requests, exposure, observed lead usage and uncertain in-flight requests.
 
-- Repository, thread identity, original limits and saved journal must validate.
-- Reopening a ledger without a resume, changed limits and completed tasks are refused.
+- Before reopening the ledger, the host validates the repository, thread identity, original limits and saved journal.
+- The host refuses to reopen a ledger without a resume, with changed limits or for a completed task.
 - Agent handles and snapshot handles don't survive a process restart. A mod must reconcile saved pending work
   without silently spawning replacements.
 
@@ -74,6 +74,8 @@ const { turns, recording } = api.host.call('turns.activity', { last: 1 });
 ```
 
 ## `sessions.list`
+
+Recorded-session access rechecks the effective managed, project or user selection and its current grants on every call.
 
 `sessions.list {since?, until?, cursor?, limit?}` pages this repository's recorded sessions that allow memory (Codex
 memory mode `enabled`). It returns `{sessions, cursor, revision, scan_truncated, unavailable, projection}`; each

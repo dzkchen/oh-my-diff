@@ -26,6 +26,7 @@ function answer(w, { operation: op, arguments: args }) {
       if (w.steerError) throw new Error(w.steerError);
       return w.declineSteer ? { status: 'declined' } : { turn_id: args.params.expectedTurnId };
     case 'turns.queue':
+      if (w.queueError) throw new Error(w.queueError);
       if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(args.key)) throw new Error('turn_queue_key_invalid');
       if (w.queued.some(item => item.key === args.key)) return { key: args.key, status: 'duplicate' };
       w.queued.push(args);
@@ -131,6 +132,14 @@ test('an idle thread gets one queued turn keyed by the monitor id, also when a s
     assert.equal(w.queued.length, 1);
     assert.match(w.queued[0].prompt, /process 4242\) failure: exited with code 1 after 5 s/);
   }
+});
+
+test('the toast says so when the model could not be told', () => {
+  const w = world({ turns: [], queueError: 'turn_queue_full: 8' });
+  const armed = watch(w, { source: 'process', session_id: 'call-1' });
+  const done = channel(w, 'exit', { item: { id: 'call-1', processId: null, status: 'failed', exitCode: 2, durationMs: null, tail: '' } }, armed.state);
+  assert.equal(monitor(done.state).delivered, 'not delivered (turn_queue_full)');
+  assert.deepEqual([w.notices.at(-1).kind, w.notices.at(-1).text], ['warning', 'omd_monitor: m1 condition met; not delivered (turn_queue_full) to the model']);
 });
 
 test('an exit that happened before the subscription is reported in the tool result without a message', () => {
@@ -494,15 +503,36 @@ test('re-arming an until change monitor whose path vanished reports the removal 
   assert.deepEqual([monitor(resumed.state).status, w.watches.size], ['done', 0]);
 });
 
-test('a forked thread arms its copied monitors under its own keys, and a timer lost meanwhile is set again', () => {
+test('a fork does not adopt or deliver its parent monitors on start or resume', () => {
+  for (const [event, payload, now] of [['start', null, NOW], ['resume', { restarted: true }, NOW + 700_000]]) {
+    const w = world({ fs: { dist: { kind: 'dir' } } });
+    let parent = watch(w, { source: 'files', paths: ['dist'] }).state;
+    parent = watch(w, { source: 'github', repo: 'acme/app', run_id: '9' }, parent).state;
+    parent = watch(w, { source: 'process', session_id: '4242' }, parent).state;
+    w.thread = 't2';
+    const fork = run(w, event, payload, parent, { now });
+    assert.deepEqual(fork.state.mons, []);
+    assert.deepEqual([...w.watches.keys()], ['w_t1_m1']);
+    assert.deepEqual([...w.procs.keys()], ['mon_t1_m2']);
+    assert.deepEqual([...w.timers.keys()], ['t1/deadline']);
+    assert.deepEqual([w.steers, w.queued, w.notices], [[], [], []]);
+    assert.equal(tool(w, 'list', {}, fork.state).value.monitors.length, 0);
+    assert.equal(run(w, 'terminal', { ledger: null }, fork.state).value, null);
+    const child = watch(w, { source: 'process', session_id: '7', timeout_s: 900 }, fork.state);
+    assert.equal(child.value.status, 'watching');
+    assert.equal(w.timers.get('t2/deadline'), 900_000);
+    w.thread = 't1';
+    const resumed = run(w, 'resume', { restarted: false }, parent);
+    assert.equal(resumed.state.mons.filter(m => m.status === 'active').length, 3);
+  }
+});
+
+test('a missing timer is restored when another monitor is created in the same thread', () => {
   const w = world({ fs: { dist: { kind: 'dir' } } });
-  const parent = watch(w, { source: 'files', paths: ['dist'] }).state;
-  w.thread = 't2';
-  const fork = run(w, 'start', null, parent).state;
-  assert.deepEqual([...w.watches.keys()], ['w_t1_m1', 'w_t2_m1']);
-  w.timers.delete('t2/deadline');
-  watch(w, { source: 'process', session_id: '7', timeout_s: 900 }, fork);
-  assert.equal(w.timers.get('t2/deadline'), 600_000);
+  const state = watch(w, { source: 'files', paths: ['dist'] }).state;
+  w.timers.delete('t1/deadline');
+  watch(w, { source: 'process', session_id: '7', timeout_s: 900 }, state);
+  assert.equal(w.timers.get('t1/deadline'), 600_000);
 });
 
 test('/monitor pr starts a PR watcher with declared grants', () => {

@@ -21,7 +21,7 @@ omd mods enable omd_tool_absorb
 
 ## Use it
 
-There is nothing to run. `/absorb` shows the merged batches in this thread, how many duplicate reads were skipped
+There is nothing to run. `/merged_reads` shows the merged batches in this thread, how many duplicate reads were skipped
 and which host call ran each read.
 
 ### What it merges
@@ -55,7 +55,7 @@ It has no settings.
 
 ## Needs and limits
 
-- It asks to add `/absorb`, see and merge the model's tool calls, run merged reads through a tool of its own, check
+- It asks to add `/merged_reads`, see and merge the model's tool calls, run merged reads through a tool of its own, check
   files for changes, keep shared outputs in thread storage and follow turns. The capabilities are `commands`,
   `interception`, `tools`, `fs.read`, `store`, `events`, `lifecycle` and `inventory` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
@@ -68,7 +68,7 @@ It has no settings.
 - A duplicate read is answered with a pointer to the first one's output instead of a second copy. A duplicate of a
   read whose output didn't fit or that couldn't run gets that read's note.
 - Reads issued one at a time are left alone, and reads inside code-mode cells are never merged, since code mode
-  already runs a cell's reads as one step. Models that work through code mode, such as the GPT models Codex `0.166.0`
+  already runs a cell's reads as one step. Models that work through code mode, such as the GPT models Codex `0.167.0`
   uses, get only the code-mode reuse.
 - It needs an OMD host that supports per-call batch results and code-mode values (host features
   `tool_batch_success_v1` and `code_mode_values_v1`). An older host refuses to turn it on.

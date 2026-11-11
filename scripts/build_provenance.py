@@ -3,11 +3,10 @@ import hashlib
 from pathlib import Path
 import tomllib
 
-from scripts import install_support as support
+from scripts import install_support as support, release_artifacts
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORD = "build-provenance.json"
-BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker", "omd-runner")
 OVERRIDES = ("RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_TARGET",
              "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
 
@@ -87,7 +86,7 @@ def inputs(tree, arguments, environment):
 
 
 def hashes(directory):
-    return {name: support.digest(directory / name) for name in BINARIES}
+    return {name: support.digest(directory / name) for name in release_artifacts.BINARIES}
 
 
 def record_build(directory, before, after):
@@ -117,7 +116,7 @@ def verify(directory, signed=True, expected_inputs=None):
         raise ValueError("artifact build configuration is missing")
     if expected_inputs is not None and record["inputs"] != expected_inputs:
         raise ValueError("artifact build configuration changed; rebuild binaries")
-    if set(record.get("unsigned", {})) != set(BINARIES):
+    if set(record.get("unsigned", {})) != set(release_artifacts.BINARIES):
         raise ValueError("artifact build provenance inventory differs")
     if record.get("signed" if signed else "unsigned") != hashes(directory):
         raise ValueError("artifact bytes differ from build provenance")

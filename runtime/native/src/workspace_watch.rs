@@ -48,7 +48,7 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
 const WORKTREE_GIT_FILES: [&str; 2] = ["HEAD", "index"];
 
 fn git_dirs(root: &Path) -> Option<(PathBuf, PathBuf)> {
-    let top = root.ancestors().find(|dir| dir.join(".git").exists())?;
+    let top = &codex_omd::git_work_tree(root)?;
     let dot = top.join(".git").canonicalize().ok()?;
     if dot.is_dir() {
         return Some((dot.clone(), dot));
@@ -226,6 +226,9 @@ impl WorkspaceWatches {
             }
         }
         let registration = subscriber.register_paths(targets);
+        if !registration.registration_succeeded() {
+            return Err(io::Error::other("watch_registration_failed"));
+        }
         let mut receiver = DebouncedWatchReceiver::new(receiver, Duration::from_millis(debounce));
         let (root, protected, watch_id) = (self.root.clone(), self.protected.clone(), id.clone());
         let task = tokio::spawn(async move {

@@ -133,7 +133,7 @@ selected binding and Esc clears the search or closes the overlay.
 
 - `action`: `enter`, `leave`, `move`, `down`, `up`, `drag`, or `scroll_up` and `scroll_down` for the mouse wheel;
 - `button`: `left`, `right`, `middle`, or null for motion and the wheel;
-- `column`/`row` relative to the component's first cell (a nested box counts its title and children);
+- `column`/`row` as signed 32-bit integers relative to the component's first cell (a nested box counts its title and children);
 - `half` (0 or 1, the half-cell row) on terminals that report pixel positions (Kitty, Ghostty and WezTerm), else
   null.
 
@@ -145,16 +145,20 @@ position, never a backlog. Views with no pointer components add no pointer work.
 
 `component_event` reports interaction with a mod's components and goes only to the component's owner. Two experimental
 events report native state: `view` (`{phase, view, view_id, dropped?}`) when a native bottom-pane view or overlay opens
-or closes, and `focus` (`{focused, idle?, dropped?}`) when the terminal window gains or loses focus or enters/leaves display idle.
-`idle: true` means five minutes without terminal input. Stop visual timers while `!focused || idle` and restart
-them on the next active event. `terminal` callbacks also carry `client.active` so a newly shown
-thread can recover without waiting for another window focus change. Active turns, tools, monitors and desktop
-notifications continue; the TUI redraws at most once a second, so content stays current without animation, and releases unused stateless
-runners and spare processes. Session runners and mounted component state remain resident. After a minute without
-runner use, all spare runners are released. Focus, keys, paste or mouse resume full-rate drawing; resize and returning from
-an external editor resume it while focused, and an approval, question or finished turn ends display idle in a
-focused terminal. Background detection needs a terminal that reports focus events.
-This reduces display work and disposable memory; it does not unload the conversation or freeze the session process.
+or closes, and `focus` (`{focused, idle?, dropped?}`) when the terminal window gains or loses focus or enters or leaves
+display idle.
+
+`idle: true` means five minutes without terminal input. Stop visual timers while `!focused || idle` and restart them
+on the next active event. `terminal` callbacks also carry `client.active`, so a newly shown thread can recover
+without waiting for another window focus change.
+
+While unfocused or display-idle, active turns, tools, monitors and desktop notifications continue. The TUI redraws
+at most once a second and releases unused stateless runners and spare processes. Session runners and mounted
+component state remain resident. After a minute without runner use, all spare runners are released.
+
+Focus, keys, paste or mouse resume full-rate drawing. Resize and returning from an external editor resume it while
+focused; an approval, question or finished turn ends display idle in a focused terminal. Background detection needs
+a terminal that reports focus events. The conversation stays loaded and the session process keeps running.
 
 With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
 `view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.
@@ -293,5 +297,6 @@ by `columns` and `rows`, or as last rendered. The default is 80 columns and 0 ro
 says when the next tick is due. The client sends key and pointer events through `omd/client/event`.
 
 Their posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
-host operations as `component_event` hooks, for terminal and client posts alike. Detaching unmounts the client's
-instances.
+host operations as `component_event` hooks, for terminal and client posts alike. A post is delivered only while the
+thread it was posted in is still current and its instance is still mounted. Detaching unmounts the client's instances
+and drops their undelivered posts.

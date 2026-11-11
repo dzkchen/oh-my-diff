@@ -45,6 +45,7 @@ The mod uses the first that applies:
    [persistent-caching announcement](https://x.com/thsottiaux/status/2112712984644784534). Unpriced OpenAI responses
    are skipped too. Ordinary signed-in sessions have that label, and usage alone can't tell them apart from unpriced
    API sessions. If you use an API key without configured billing metadata, set an explicit interval.
+   The first such response in a thread adds a transcript note saying idle compaction is inactive there and why (a ChatGPT plan, or no known price).
 3. A lifetime the provider reports (the Claude route reports its 5-minute and 1-hour caches). Later cache reads reuse
    that interval only for the same provider, route, credential and model.
 4. A 30-minute estimate for other `openai` responses with positive cache-read or cache-write tokens. Unknown providers
@@ -72,8 +73,9 @@ not mean unlimited usage or free cached input. See
 | `cache_ttl_minutes` | `auto` | Estimated idle interval in minutes: `auto`, `5`, `10`, `30`, `60`, `120` or `720` (12 hours). This does not configure the provider's cache. |
 | `min_tokens` | `100000` | Smaller contexts are never compacted. |
 
-Change settings in `/mods`, or from a shell with `omd-mod`, the low-level tool that works on a mod store directly. The
-shell form replaces the mod's saved settings:
+Change settings in `/mods`, which changes one setting at a time, or from a shell with `omd-mod`, the low-level tool
+that works on a mod store directly. The shell form replaces all of the mod's saved settings, so any setting you leave
+out goes back to its default:
 
 ```sh
 STORE=~/.local/share/oh-my-diff/stores/full
@@ -88,6 +90,8 @@ omd-mod settings "$STORE" "$STORE/sources/omd_idle_compact" '{"cache_ttl_minutes
 - Approvals and questions from subagents (helper agents the main agent starts for part of a task) don't count as
   the thread waiting on you.
 - Codex's own compactions (automatic or `/compact`) disarm the timer until the next response.
+- A mod has 16 timers across every thread in one Oh My Diff process. When other threads hold them all, a toast says
+  idle compaction is off for this thread, and it arms again at a later response once a timer frees up.
 
 ## More
 

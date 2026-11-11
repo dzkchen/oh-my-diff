@@ -1,11 +1,14 @@
 {
   "schema": 1,
   "id": "omd_statusline",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
   "description": "Configurable status line below or above the composer: model, context, usage limits, cost, Git, pull request and CI status, and your own scripts",
+  "contributes": {
+    "commands": [{ "name": "statusline", "description": "Edit the status line with a live preview: placement, preset, segments and order" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_statusline"},
   "capabilities": ["terminal", "store", "commands", "events", "lifecycle", "model", "middleware", "threads", "config", "account", "inventory", "exec", "http", "credentials", "builtins"],
@@ -20,12 +23,12 @@
     "type": "object",
     "properties": {
       "placement": {"type": "string", "enum": ["below", "above"], "default": "below", "title": "Position", "description": "Show the status line below or above the prompt"},
-      "preset": {"type": "string", "enum": ["compact", "detailed", "custom"], "default": "compact", "title": "Preset", "description": "compact or detailed segment sets; custom uses the Custom layout setting"},
+      "preset": {"type": "string", "enum": ["auto", "compact", "detailed", "custom"], "default": "auto", "title": "Preset", "description": "auto follows your Codex tui.status_line items (compact when unset); compact or detailed segment sets; custom uses the Custom layout setting"},
       "layout": {"type": "string", "default": "model effort tier provider context tokens cache cost limits; git changes pr ci session tools agents plan omd", "title": "Custom layout", "description": "Segment IDs separated by spaces, lines by ; (up to 4 lines); used when Preset is custom"},
       "hidden": {"type": "string", "default": "", "title": "Hidden segments", "description": "Segment IDs to hide from the chosen preset, separated by spaces"},
       "glyphs": {"type": "string", "enum": ["unicode", "ascii"], "default": "unicode", "title": "Symbols", "description": "unicode symbols, or plain ascii characters"},
-      "bars": {"type": "boolean", "default": true, "title": "Progress bars", "description": "Draw a bar before the context percentage"},
-      "thresholds": {"type": "string", "default": "context=70,90 limits=70,90 cost=5,20", "title": "Warning levels", "description": "When segments turn to warning and alert: percent for context and limits, USD for cost"},
+      "bars": {"type": "boolean", "default": true, "title": "Progress bars", "description": "Draw a bar showing how much context is left"},
+      "thresholds": {"type": "string", "default": "context=70,90 limits=70,90 cost=5,20", "title": "Warning levels", "description": "When segments turn to warning and alert: percent used for context and limits, USD for cost"},
       "tones": {"type": "string", "default": "", "title": "Colors", "description": "Per-segment color overrides as segment=tone: accent, success, attention, failure, muted, normal"},
       "github": {"type": "boolean", "default": true, "title": "GitHub status", "description": "Show pull request and CI segments once a GitHub token is connected"},
       "refresh_s": {"type": "number", "default": 60, "title": "Git refresh", "description": "Seconds between git status refreshes (5 to 3,600)"},

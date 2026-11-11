@@ -1,4 +1,6 @@
-import type { CostBasis, Json, Ledger, ModAPI, TerminalComponent, TerminalListRow, TerminalPatch } from '../../api.d.ts';
+import type { CostBasis, Json, Ledger, ModAPI, ModelResponse, TerminalComponent, TerminalListRow, TerminalPatch } from '../../api.d.ts';
+import { cacheIdentity, cacheLifetime } from './cache_ttl.ts';
+import type { CacheMemo } from './cache_ttl.ts';
 
 type Tokens = { input: number | null; cached: number | null; write: number | null; output: number | null; reasoning: number | null };
 type Reported = { usd: number; basis: 'provider_billed' | 'client_list_estimate' };
@@ -6,7 +8,7 @@ type Entry = {
   key: string; request: string; attempt: number; billing: number | null; thread: string; agent: string | null; kind: string; turn: string | null;
   provider: string; credential: string | null; route: string; requested: string; served: string | null; status: string;
   tokens: Tokens | null; estimated: boolean; window: number | null; cost: { microusd: number | null; basis: CostBasis };
-  reported: Reported | null; overage: boolean; ttl: number | null; at: number; synthetic: string | null; revision: number;
+  reported: Reported | null; overage: boolean; ttl: number | null; cache: ModelResponse['cache']; started: number; at: number; synthetic: string | null; revision: number;
 };
 type Sample = { scope: string; minutes: number | null; used: number; resets: number | null; at: number; seen: number };
 type Hud = {
@@ -35,6 +37,7 @@ const EMPTY: Snapshot = { open: false, ledger: null, error: null, allowance: nul
 const SPARK = ' .:-=+*#';
 
 export default function activate(api: ModAPI) {
+  api.builtins({ commands: { replace: { usage: 'usage' } } });
   const categories = api.settings.categories === true;
   const budget = typeof api.settings.budget_usd === 'number' && api.settings.budget_usd > 0 ? api.settings.budget_usd : null;
   const saved = (): Snapshot => {
@@ -47,7 +50,7 @@ export default function activate(api: ModAPI) {
   const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
   const visible = (value: string, limit = 160) => [...value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')].slice(0, limit).join('');
   const fit = (text: string, max: number) => [...text].length > max ? `${[...text].slice(0, max - 1).join('')}…` : text;
-  const paid = (cost: Record<string, Json> | null) => typeof cost?.settled_task_charge_microusd === 'number' ? `$${(cost.settled_task_charge_microusd / 1e6).toFixed(2)} paid API` : 'no paid API use recorded';
+  const paid = (cost: Record<string, Json> | null) => typeof cost?.settled_task_charge_microusd === 'number' && cost.settled_task_charge_microusd > 0 ? `Paid API use: $${(cost.settled_task_charge_microusd / 1e6).toFixed(2)}` : null;
   const usd = (value: number) => `$${value < 10 ? value.toFixed(2) : value.toFixed(1)}`;
   const count = (n: number) => n < 1000 ? String(n) : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(1)}M`;
   const span = (ms: number) => {
@@ -59,7 +62,6 @@ export default function activate(api: ModAPI) {
   const text = (id: string, label: string, body: string): TerminalComponent => ({ type: 'text', id, label, text: visible(body, 4000) });
   const multiline = (id: string, label: string, lines: string[]): TerminalComponent => ({ type: 'text', id, label, text: lines.map(line => line.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '?')).join('\n').slice(0, 4000) });
 
-  // Codex reports native dollar usage for the thread on some plans; it replaces the configured-rate estimate.
   const nativeUsd = (thread: string | null, fallback: number | null) => {
     const read = thread ? api.host.tryCall('app.request', { method: 'account/usage/read', params: { threadId: thread } }) : null;
     if (!read?.ok) return fallback;
@@ -113,18 +115,20 @@ export default function activate(api: ModAPI) {
     pending: sum.pending + (item.kind === 'pending' ? 1 : 0), included: sum.included + (item.kind === 'included' ? 1 : 0),
     list: sum.list + (item.list ?? 0), unknown: sum.unknown + (item.kind === 'unknown' ? 1 : 0),
   }), { billed: 0, estimate: 0, pending: 0, included: 0, list: 0, unknown: 0 });
+  const requests = (n: number) => `${n} request${n === 1 ? '' : 's'}`;
   const spendText = (sum: ReturnType<typeof totals>, native: number | null = null) => [
     sum.billed ? `${usd(sum.billed)} billed` : '', native !== null ? `${usd(native)} native` : sum.estimate ? `~${usd(sum.estimate)} configured-rate est.` : '',
-    sum.included ? `${sum.included} included${sum.list ? ` (~${usd(sum.list)} list-equivalent)` : ''}` : '',
-    sum.pending ? `${sum.pending} unsettled` : '', sum.unknown ? `${sum.unknown} unknown cost` : '',
+    sum.included ? `${requests(sum.included)} included${sum.list ? ` (~${usd(sum.list)} list-equivalent)` : ''}` : '',
+    sum.pending ? `${requests(sum.pending)} unsettled` : '', sum.unknown ? `${requests(sum.unknown)}, cost unknown` : '',
   ].filter(Boolean).join(' · ') || 'no priced requests';
 
-  // Native usage covers the lead thread, so it replaces only the lead's configured-rate estimates.
   const outlay = (hud: Hud) => {
     const sum = totals(hud.entries);
     const native = hud.native === null ? 0 : hud.native - totals(hud.entries.filter(entry => isLead(hud, entry))).estimate - hud.leadShed;
     return sum.billed + sum.estimate + hud.shed + native;
   };
+  const unpriced = (hud: Hud) => { const sum = totals(hud.native === null ? hud.entries : hud.entries.filter(entry => !isLead(hud, entry))); return sum.pending + sum.unknown; };
+  const gap = (hud: Hud) => unpriced(hud) ? `; ${unpriced(hud)} ${unpriced(hud) === 1 ? 'request has' : 'requests have'} no price yet, so the real spend is higher` : '';
   const level = (spent: number) => budget === null ? 0 : spent >= budget ? 100 : spent >= budget * 0.8 ? 80 : 0;
 
   const isLead = (hud: Hud, entry: Entry) => entry.kind === 'main' && !entry.agent && (hud.thread === null || entry.thread === hud.thread);
@@ -139,10 +143,14 @@ export default function activate(api: ModAPI) {
     return { last, used, window: last.window ?? hud.room.size, stale };
   };
   const cacheTtl = (hud: Hud, last: Entry) => {
-    const same = hud.entries.filter(entry => entry.provider === last.provider && entry.credential === last.credential && (entry.served ?? entry.requested) === (last.served ?? last.requested));
-    const ttl = same.filter(entry => entry.ttl !== null).at(-1)?.ttl ?? null;
-    const used = same.filter(entry => (entry.tokens?.cached ?? 0) > 0 || (entry.tokens?.write ?? 0) > 0).at(-1);
-    return ttl !== null && used ? used.at + ttl * 1000 : null;
+    const observation = (entry: Entry) => ({ provider: entry.provider, route: entry.route, credential: entry.credential,
+      requested_model: entry.requested, served_model: entry.served, usage: { omd_cache_ttl_seconds: entry.ttl }, cache: entry.cache, cost: entry.cost });
+    const identity = cacheIdentity(observation(last));
+    const same = hud.entries.filter(entry => entry.cache && Number.isFinite(entry.started) && isLead(hud, entry) && !entry.synthetic && (entry.status === 'completed' || entry.status === 'incomplete')
+      && cacheIdentity(observation(entry)) === identity).sort((a, b) => a.started - b.started || a.at - b.at);
+    let memo: CacheMemo | null = null;
+    for (const entry of same) memo = cacheLifetime(observation(entry), 0, entry.started, memo);
+    return memo && memo.ttl > 0 ? { at: memo.expires, reported: memo.reported } : null;
   };
   const quota = (hud: Hud, now: number) => {
     const groups = new Map<string, Sample[]>();
@@ -218,7 +226,7 @@ export default function activate(api: ModAPI) {
     const state = saved(); const spent = outlay(state.hud); const reached = level(spent);
     const seen = state.hud.alerted?.budget === budget ? state.hud.alerted.level : 0;
     if (reached === seen) return;
-    const shown = reached < seen || api.host.tryCall('terminal.notice', { id: 'omd_usage_budget', text: `Usage: ${reached}% of the ${usd(budget)} soft budget reached (${usd(spent)} spent)`, kind: reached === 100 ? 'error' : 'warning', placement: 'toast', ttl_ms: 10_000 }).ok;
+    const shown = reached < seen || api.host.tryCall('terminal.notice', { id: 'omd_usage_budget', text: `Usage: ${reached}% of the ${usd(budget)} soft budget reached (${usd(spent)} spent${gap(state.hud)})`, kind: reached === 100 ? 'error' : 'warning', placement: 'toast', ttl_ms: 10_000 }).ok;
     if (shown) hud(h => { h.alerted = { budget, level: reached }; });
   };
 
@@ -234,114 +242,113 @@ export default function activate(api: ModAPI) {
       contextLines.push(`Model ${visible(last.served ?? last.requested, 60)}${last.served && last.served !== last.requested ? ` (requested ${visible(last.requested, 40)})` : ''} · ${visible(last.provider, 30)} · route ${visible(last.route, 30)}${h.current.effort ? ` · reasoning ${visible(h.current.effort, 20)}` : ''}`);
       contextLines.push(`Last response: input ${count(last.tokens!.input ?? 0)} + output ${count(last.tokens!.output ?? 0)}${current.window ? ` of ${count(current.window)} (${Math.round(current.used / current.window * 100)}%)` : ' · window unknown'}${last.estimated ? ' · estimated by the adapter' : ''} · ${span(now - last.at)} ago${current.stale ? ` · stale: ${current.stale}` : ''}`);
       if (h.room.compact && current.window) contextLines.push(`Auto-compact at ${count(h.room.compact)} · reserve ${count(Math.max(0, current.window - h.room.compact))} · headroom ${count(Math.max(0, h.room.compact - current.used))}`);
-      else contextLines.push(current.window ? `Headroom ${count(Math.max(0, current.window - current.used))} · no auto-compact limit configured` : 'Reserve and headroom unknown');
+      else if (current.window) contextLines.push(`Headroom ${count(Math.max(0, current.window - current.used))} · no auto-compact limit configured`);
       const recent = lead.filter(entry => entry.tokens?.input !== null && entry.tokens !== null && (h.compaction.end === null || entry.at > h.compaction.end)).slice(-6);
       const steps = recent.slice(1).map((entry, index) => (entry.tokens!.input ?? 0) - (recent[index].tokens!.input ?? 0)).filter(step => step > 0);
       if (steps.length >= 2) {
         const growth = steps.reduce((a, b) => a + b, 0) / steps.length;
         const room = (h.room.compact ?? current.window ?? 0) - current.used;
         contextLines.push(`Observed growth ~${count(Math.round(growth))}/request${room > 0 ? ` · approx. ${Math.floor(room / growth)} more requests at this rate before ${h.room.compact ? 'auto-compact' : 'the window fills'}` : ''}`);
-      } else contextLines.push('Growth: not enough requests since the last compaction');
-    } else contextLines.push('No lead response observed in this session yet');
+      }
+    } else contextLines.push('No response observed in this conversation yet');
     if (h.assembled) contextLines.push(`Assembled request ${span(now - h.assembled.at)} ago: ~${count(Math.round(h.assembled.bytes / 4))} tokens (bytes/4, approximate) · ${h.assembled.categories.map(([kind, bytes]) => `${kind} ${Math.round(bytes / h.assembled!.bytes * 100)}%`).join(' · ')}`);
-    else contextLines.push(categories ? 'Assembled request: none observed yet' : 'Category drilldown off (/omd_usage:categories on)');
     const { compaction } = h;
     if (compaction.started) contextLines.push(`Compaction: ${compaction.installed} installed of ${compaction.started} started${compaction.start !== null && (compaction.end === null || compaction.end < compaction.start) ? ' · last one running or not installed (vetoed or failed)' : ''}`);
 
     const last = current?.last;
-    const expires = last ? cacheTtl(h, last) : null;
+    const cache = last ? cacheTtl(h, last) : null;
+    const expires = cache?.at ?? null;
     const cacheLines = [
-      `Lead input ${count(leadTokens.input)} · cache read ${count(leadTokens.cached)} (${leadTokens.input ? Math.round(leadTokens.cached / leadTokens.input * 100) : 0}% of input) · cache write ${leadTokens.writes ? count(leadTokens.write) : 'not reported'} · output ${count(leadTokens.output)}${leadTokens.unmeasured ? ` · ${leadTokens.unmeasured} without usage` : ''}`,
-      last?.tokens?.input ? `Last request: ${Math.round((last.tokens.cached ?? 0) / last.tokens.input * 100)}% cache hit` : 'Last request: no usage',
-      expires === null ? `Cache expiry: unavailable${last ? ` for ${visible(last.provider, 30)}` : ''}; reuse is never guaranteed` : expires > now ? `Cache expiry: ~${span(expires - now)} left (provider TTL from last cache use; projection, not guaranteed)` : 'Cache expiry: TTL passed; the next request likely writes the prefix again',
+      `Conversation input ${count(leadTokens.input)} · cache read ${count(leadTokens.cached)} (${leadTokens.input ? Math.round(leadTokens.cached / leadTokens.input * 100) : 0}% of input) · cache write ${leadTokens.writes ? count(leadTokens.write) : 'not reported'} · output ${count(leadTokens.output)}${leadTokens.unmeasured ? ` · ${leadTokens.unmeasured} without usage` : ''}`,
+      ...(last?.tokens?.input ? [`Last request: ${Math.round((last.tokens.cached ?? 0) / last.tokens.input * 100)}% cache hit`] : []),
+      ...(expires === null ? [] : [expires > now ? `Cache expiry: ~${span(expires - now)} left (${cache!.reported ? 'provider TTL' : 'estimated TTL'}; projection, not guaranteed)` : 'Cache expiry: TTL passed; the next request likely writes the prefix again']),
     ];
     const workerTokens = tokens(workers);
-    const costLines = [`Lead: ${spendText(totals(lead), h.native)}`, `Workers: ${workers.length ? `${spendText(totals(workers))} · ${count(workerTokens.input + workerTokens.output)} tokens` : 'none'}`,
+    const costLines = [`This conversation: ${spendText(totals(lead), h.native)}`, ...(workers.length ? [`Workers: ${spendText(totals(workers))} · ${count(workerTokens.input + workerTokens.output)} tokens`] : []),
       ...(inherited.length ? [`Inherited from the parent session: ${inherited.length} requests (${spendText(totals(inherited))})`] : []),
       ...(h.entries.some(entry => entry.overage) ? ['Subscription overage: not reported by the provider (unknown)'] : []),
-      `Host ledger: ${paid(state.ledger?.cost && typeof state.ledger.cost === 'object' && !Array.isArray(state.ledger.cost) ? state.ledger.cost : null)}`,
+      ...[paid(state.ledger?.cost && typeof state.ledger.cost === 'object' && !Array.isArray(state.ledger.cost) ? state.ledger.cost : null)].filter(line => line !== null),
       ...(state.allowance ? [`Task allowance: up to ${usd(state.allowance.used / 1e6)} of ${usd(state.allowance.limit / 1e6)} (${Math.round(state.allowance.used / state.allowance.limit * 100)}%)`] : []),
       `Retained: ${h.entries.length} requests${h.since ? ` since ${span(now - h.since)} ago` : ''}${h.dropped ? ` · ${h.dropped} older dropped (not in these totals)` : ''}; totals are not lifetime spend`,
-      ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(outlay(h))} spent (warning only, not a spending limit)`] : [])];
+      ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(outlay(h))} spent${gap(h)} (warning only, not a spending limit)`] : [])];
     const quotaLines = quota(h, now).map(slot => `${slot.name}: ${slot.current.used}% used${slot.current.resets ? slot.passed ? ` · reset passed ${span(now - slot.current.resets)} ago, awaiting a new reading` : ` · resets in ${span(slot.current.resets - now)}` : ' · reset time not reported'} · observed ${span(now - slot.current.seen)} ago${slot.projected !== null ? ` · projection ~${Math.min(slot.projected, 999)}% at reset (${slot.samples} samples over ${span(slot.spanned)})` : ' · insufficient data for a projection'}`);
-    quotaLines.unshift('Current route quota: unavailable (account-to-route binding is not reported)');
     if (h.credits) quotaLines.push(`Codex account Extra-usage credits: ${h.credits}`);
     const agents = Object.entries(h.agents);
     const activity = [
-      h.plan ? `Task progress ${h.plan.done}/${h.plan.total}${h.plan.step ? ` · now: ${visible(h.plan.step, 80)}` : ''}` : 'No plan in this session',
+      ...(h.plan ? [`Task progress ${h.plan.done}/${h.plan.total}${h.plan.step ? ` · now: ${visible(h.plan.step, 80)}` : ''}`] : []),
       ...agents.slice(-6).map(([id, agent]) => {
         const spend = totals(workers.filter(entry => entry.agent === id));
         return `${visible(agent.role, 30)} ${id.slice(0, 8)} · ${agent.status} · ${spendText(spend)}`;
       }),
-      Object.keys(h.tools).length ? `Running tools: ${Object.values(h.tools).map(tool => visible(tool.tool, 40)).join(', ')}` : 'No tools running',
+      ...(Object.keys(h.tools).length ? [`Running tools: ${Object.values(h.tools).map(tool => visible(tool.tool, 40)).join(', ')}`] : []),
     ];
-    const children: TerminalComponent[] = [
-      multiline('omd_usage_context', 'Context', contextLines), multiline('omd_usage_cache', 'Tokens and cache', cacheLines),
-      multiline('omd_usage_spend', 'Cost', costLines), multiline('omd_usage_quota', 'Quota windows', quotaLines), multiline('omd_usage_activity', 'Tasks, agents and tools', activity),
-    ];
+    const children: TerminalComponent[] = ([
+      ['omd_usage_context', 'Context', contextLines], ['omd_usage_cache', 'Tokens and cache', cacheLines],
+      ['omd_usage_spend', 'Cost', costLines], ['omd_usage_quota', 'Quota windows', quotaLines], ['omd_usage_activity', 'Tasks, agents and tools', activity],
+    ] as const).filter(([, , lines]) => lines.length).map(([id, label, lines]) => multiline(id, label, [...lines]));
     if (h.detail) {
       const recent = h.entries.slice(-20);
       const peak = Math.max(1, ...recent.map(entry => (entry.tokens?.input ?? 0) + (entry.tokens?.output ?? 0)));
       children.push(text('omd_usage_spark', 'Tokens per request, last 20', `Tokens/request ${recent.map(entry => entry.tokens ? SPARK[Math.round(((entry.tokens.input ?? 0) + (entry.tokens.output ?? 0)) / peak * (SPARK.length - 1))] : '?').join('')} (peak ${count(peak)})`));
       const rows: TerminalListRow[] = h.entries.slice(-40).reverse().map(entry => {
         const item = charge(entry);
-        const label = fit(`${isLead(h, entry) ? 'lead' : entry.agent ? `agent ${entry.agent.slice(0, 6)}` : entry.kind} #${entry.billing ?? '-'}.${entry.attempt} ${entry.served ?? entry.requested} ${entry.tokens ? `in ${count(entry.tokens.input ?? 0)} c ${count(entry.tokens.cached ?? 0)} out ${count(entry.tokens.output ?? 0)}` : 'no usage'} ${item.usd !== null ? usd(item.usd) : ''} ${item.kind}${entry.revision ? ` r${entry.revision}` : ''} ${span(now - entry.at)}`, 120);
+        const label = fit(`${isLead(h, entry) ? 'chat' : entry.agent ? `agent ${entry.agent.slice(0, 6)}` : entry.kind} #${entry.billing ?? '-'}.${entry.attempt} ${entry.served ?? entry.requested} ${entry.tokens ? `in ${count(entry.tokens.input ?? 0)} c ${count(entry.tokens.cached ?? 0)} out ${count(entry.tokens.output ?? 0)}` : 'no usage'} ${item.usd !== null ? usd(item.usd) : ''} ${item.kind}${entry.revision ? ` r${entry.revision}` : ''} ${span(now - entry.at)}`, 120);
         return { value: entry.key.slice(0, 120), label: visible(label, 120), spans: [{ text: visible(label, 120), tone: item.kind === 'unknown' || item.kind === 'pending' ? 'attention' : 'normal' }] };
       });
-      if (rows.length) children.push({ type: 'list', id: 'omd_usage_requests', label: 'Recent requests', rows, height: Math.min(10, rows.length), action: { command: 'omd_usage:hud', args: 'noop' } });
+      if (rows.length) children.push({ type: 'list', id: 'omd_usage_requests', label: 'Recent requests', rows, height: Math.min(10, rows.length), action: { command: 'usage', args: 'noop' } });
     }
     return children;
   };
 
   const view = (ledger: Ledger | null): TerminalPatch => {
     const state = saved(); const now = Date.now();
-    const keybindings = { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } };
+    const keybindings = { 'Alt+a': { command: 'usage', args: 'toggle' } };
     if (!state.open) return { keybindings };
     const effective = ledger ?? state.ledger;
     const children: TerminalComponent[] = [
       ...(state.error ? [text('omd_usage_error', 'Status', state.error)] : []),
+      text('omd_usage_keys', 'Keys', 'Esc or Alt+a closes · Tab moves between buttons · Enter presses one'),
       ...expanded({ ...state, ledger: effective }, now),
-      { type: 'button', id: 'omd_usage_refresh', label: 'Refresh usage', text: 'Refresh', action: { command: 'omd_usage:hud', args: 'refresh' } },
-      { type: 'button', id: 'omd_usage_detail', label: state.hud.detail ? 'Show compact usage' : 'Show expanded usage', text: state.hud.detail ? 'Compact' : 'Expanded', action: { command: 'omd_usage:hud', args: state.hud.detail ? 'compact' : 'expanded' } },
-      { type: 'button', id: 'omd_usage_close', label: 'Close usage', text: 'Close', action: { command: 'omd_usage:hud', args: 'close' } },
+      { type: 'button', id: 'omd_usage_refresh', label: 'Refresh usage', text: 'Refresh', action: { command: 'usage', args: 'refresh' } },
+      { type: 'button', id: 'omd_usage_detail', label: state.hud.detail ? 'Show compact usage' : 'Show expanded usage', text: state.hud.detail ? 'Compact' : 'Expanded', action: { command: 'usage', args: state.hud.detail ? 'compact' : 'expanded' } },
+      { type: 'button', id: 'omd_usage_codex', label: "Open Codex's usage menu", text: 'Codex usage', action: { command: 'usage', args: 'codex' } },
+      { type: 'button', id: 'omd_usage_close', label: 'Close usage', text: 'Close', action: { command: 'usage', args: 'close' } },
     ];
     return { sites: { dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_usage_dialog', label: 'Usage', title: 'Usage', children }] } }, keybindings };
   };
 
-  // Slash commands can't read task status, so they hop to this mod's own native channel handler.
-  api.command('hud', value => {
-    const argument = String(value ?? '').trim();
-    const state = saved();
-    if (argument === 'noop') return null;
-    if (argument === 'close' || argument === 'toggle' && state.open) {
-      save({ ...state, open: false });
-      return null;
-    }
-    if (argument === 'expanded' || argument === 'compact') {
-      save({ ...state, hud: { ...state.hud, detail: argument === 'expanded' } });
-      return null;
-    }
-    save({ ...state, open: true });
-    const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });
-    return asked.ok ? null : { display: `Usage refresh unavailable: ${asked.error}` };
-  }, { description: 'Open or refresh the usage dialog (/omd_usage:hud toggle or Alt+a toggles it)' });
   const write = (values: { [key: string]: Json }, done: string) => {
     const written = api.host.tryCall('settings.write', { values });
     return { display: written.ok ? `${done}; applies when the mod reloads at the next turn` : `Usage settings unchanged: ${written.error}` };
   };
-  api.command('budget', value => {
-    const amount = String(value ?? '').trim();
-    return amount !== '' && Number.isFinite(Number(amount)) && Number(amount) >= 0 ? write({ budget_usd: Number(amount) }, Number(amount) ? `Soft budget ${usd(Number(amount))}` : 'Soft budget removed')
-      : { display: `usage: /omd_usage:budget USD (0 removes it; now ${budget === null ? 'none' : usd(budget)})` };
-  }, { description: 'Set a soft spending budget in USD for warnings only (0 removes it)' });
-  api.command('categories', value => {
-    const choice = String(value ?? '').trim();
-    return choice === 'on' || choice === 'off' ? write({ categories: choice === 'on' }, `Category drilldown ${choice}`)
-      : { display: `usage: /omd_usage:categories on|off (now ${categories ? 'on' : 'off'})` };
-  }, { description: 'Turn the assembled-request category drilldown on or off (it runs on the request path)' });
+  api.command('usage', value => {
+    const [argument = '', choice = ''] = String(value ?? '').trim().split(/\s+/);
+    if (argument === 'budget') {
+      return choice !== '' && Number.isFinite(Number(choice)) && Number(choice) >= 0 ? write({ budget_usd: Number(choice) }, Number(choice) ? `Soft budget ${usd(Number(choice))}` : 'Soft budget removed')
+        : { display: `usage: /usage budget USD (0 removes it; now ${budget === null ? 'none' : usd(budget)})` };
+    }
+    if (argument === 'roles') {
+      return choice === 'on' || choice === 'off' ? write({ categories: choice === 'on' }, `Category drilldown ${choice}`)
+        : { display: `usage: /usage roles on|off (now ${categories ? 'on' : 'off'})` };
+    }
+    const state = saved();
+    if (argument === 'codex') {
+      save({ ...state, open: false });
+      const invoked = api.host.tryCall('commands.invoke', { command: 'usage' });
+      if (invoked.ok && !('status' in invoked.value)) return null;
+      return { display: `Codex's usage menu is unavailable: ${invoked.ok ? 'declined' : invoked.error}` };
+    }
+    if (argument === 'noop') return null;
+    if (argument === 'close' || argument === 'toggle' && state.open) save({ ...state, open: false });
+    else if (argument === 'expanded' || argument === 'compact') save({ ...state, hud: { ...state.hud, detail: argument === 'expanded' } });
+    else save({ ...state, open: true });
+    const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });
+    return asked.ok ? null : { display: `Usage refresh unavailable: ${asked.error}` };
+  }, { description: 'Usage dialog: context, cache, cost and quota; budget USD sets a soft budget, roles on|off the per-role breakdown, codex opens Codex\'s usage menu', args_hint: '[toggle|budget USD|roles on|off|codex]' });
   api.on('channel', ({ channel }) => {
     if (channel !== 'omd_usage/refresh') return;
-    save(capture(saved()));
+    const fresh = capture(saved());
+    save({ ...fresh, hud: { ...fresh.hud, tick: fresh.hud.tick + 1 } });
     if (expiry() !== null) ticker.start();
   });
   api.on('terminal', input => view(input.ledger));
@@ -369,8 +376,7 @@ export default function activate(api: ModAPI) {
   };
   api.on('start', configure);
   api.on('resume', configure);
-  const expiry = () => { const state = saved(); const last = context(state.hud)?.last; return last ? cacheTtl(state.hud, last) : null; };
-  // Redraws the open dialog's cache countdown once a minute until it passes; the tick adds no observation.
+  const expiry = () => { const state = saved(); const last = context(state.hud)?.last; return last ? cacheTtl(state.hud, last)?.at ?? null : null; };
   const ticker = api.time.every('countdown', 60_000, () => {
     if (!saved().open) return false;
     hud(state => { state.tick += 1; });
@@ -387,7 +393,7 @@ export default function activate(api: ModAPI) {
       tokens: summary.measured ? { input: summary.tokens.input, cached: summary.tokens.cached, write: summary.tokens.cache_write, output: summary.tokens.output, reasoning: summary.tokens.reasoning } : null,
       estimated: usage.omd_usage_estimated === true, window: response.context_window, cost: { microusd: response.cost.microusd, basis: response.cost.basis },
       reported: number(reported.usd) !== null && (reported.basis === 'provider_billed' || reported.basis === 'client_list_estimate') ? { usd: reported.usd, basis: reported.basis } : null,
-      overage: usage.omd_subscription_charge === 'unknown', ttl: number(usage.omd_cache_ttl_seconds),
+      overage: usage.omd_subscription_charge === 'unknown', ttl: number(usage.omd_cache_ttl_seconds), cache: response.cache, started: response.timing.started_at_ms,
       at: response.timing.started_at_ms + response.timing.duration_ms, synthetic: response.synthetic, revision: 0,
     }));
     warn();

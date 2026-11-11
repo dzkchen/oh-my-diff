@@ -92,8 +92,8 @@ complete terminal contribution, or `{terminal: null}` to clear it.
   [`api.uiState`](state-and-storage.md#session-ui-state-apiuistate).
 - Other owners refresh at different times when a command returns a view. Commands without `terminal` keep their
   synchronous preview behavior.
-- Moving a dialog from durable state to a command view moves only its transient presentation fields to
-  `api.uiState`; persisted settings, replay and module lifetimes are unchanged.
+- When moving a dialog to a command view, put its temporary presentation fields in `api.uiState`. Keep persisted
+  settings as they are; replay behavior and module lifetimes do not change.
 
 ### `config.describe`
 
@@ -180,6 +180,8 @@ cover every thread of that session, including threads in its worktrees.
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
+- `surfaces: {disable: ['context_indicator']}` (experimental) hides the stock `N% context left` footer
+  indicator, for a mod that shows context itself.
 - `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
   they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
   experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.
@@ -368,8 +370,9 @@ Handlers may set `key` to another character or to a key name valid in view `keyb
 
 ### Submitted drafts and `prompt_expanded`
 
-The `input` interceptors also receive the submitted draft's `revision`, `attachments` (`{kind, source}`) and
-placeholder `elements` (`{kind: 'paste' | 'mention' | 'skill' | 'image', start?, end?, name?, source}`).
+The `input` interceptors also receive the submitted draft's `revision`, `attachments` (`{kind, source}`, where `source`
+is a local path, `'inline'` for inline data or `'file'` for an uploaded audio file) and placeholder `elements`
+(`{kind: 'paste' | 'mention' | 'skill' | 'image', start?, end?, name?, source}`).
 
 After skills and mentions are expanded, the experimental `prompt_expanded` event (capability `middleware`) lists them by
 name, path and SHA-256 only (`{kind: 'skill' | 'mention' | 'paste' | 'image', …}`), never their content, and the

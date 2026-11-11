@@ -2,6 +2,74 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.1) — 2026-11-11
+
+Claude models work with tools again, /update opens with mod updates waiting, and /mods shows one row per mod.
+
+### New
+
+- /workspace off asks whether to turn it off for this conversation, this terminal or every terminal (#521)
+
+### Changed
+
+- Update opt-out, recovery guidance, needs-approval listing and launch onboarding. (#447)
+- Put OMD on PATH, repair catalog digests, readable update output and omd doctor (#454)
+- /mods edits everything, plain host messages, and mods that no longer fail silently (#523)
+- Stop rescanning sessions/ on every status-line refresh (#419)
+- One way to turn mods on, experimental labels, and moved stranded sections (#525)
+- Run Oh My Diff in any directory, simplify mod commands and permission prompts, and keep themes updating after terminal resizes. (#528)
+- Clarify the Node.js 24.x requirement in the mod author launcher and its regression test. (#522)
+- Clarify user guides, mod documentation, API reference and changelog wording; regenerate the reference, changelog and plugin guide digest. (#530)
+- Restore native-component render hooks for local owner views and refresh them as owner snapshots advance. (#532)
+- Reduce host allocations and centralize tooling helpers. (#533)
+
+### Fixed
+
+- Keep last accepted attach parameters when a reattach is refused (#442)
+- Repair the nightly validation suites
+- Actionable omd errors, safer store reset and a fuller explain table (#436)
+- /omd title first and no upstream Codex update notice (#527)
+- Redact secrets with placeholder words, keep checkpoint refs visible, quieter first launch (#526)
+- Retry release metadata, handle TLS errors, check the platform first (#524)
+- Restore theme scenes immediately after the canvas resets
+- Show one row when a mod is installed twice in one scope (#531)
+- Open /update with mod updates waiting and send Claude flat tool schemas (#534)
+
+## [1.5.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.0) — 2026-11-08
+
+Per-terminal mod settings, lower resource use in idle and background sessions, Codex 0.167.0, and fixes across first-party mods, the git panel, threads and the installer.
+
+### New
+
+- Mods: `/mods` and the `/omd` mod list can apply a mod's on/off and settings to this terminal only; terminal-only choices last until the terminal closes, and "Keep these for every terminal" saves them
+- Idle sessions: an unfocused or idle terminal redraws once a second and pauses theme animation, and unused mod runners are released, while agents, tools and monitors keep running; focus or input resumes full speed
+
+### Changed
+
+- Codex: updated to 0.167.0, including Guardian review, provider-error handling, deferred-tool discovery and audio attachments, with OMD's approval and review boundaries kept
+- Subagents: delegated results arrive once through the parent thread's mailbox instead of a second wake prompt, and helper agents follow the hooks and execution policy of the thread that started them
+- Claude: sessions through omd_claude_cli reuse the prompt cache between requests, so plan limits last about as long as in Claude Code
+- Privacy: omd_privacy no longer asks before a shell command that names a sensitive file by default; secrets in its output are still redacted, and Sensitive paths in its settings turns asking back on
+- Performance: lower mod callback cost, faster exec output paging, cached store reads and no stream decoding when no mod listens
+- Workspace: omd_workspace keeps its arrangement, sizes, tabs, panels and on/off per conversation, so terminals on different conversations no longer share one layout
+
+### Fixed
+
+- Mods across terminals: a mod's saved state changed in one terminal or attached client redraws it in the others, while its UI state, settings and enablement stay with each terminal
+- Rollback: after `omd update rollback`, the previous release still reads the mod store this one wrote
+- Clients: a client a mod launches starts again, recovery shows a mod whose renderer keeps failing and reports reload errors instead of failing, and the TUI attaches to the server's mod host only in Oh My Diff mode
+- Git panel: discarding, staging or attaching a hunk is refused when the file changed since it was shown, so unreviewed changes are never discarded
+- Threads: opening a thread no longer deletes other threads' saved data, forked sessions no longer receive their parent's monitor results, and each thread's evidence stays its own
+- Undo: a retried `/undo force` keeps its `/redo`, and each checkout keeps its own checkpoints
+- Mods: the first mod command after a minute idle answers at once, idle sessions stop drawing frames that change nothing, `/mods ACTION ID` asks which copy when an id is installed for both you and the project, and dialogs size to their content
+- Cursor and subagents: Cursor settles cost against the run that ended, and a subagent restart refuses a route whose provider, account or billing changed
+- Kernels: Python and Bun cells no longer show output written by an earlier cell's threads or timers
+- LSP: same-line results are kept, lines past the end of a file are refused, and trimmed errors are no longer reported as new
+- Workflow and accounts: checkpoint decisions are capped by size, a lost store race no longer fails a workflow, and `/profile` refreshes accounts when it lists or selects them
+- Verify stop: a command joined with `||` or `;` no longer counts as a passing check
+- Installer: `omd update check` prints a one-line status, an unknown `omd update` action fails in one line, uninstall leaves no empty folders, mods that left the profile stay trusted across updates, uninstall and mod maintenance block new sessions first, and `omd mini` points to `omd install` when omd_mini is missing
+- Tools: `omd-package` prints one line per mod, `omd-mod-author` is quieter and reloads newly named assets in watch mode, and `omd-package plugins` creates CODEX_HOME first
+
 ## [1.4.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.4.2) — 2026-11-04
 
 Signed mod updates, account switching for new threads, keyboard panel arranging, turn undo and redo, and fixes for themes and overlapping turns.
@@ -21,7 +89,7 @@ Signed mod updates, account switching for new threads, keyboard panel arranging,
 
 - Shell commands: adjacent agent shell commands collapse into one expandable summary with running and failure counts
 - Theme: switching themes no longer flashes, scene transitions are shorter, and prompts and menus stay opaque over the scene
-- OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact and omd_preview move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default
+- OMD+: omd_monitor and omd_observation_mask are now included (turn them on in `/mods`); omd_inspector, omd_model_picker, omd_idle_compact, omd_preview, omd_plan_panel and omd_plan_removal move to Experimental (install with `omd install ID`), so new installs no longer compact idle chats by default
 - Plugins: OMD+ stages only omd-anchored-edit; omd-artifact-reading, omd-code-execution and omd-output-budget move to the separate oh-my-diff-experimental marketplace
 - Monitors: watch several sources together, check pull-request completion, and run the next action when a watch settles
 - Continue: cache-aware observation masking preserves recent context while reducing repeated tool output in a continued conversation
@@ -55,7 +123,7 @@ Experimental harness mods that cut token use, /btw side questions, and a tool li
 
 ### New
 
-- Harness mods: experimental omd_observation_mask, omd_verify_stop, omd_edit_guard, omd_env_bootstrap, omd_loop_guard and omd_plan_anchor; in a pilot benchmark the first four with the output-budget component cut estimated cost by about 25% with no loss in pass rate (see docs/benchmarks/harness-mods.md)
+- Harness mods: experimental omd_observation_mask, omd_verify_stop, omd_edit_guard, omd_env_bootstrap, omd_loop_guard and omd_plan_anchor; in a pilot benchmark the first four with the output-budget component cut estimated cost by about 25% with no measurable change in pass rate (see docs/benchmarks/harness-mods.md)
 - Side questions: the opt-in omd_btw adds `/btw`, which answers a quick question on a helper route without interrupting the turn and remembers earlier side questions
 - T3 Code: a guide for using OMD with T3 Code
 
@@ -274,7 +342,7 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 
 ### Fixed
 
-- Security: mod realm containment, private store files, owner-only component events, config redaction, sealed provider port hand-off, a protected runner and an MCP approval gate.
+- Security: isolated mod code, private store files, component events restricted to their owner, config redaction, encrypted readiness messages between provider sessions sharing a port, a protected runner and MCP approval checks.
 - Security: the broker binds stores and evidence to their owner; a runner memory watchdog stops runaway mods at 512 MiB.
 - Install: resumable uninstall and recovery, release asset URL and SHA-256 required together, and a warning when the `codex` on PATH isn't the OMD launcher.
 - Mod runtime: runner reuse and cancellation, transactional reloads, state migration on `state_version` changes, thread-scoped routes and state, and receipt budget edge cases.
@@ -352,11 +420,13 @@ Mods gain composer controls, transcript rewriting and OMD update settings.
 ### Changed
 
 - Pinned to Codex 0.160.1
-- Bounded request, ledger and rendering work
+- Cost summaries copy only recent attempts
+- Model requests avoid body copies when interceptors make no changes
+- Terminal redraws reuse unchanged parsed views
 
 ### Fixed
 
-- Authority, accounting and request admission
+- Host permission checks, cost accounting and model-request checks
 - Persistence, packaging and recovery
 
 ## 2026-10-04 — Interception, agents and provider routes

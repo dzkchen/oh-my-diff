@@ -715,6 +715,10 @@ impl ModStore {
                     selection.scope == package.scope && id.as_deref() == Some(package.id.as_str())
                 });
             let next = ModSelection {
+                configuration_epoch: config
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| failure("revision_overflow"))?,
                 path: package.path.clone(),
                 sha256: package.integrity.clone(),
                 enabled: package.enabled,
@@ -757,13 +761,7 @@ impl ModStore {
         let (Ok(config), Ok(managed)) = (self.configuration(), self.managed_deployment()) else {
             return;
         };
-        let mut paths = lock
-            .packages
-            .values()
-            .chain(lock.history.values().flatten())
-            .flat_map(|package| [&package.path, &package.cache_path])
-            .chain(config.mods.iter().map(|selection| &selection.path))
-            .collect::<Vec<_>>();
+        let mut deployed = Vec::new();
         let mut integrities = config
             .mods
             .iter()
@@ -772,14 +770,19 @@ impl ModStore {
         let mut generation = Some(&managed);
         while let Some(deployment) = generation {
             for package in &deployment.packages {
-                paths.push(&package.path);
+                deployed.push(&package.path);
                 integrities.insert(&package.sha256);
                 integrities.extend(&package.dependencies);
             }
             generation = deployment.previous.as_deref();
         }
-        let paths = paths
-            .into_iter()
+        let paths = lock
+            .packages
+            .values()
+            .chain(lock.history.values().flatten())
+            .flat_map(|package| [&package.path, &package.cache_path])
+            .chain(config.mods.iter().map(|selection| &selection.path))
+            .chain(deployed)
             .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
             .collect::<Vec<_>>();
         for package in evicted {
@@ -903,12 +906,19 @@ impl ModStore {
         }
         store::next_revision(&mut lock.revision)?;
         let mut config = self.configuration()?;
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         let selection = config
             .mods
             .iter_mut()
             .find(|selection| selection.path == path && selection.scope == scope)
             .ok_or_else(|| failure("package_selection_missing"))?;
         selection.enabled = false;
+        if block.is_some() {
+            selection.configuration_epoch = epoch;
+        }
         store::next_revision(&mut config.revision)?;
         match block {
             Some(reason) => self.commit_package_transaction(
@@ -946,16 +956,16 @@ impl ModStore {
             .ok_or_else(|| failure("package_not_installed"))?;
         let (manifest, _, integrity) = store::package(&package.path)?;
         if integrity != package.integrity || manifest.id != package.id {
-            return Err(failure(
-                "source_changed: inspect and preview the new package",
-            ));
+            return Err(failure(format!(
+                "source_changed: {id}: review it again with omd mods update {id}"
+            )));
         }
         if package.state_version != manifest.state_version {
             return Err(failure(
                 "state_migration_required: previous state preserved",
             ));
         }
-        self.check_service_providers(&manifest, &package.path)?;
+        self.check_service_providers(&manifest, &package.path, &|selection| selection.enabled)?;
         self.state(&package.id, &package.scope, package.state_version)?;
         package.enabled = true;
         let path = package.path.clone();
@@ -969,18 +979,29 @@ impl ModStore {
             .find(|selection| selection.path == path && selection.scope == scope)
             .ok_or_else(|| failure("package_selection_missing"))?;
         if selection.sha256 != integrity {
-            return Err(failure("source_changed: inspect and trust the new digest"));
+            return Err(failure(format!(
+                "source_changed: {id}: review it again with omd mods update {id}"
+            )));
         }
         if manifest
             .capabilities
             .iter()
             .any(|capability| !selection.capabilities.contains(capability))
         {
-            return Err(failure("capability_denied"));
+            return Err(failure(format!(
+                "capability_denied: {id}: approve it again with omd mods update {id}"
+            )));
+        }
+        if !selection.authority_current() {
+            return Err(failure(format!(
+                "grant_expired: {id}: approve it again with omd mods update {id}"
+            )));
         }
         super::validate_stored_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
-        store::refuse_second_copy(&config, &path, &scope, &manifest.id)?;
+        store::refuse_second_copy(&config, &path, &scope, &manifest.id, &|selection| {
+            selection.enabled
+        })?;
         store::next_revision(&mut config.revision)?;
         let event = json!({"package": package_event(&lock.packages[id])});
         self.commit_package_transaction(lock, config, &[], "enable", event, &[])
@@ -1109,12 +1130,17 @@ impl ModStore {
         validate_locked_graph(&lock.packages)?;
         store::next_revision(&mut lock.revision)?;
         let mut config = self.configuration()?;
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         let selection = config
             .mods
             .iter_mut()
             .find(|selection| selection.scope == previous.scope && selection.path == current_path)
             .ok_or_else(|| failure("package_selection_missing"))?;
         *selection = ModSelection {
+            configuration_epoch: epoch,
             path: previous.path,
             sha256: previous.integrity,
             enabled: previous.enabled,
@@ -1140,11 +1166,45 @@ impl ModStore {
         detail: Value,
         provenance: &[ModLockedPackage],
     ) -> Result<ModPackageLock> {
+        self.commit_configuration_transaction(
+            lock, config, lifecycle, event, detail, provenance, None,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one store transaction carries every changed document"
+    )]
+    pub(super) fn commit_configuration_transaction(
+        &self,
+        lock: ModPackageLock,
+        config: ModConfiguration,
+        lifecycle: &[(ModLockedPackage, &str)],
+        event: &str,
+        detail: Value,
+        provenance: &[ModLockedPackage],
+        settings: Option<(&str, &[u8])>,
+    ) -> Result<ModPackageLock> {
         let old_lock = serde_json::to_value(self.read_package_lock()?)?;
-        let old_config = serde_json::to_value(self.configuration()?)?;
+        let mut old_config = serde_json::to_value(self.configuration()?)?;
+        let old_epochs: Vec<Value> = old_config["mods"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .filter_map(|selection| {
+                let epoch = selection.as_object_mut()?.remove("configuration_epoch")?;
+                Some(json!([selection["scope"], selection["path"], epoch]))
+            })
+            .collect();
+        let old_settings = settings
+            .map(|(name, _)| {
+                store::read(&self.root.join(name), 65_536)
+                    .map(|bytes| json!({"name":name,"bytes":bytes}))
+            })
+            .transpose()?;
         self.write(
             "package-transaction.json",
-            &json!({"old_lock":old_lock,"old_config":old_config}),
+            &json!({"old_lock":old_lock,"old_config":old_config,"old_epochs":old_epochs,"old_settings":old_settings}),
         )?;
         let result: Result<ModPackageLock> = (|| {
             for (package, event) in lifecycle {
@@ -1176,6 +1236,9 @@ impl ModStore {
             );
             self.write_granting("mods.json", &serde_json::to_value(&config)?, &approved)?;
             self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
+            if let Some((name, bytes)) = settings {
+                self.write_staged(name, bytes, || Ok(()))?;
+            }
             std::fs::remove_file(self.root.join("package-transaction.json"))?;
             std::fs::File::open(&self.root)?.sync_all()?;
             Ok(lock)
@@ -1196,13 +1259,43 @@ impl ModStore {
             Err(error) => return Err(error),
         };
         let transaction: Value = serde_json::from_slice(&bytes)?;
-        let restored = transaction["old_config"]["mods"]
+        if let Some(settings) = transaction
+            .get("old_settings")
+            .filter(|value| !value.is_null())
+        {
+            let name = settings["name"]
+                .as_str()
+                .ok_or_else(|| failure("package_transaction_invalid"))?;
+            let path = Path::new(name);
+            if path.components().count() != 2
+                || path.parent() != Some(Path::new("settings"))
+                || !SETTINGS_FILE_EXTENSIONS
+                    .iter()
+                    .any(|extension| path.extension().is_some_and(|value| value == *extension))
+            {
+                return Err(failure("package_transaction_invalid"));
+            }
+            let bytes: Vec<u8> = serde_json::from_value(settings["bytes"].clone())?;
+            self.write_staged(name, &bytes, || Ok(()))?;
+        }
+        let mut config = transaction["old_config"].clone();
+        for epoch in transaction["old_epochs"].as_array().into_iter().flatten() {
+            if let Some(selection) = config["mods"]
+                .as_array_mut()
+                .into_iter()
+                .flatten()
+                .find(|selection| selection["scope"] == epoch[0] && selection["path"] == epoch[1])
+            {
+                selection["configuration_epoch"] = epoch[2].clone();
+            }
+        }
+        let restored = config["mods"]
             .as_array()
             .into_iter()
             .flatten()
             .map(store::grant)
             .collect();
-        self.write_granting("mods.json", &transaction["old_config"], &restored)?;
+        self.write_granting("mods.json", &config, &restored)?;
         self.write("packages.lock.json", &transaction["old_lock"])?;
         std::fs::remove_file(path)?;
         std::fs::File::open(&self.root)?.sync_all()
@@ -1559,7 +1652,7 @@ impl ModStore {
         }
         let cache_path = self.cache_package(&path, &package, &integrity)?;
         let active_path = match normalized_source {
-            ModPackageSource::Local { .. } => path,
+            ModPackageSource::Local { .. } if !crate::plugin_component::cached(&path) => path,
             _ => {
                 if path.starts_with(&self.root) && path != cache_path {
                     std::fs::remove_dir_all(&path)?;
@@ -1593,7 +1686,7 @@ impl ModStore {
             },
             exec_environment: package.exec_environment.clone(),
             settings_schema_sha256: crate::sha256_hex(
-                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
+                serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
             ),
             lifecycle: declared_lifecycle,
             scope: request.scope.clone(),
@@ -2628,7 +2721,7 @@ fn push_history(
     (history.len() > PACKAGE_HISTORY_LIMIT).then(|| history.remove(0))
 }
 
-fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Result<()> {
+pub(super) fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Result<()> {
     for package in packages.values() {
         for dependency in &package.dependencies {
             let resolved = packages
@@ -2738,6 +2831,7 @@ fn require_migration_handlers(plan: &ModPackagePlan, scope: &str) -> Result<()> 
         let (package, source, _, assets) = store::package_with_assets(&locked.path)?;
         let state_scope = package.state_scope.clone();
         let selection = ModSelection {
+            configuration_epoch: 0,
             path: locked.path.clone(),
             sha256: locked.integrity.clone(),
             enabled: false,
@@ -2776,7 +2870,7 @@ mod repository_tests {
             ("A", "${B}"),
             ("B", "${A}"),
         ]);
-        let resolve = |name: &str| environment.get(name).map(|value| value.to_string());
+        let resolve = |name: &str| environment.get(name).map(ToString::to_string);
         for (value, expected) in [
             ("${LITERAL}", "${TOKEN}"),
             ("${TOKEN}-${LITERAL}", "secret-${TOKEN}"),

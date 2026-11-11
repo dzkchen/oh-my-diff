@@ -2,6 +2,7 @@
 import argparse
 import datetime
 import json
+import os
 import re
 import subprocess
 import sys
@@ -18,6 +19,7 @@ REPOSITORY = "dzkchen/oh-my-diff"
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
 LABELS = ("New", "Changed", "Fixed")
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)|(?:href|src)=\"([^\"]+)\"")
+REUSE_JOBS = {"check", "publish", *(f"validate / {job}" for job in ("native", "core", "lint", "build", "acceptance", "package"))}
 
 
 def run(*args, capture=True):
@@ -275,6 +277,60 @@ def refresh(version, branch):
     run("git", "push", "origin", branch)
 
 
+def github_json(endpoint):
+    return json.loads(run("gh", "api", "-H", "Accept: application/vnd.github+json", endpoint))
+
+
+def reusable_validation(version):
+    if not VERSION.fullmatch(version) or lock_version() != version:
+        raise SystemExit("validation reuse requires the committed release version")
+    empty = {"reuse_run_id": "", "reuse_artifact_id": ""}
+    commit = os.environ.get("GITHUB_SHA", "")
+    if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        print("No matching GitHub release context; run full validation.")
+        return empty
+    endpoint = f"repos/{REPOSITORY}/actions"
+    try:
+        runs = github_json(f"{endpoint}/workflows/release.yml/runs?event=workflow_dispatch&status=success&head_sha={commit}&per_page=20")
+        for candidate in runs["workflow_runs"]:
+            run_id, attempt = candidate["id"], candidate["run_attempt"]
+            if (not isinstance(run_id, int) or run_id <= 0 or not isinstance(attempt, int) or attempt <= 0
+                    or str(run_id) == os.environ.get("GITHUB_RUN_ID")
+                    or candidate.get("path") != ".github/workflows/release.yml"
+                    or candidate.get("event") != "workflow_dispatch" or candidate.get("head_sha") != commit
+                    or candidate.get("head_branch") != "main"
+                    or candidate.get("status") != "completed" or candidate.get("conclusion") != "success"
+                    or candidate.get("repository", {}).get("full_name") != REPOSITORY
+                    or candidate.get("head_repository", {}).get("full_name") != REPOSITORY):
+                continue
+            jobs = github_json(f"{endpoint}/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+            required = [job for job in jobs["jobs"] if job.get("name") in REUSE_JOBS]
+            if (jobs["total_count"] != len(jobs["jobs"]) or len(required) != len(REUSE_JOBS)
+                    or {job["name"] for job in required} != REUSE_JOBS
+                    or any(job.get("status") != "completed" or job.get("conclusion") != "success"
+                           or job.get("head_sha") != commit or job.get("run_id") != run_id
+                           or job.get("run_attempt") != attempt for job in required)):
+                continue
+            artifacts = github_json(f"{endpoint}/runs/{run_id}/artifacts?name=package&per_page=100")
+            packages = [artifact for artifact in artifacts["artifacts"] if artifact.get("name") == "package"]
+            if artifacts["total_count"] != len(artifacts["artifacts"]) or len(packages) != 1:
+                continue
+            artifact = packages[0]
+            artifact_id = artifact["id"]
+            source = artifact.get("workflow_run", {})
+            if (not isinstance(artifact_id, int) or artifact_id <= 0 or artifact.get("expired") is not False
+                    or source.get("id") != run_id or source.get("head_sha") != commit
+                    or artifact.get("size_in_bytes", 0) <= 0):
+                continue
+            print(f"Reuse validation and package for {version}: https://github.com/{REPOSITORY}/actions/runs/{run_id}")
+            return {"reuse_run_id": str(run_id), "reuse_artifact_id": str(artifact_id)}
+    except (SystemExit, OSError, ValueError, KeyError, TypeError) as error:
+        print(f"Could not verify an earlier release dry run ({error}); run full validation.")
+        return empty
+    print("No successful release dry run with a retained package at this commit; run full validation.")
+    return empty
+
+
 def rollback(version, dry_run=False):
     tag = f"v{version}"
     listed = json.loads(run("gh", "release", "list", "--repo", REPOSITORY, "--exclude-drafts",
@@ -300,6 +356,9 @@ def main():
     check_parser.add_argument("version", nargs="?")
     commands.add_parser("render", help="regenerate CHANGELOG.md from release/changelog.json")
     commands.add_parser("notes").add_argument("version")
+    reuse_parser = commands.add_parser("reuse", help="find a complete release dry run at this exact GitHub commit")
+    reuse_parser.add_argument("version")
+    reuse_parser.add_argument("--github-output", type=Path, help="append the reusable run and artifact IDs to this workflow output file")
     rollback_parser = commands.add_parser("rollback", help="withdraw a published release")
     rollback_parser.add_argument("version")
     rollback_parser.add_argument("--dry-run", action="store_true", help="print the release edits without making them")
@@ -312,6 +371,13 @@ def main():
         MARKDOWN.write_text(render(json.loads(CHANGELOG.read_text())))
     elif args.command == "notes":
         sys.stdout.write(notes(json.loads(CHANGELOG.read_text()), args.version))
+    elif args.command == "reuse":
+        output = "".join(f"{name}={value}\n" for name, value in reusable_validation(args.version).items())
+        if args.github_output:
+            with args.github_output.open("a") as destination:
+                destination.write(output)
+        else:
+            sys.stdout.write(output)
     else:
         rollback(args.version, args.dry_run)
 

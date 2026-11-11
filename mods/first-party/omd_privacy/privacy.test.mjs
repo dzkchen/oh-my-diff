@@ -66,12 +66,43 @@ test('redacts supported secrets in editable text with random opaque placeholders
   assert.equal(out['/input/3/content/0/text'], 'OTHER policy text');
   assert.ok(!JSON.stringify(state).includes(token.slice(4)) && !JSON.stringify(state).includes('hunter2pw'));
 
-  const later = send([segment('/input/9/content/0/text', `retrying with ${token}`)], { state });
-  assert.notEqual(ids(applied([segment('/input/9/content/0/text', `retrying with ${token}`)], later.result.edits)['/input/9/content/0/text'])[0], first);
-  assert.equal(state.salt, undefined);
-  assert.equal(state.ids, undefined);
-  const other = send([segment('/input/9/content/0/text', token)], { state, scope: { thread_id: 'thread-b', agent_id: null, kind: 'main' } });
-  assert.notEqual(other.result.edits[0].text, later.result.edits[0].text);
+  const retry = [segment('/input/9/content/0/text', `retrying with ${token}`)];
+  const later = send(retry, { state });
+  assert.equal(ids(applied(retry, later.result.edits)['/input/9/content/0/text'])[0], first);
+  assert.notEqual(send([segment('/input/9/content/0/text', fake.github(9))], { state }).result.edits[0].text, later.result.edits[0].text);
+  assert.notEqual(send(retry, { state: { ...state, salt: 'other' } }).result.edits[0].text, later.result.edits[0].text);
+});
+
+test('ordinary test values and well-known documentation samples are not redacted, real secrets still are', () => {
+  const sample = ['ey', 'JhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ey', 'JzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'].join('');
+  const kept = ['csrf_token: abc123def456ghi', 'TEST_PASSWORD=hunter2hunter', 'password = "testpass123"', 'const fakeApiKey = "a3f9c2d8e1b74f60"',
+    'postgres://app:localdevpw@localhost:5432/db', 'redis://u:s3cretpw@127.0.0.1:6379', 'GOOGLE_APPLICATION_CREDENTIALS=/path/key.json',
+    'credentials: ~/.aws/credentials', 'API_KEY=your_api_key_here', `Authorization: ${['sk', '_test_4eC39HqLyjWDarjtT1zdp7dc'].join('')}`, `jwt ${sample}`];
+  const redacted = ['DB_PASSWORD=MyS3cretPass123!', 'DB_PASSWORD=Testament42!', 'api_key=Mockingbird#9x', 'postgres://u:S3cretReal@[2001:db8::1]/x', 'postgres://u:S3cretReal@/x', 'postgres://u:S3cretReal@db.prod.acme.io/x', 'API_TOKEN=a3f9c2d8e1b74f60x', `jwt ${fake.jwt(60)}`, fake.stripe(),
+    'DB_PASSWORD=MyExamplePass123!', 'API_KEY=changeme-8f3k2j4h5g6d7s8a'];
+  const segments = [...kept, ...redacted].map((text, index) => segment(`/s${index}`, text));
+  const out = applied(segments, send(segments).result.edits);
+  kept.forEach((text, index) => assert.equal(out[`/s${index}`], text, text));
+  redacted.forEach((text, index) => assert.match(out[`/s${kept.length + index}`], /\[REDACTED:/, text));
+});
+
+test('tool calls carrying a redaction placeholder are refused by name, others pass', () => {
+  const placeholder = '[REDACTED:assigned_secret:q7xk2m6fhd4w]';
+  const call = (tool, args) => {
+    const raw = typeof args === 'string' ? args : JSON.stringify(args);
+    const input = { tool, arguments: args, raw_arguments: raw, call_id: 'c', thread_id: 't', agent_id: null, schema: null, batch: null };
+    return run('intercept', '1', { surface: 'tool', input, original: input, origin: { caller: 'model' } },
+      { host: () => ({ result: { output: 'ok', success: true }, trace: [] }) }).value.result;
+  };
+  const patch = `*** Begin Patch\n*** Update File: src/app.env\n@@\n-X=1\n+X=${placeholder}\n*** End Patch`;
+  const refused = call('apply_patch', patch);
+  assert.match(refused.deny, /^omd_privacy: .*apply_patch.*into src\/app\.env/);
+  assert.ok(Buffer.byteLength(refused.deny) <= 512);
+  const long = call('apply_patch', patch.replace('src/app.env', `${'é'.repeat(300)}/app.env`).replace(placeholder, `[REDACTED:${'r'.repeat(300)}:q7xk2m6fhd4w]`));
+  assert.ok(Buffer.byteLength(long.deny) <= 512, String(Buffer.byteLength(long.deny)));
+  assert.match(call('exec_command', { cmd: `echo ${placeholder} > .env` }).deny, /omd_privacy: .*exec_command/);
+  assert.deepEqual(call('apply_patch', patch.replace(placeholder, 'real')), { output: 'ok', success: true });
+  assert.deepEqual(call('exec_command', { cmd: 'echo [REDACTED: ok' }), { output: 'ok', success: true });
 });
 
 test('quoted values with spaces or symbols and escaped JSON quotes are redacted without breaking tool-call JSON', () => {
@@ -151,9 +182,10 @@ test('refuses what it cannot redact: protected kinds, requested unscanned conten
   assert.match(send([segment('/input/0/arguments', truncated, { kind: 'tool_call.arguments', role: 'assistant' })]).result.deny, /would break tool-call JSON/);
 });
 
-test('sensitive path policy asks before shell reads, ignores case, covers parent directories and globs, and honours exemptions and modes', () => {
+test('sensitive path policy is off by default and, when opted in, asks only for commands naming a sensitive path', () => {
   const approval = (command, settings = {}, kind = 'exec', details = { command, cwd: '/repo' }) => run('approval', '', { id: 'a', kind, thread_id: 't',
-    turn_id: null, agent_id: null, host_decision: 'skip', policy: 'on-request', details, assessment: false }, { settings }).value;
+    turn_id: null, agent_id: null, host_decision: 'skip', policy: 'on-request', details, assessment: false }, { settings: { paths: 'ask', ...settings } }).value;
+  assert.equal(approval(['cat', '.env'], { paths: defaults.paths }), null);
   assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'cat ~/.ssh/id_rsa\n', cwd: '/repo' }).ask, /id_rsa\*/);
   assert.equal(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'y\n', cwd: '/repo' }), null);
   assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, cwd: '/repo', truncated: true }).ask, /too large/);
@@ -170,23 +202,30 @@ test('sensitive path policy asks before shell reads, ignores case, covers parent
     'grep -r token ~/.kube/', 'cat .env*', 'cat id_r*', 'cat *.pe?', 'cat ~/.config/gh/hosts.yml', 'cat .e*', 'cat ~/.docker/config.js?n', 'cat .env{,.local}', 'cat .[e]nv', 'cat ~/.ssh/id_{rsa,ed25519}', 'cat ~/.aws/[c]redentials', 'cat {.env,x}', 'cat ~/{.aws,.ssh}/credentials',
     'cat .e{n,x,a,b,c,d,e,f,g}{v,w,x,y,z,a,b,c}', `cat .e${'?'.repeat(9)}`, `cat .${'e'.repeat(260)}*`,
     'git show HEAD:.env', 'cat .?nv', 'cat .aws//credentials', 'cat ~/.aws/./credentials', 'cat ~/.aws/x/../credentials', "cat .e''nv", 'cat ".e"nv', 'cat .e\\nv', 'cat .env///',
-    `cat {.env,${'abcdefghijklmnopqr'.split('').join(',')}}`, 'cat .e{n..n}v']) {
+    `cat {.env,${'abcdefghijklmnopqr'.split('').join(',')}}`, 'cat .e{n..n}v', `python3 -c "print(open('.env').read())"`, "node -e 'require(\"fs\").readFileSync(\".env\")'",
+    "python3 - <<'EOF'\nprint(open('server.key').read())\nEOF", 'cat <<EOF > out.txt; cat .env\nhi\nEOF', "bash <<'EOF'\ncat .env\nEOF", 'cat <<EOF | sh\ncat .env\nEOF',
+    "ssh host <<'EOF'\ncat .env\nEOF", "python3 - <<'EOF' | sh\nprint(cfg.key)\nEOF", "python3 -c 'x = 1 <<a'; bash <<a\ncat .env\na",
+    'cat > out.txt <<EOF\n$(cat .env)\nEOF', 'python3 - <<EOF\n`cat .env`\nEOF', 'python3 -c "#$(cat .env >&2)"', "node -c '.env'", "php -c '.env' -r 'echo 1;'", 'node -r .env -e "1"']) {
     assert.match(approval(['bash', '-lc', command])?.ask ?? '', /sensitive path/, command);
   }
   for (const command of ['ls ~/.config', 'cat *', 'ls *.md', 'cat ~/src/c*', 'grep -r key --include=*.json src', 'cat ~/.kube-notes.md',
     'mkdir -p ~/.docker/cli-plugins', 'ls ~/.kube/cache', 'cat ~/.aws/config', "sed 's/foo/.*/' f", 'grep -E ".*" f', 'find . -name ".*"', 'ls -la .*', 'echo {a,b}', 'ls [z-a]', 'ls [^]', `cat ${'*'.repeat(60)}z`,
-    'git show HEAD:src/index.ts', 'cat src//a.ts ./b.ts', "echo 'hi' \"there\"", 'find . -exec cat {} +', "awk '{print $1}' f", 'ls .?', 'cat *.ts', 'ls src/*']) {
+    'git show HEAD:src/index.ts', 'cat src//a.ts ./b.ts', "echo 'hi' \"there\"", 'find . -exec cat {} +', "awk '{print $1}' f", 'ls .?', 'cat *.ts', 'ls src/*',
+    'python3 -c "print(api.key)"', 'python3 -c "self.key = 1"', 'node -e "console.log(req.key)"', "python3 - <<'EOF'\nprint(cfg.key)\nEOF", 'cat > notes.md <<EOF\nPut config in .env\nEOF', "cat > notes.md <<'EOF'\nrun $(cat .env)\nEOF"]) {
     assert.equal(approval(['bash', '-lc', command]), null, command);
   }
   const started = Date.now();
   assert.equal(approval(`cat ${'/'.repeat(80000)}x`), null);
+  assert.equal(approval(`${"python3 -c '".repeat(5000)}${'<<x '.repeat(5000)}`), null);
+  assert.equal(approval(`python3 - <<'EOF'\n"${'\\"'.repeat(40000)}\nEOF`), null);
+  assert.equal(approval(`python3 -c '"${'\\"'.repeat(40000)}'`), null);
   assert.ok(Date.now() - started < 1000);
 });
 
 test('value exemptions do not persist guessable fingerprints', () => {
   const output = run('command', 'privacy', 'allow hunter2pw');
   assert.match(output.value.display, /Usage/);
-  const sent = send([segment('/s', 'password=hunter2pw')], { state: { salt: 'old', ids: { old: 'hash' } } });
-  assert.equal(sent.state.salt, undefined);
+  const sent = send([segment('/s', 'password=hunter2pw')], { state: { ids: { old: 'hash' } } });
   assert.equal(sent.state.ids, undefined);
+  assert.ok(!JSON.stringify(sent.state).includes('hunter2pw'));
 });

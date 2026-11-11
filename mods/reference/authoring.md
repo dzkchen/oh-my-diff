@@ -19,7 +19,7 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
-| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
+| `pnpm check` | Host package inspection and syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
 | `pnpm test` | Runs the offline scenarios, the type check and the TypeScript tests (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs `debug.test.json`, which expects an error, and exits 0 with the error's mapped source location |
@@ -30,6 +30,10 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
+
+`pnpm check` requires `omd-mod` (or `OMD_MOD_BIN`) for the same package inspection used by the host. This enforces
+the 512 KiB limit per entrypoint, asset or lifecycle file and the 1 MiB combined entrypoint/UTF-8 asset limit,
+including when TypeScript is absent.
 
 `pnpm test` runs, in order:
 
@@ -141,8 +145,8 @@ operation error.
 - Every normal mock validates request and result shapes. Shared pure validators also check store keys,
   values and revision syntax, environment inputs and timer inputs.
 - Malformed result fixtures fail before the scenario runs unless explicitly marked unsafe.
-- Authority, declarations, persistence, revision conflicts, quotas, filesystem resolution and process/network state
-  require real-host boundary tests; a valid mock cannot prove those behaviors.
+- Test authority, declarations, persistence, revision conflicts, quotas, filesystem resolution and process/network
+  state against the real host; a valid mock cannot prove those behaviors.
 
 ### Negative tests
 
@@ -220,8 +224,8 @@ file.
   result includes `trace[].location` (`index.ts:75:7`), so an exact expectation breaks when lines move. Test
   interceptors in a `*.test.ts` file instead ([TypeScript tests](#typescript-tests)).
 - A store-level `omd-mod test STORE SCENARIO` uses the store's own settings instead of `settings`.
-- A mod that fails to activate reports its retained cause, so a missing service provider, denied capability or source
-  error names itself instead of only asking for a reload.
+- When activation fails, the report keeps the original cause, such as a missing service provider, denied capability
+  or source error, instead of only asking for a reload.
 
 ### Step types
 
@@ -318,9 +322,12 @@ While a mod is written, `omd-mod-author watch DIR STORE` (or `pnpm watch STORE`)
 1. Inspects the directory.
 2. Approves its current digest in `STORE` as the user would with `omd-mod trust`.
 3. Queues a reload of that store's host and refreshes `.omd/`.
+4. Loads the mod in a fresh host and reports `activation_failed` with the mod's error if `activate` throws or the
+   mod is refused. With `--once` that exits non-zero; while watching it is printed and watching continues.
 
 Saving an entry point, asset or lifecycle file reloads again after 100 ms, and reports a half-written file instead of
-stopping. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
+stopping. Files named in `mod.json` are watched as soon as it is saved, so a new asset that doesn't exist yet reloads
+once you create it. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
 and also disables or resets a mod.
 
 **Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE`) that contains
@@ -342,10 +349,11 @@ its scope, settings, grants and enabled or disabled choice.
 ### Noninteractive watch and CI
 
 - `omd-mod-author watch DIR STORE --once` does one inspect, approve and reload and exits, which suits a build step
-  against a scratch store.
+  against a scratch store. It exits non-zero when the mod fails to activate.
 - `omd-mod-author test DIR` (or `pnpm test`) is the CI check. It needs no store, since it builds a throwaway store for
   every run. It fails (`no_tests`) when the project has neither `mod.test.json` nor a `*.test.ts` or `*.test.mjs`
-  file.
+  file. It also fails (`unsupported_scenario_files`) when the directory has a `*.test.json` other than `mod.test.json`
+  and `debug.test.json`, since those would never run.
 
 Neither starts a provider request.
 
@@ -433,6 +441,14 @@ The engine strips TypeScript types in place, so callback stacks report the autho
 
 `omd-mod status` keeps a bounded log per mod of each callback's event, handler, generation, outcome and elapsed
 microseconds, plus aggregate timing. The log never adds mod-side filesystem or process access.
+
+### Logging from a mod
+
+`console.log` and the other `console` methods run without error, but a mod's output goes nowhere: it appears in no
+trace, store or terminal. To see a value, return it from a command as `display` (`pnpm run run` prints the trace),
+or show it with [`terminal.notice`](terminal-operations.md#terminalnotice) (`terminal` capability). A thrown `Error`
+reaches the trace and `omd-mod status` with its authored `file:line`. `omd-mod-author report`, `events` and
+`diagnostics` describe registrations, source use and errors, not what a mod printed.
 
 ### Source-use report
 

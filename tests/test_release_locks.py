@@ -1,12 +1,14 @@
 import hashlib
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from scripts import install_support
+from scripts import mods_lock
 from scripts import plugin_lock
 
 
@@ -47,6 +49,32 @@ class ShippedPatchTests(unittest.TestCase):
                                      f"{path} changed without regenerating the shipped patch")
                     checked += 1
         self.assertGreater(checked, 20)
+
+
+
+class PublishedCatalogTests(unittest.TestCase):
+    def test_published_entries_must_match_their_revision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(install_support.ROOT / "mods/examples/counter", root / "mods/counter")
+            git = ["git", "-C", root, "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+            for command in (["init", "-q"], ["add", "."], ["commit", "-qm", "counter"]):
+                subprocess.run([*git, *command], check=True)
+            revision = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+            version = json.loads((root / "mods/counter/mod.json").read_text())["version"]
+            published = {"repository": "https://example.invalid/r", "revision": revision,
+                         "sha256": install_support.package_digest(root / "mods/counter")}
+            (root / "extensions").mkdir()
+
+            def drift(**changes):
+                entry = {"id": "counter", "version": version, "source": "mods/counter", "published": published | changes}
+                (root / "extensions/index.json").write_text(json.dumps({"packages": [entry]}))
+                with mock.patch.object(mods_lock, "ROOT", root):
+                    return mods_lock.published_drift()
+            self.assertEqual(drift(), [])
+            self.assertRegex(drift(sha256="0" * 64)[0], "^counter: published.sha256 is 0{64}")
+            (root / "mods/counter/index.ts").write_text("// changed after publishing\n")
+            self.assertEqual(drift(), [])
 
 
 if __name__ == "__main__":

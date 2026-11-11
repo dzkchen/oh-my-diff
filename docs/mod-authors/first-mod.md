@@ -1,10 +1,7 @@
 # Write your first mod
 
-This tutorial builds a mod with a `/hello` command, tests it offline, runs it in `codex` and installs it. It's for
-anyone who has OMD installed and knows a little TypeScript.
-
-A mod is a small TypeScript package that runs inside OMD. It can add commands and tools, change what the model sees,
-and draw on screen.
+A mod is a TypeScript package that adds commands, tools or UI to OMD. Here you'll build one with a `/hello` command,
+test it offline, try it in `codex` and install it. You'll need OMD and a little TypeScript knowledge.
 
 ## Before you begin
 
@@ -25,8 +22,9 @@ node --version
 pnpm --version
 ```
 
-The first command prints three paths. If it prints fewer, OMD isn't installed. `omd-mod-author` creates and tests
-mods, `omd-mod` works on a mod store directly, and `omd` installs mods and turns them on.
+The first command should print three paths. If any are missing, check that OMD is installed and `~/.local/bin` is
+on your `PATH`. `omd-mod-author` creates and tests mods, `omd-mod` works on a mod store directly, and `omd` installs
+mods and turns them on.
 
 ## 1. Create the mod
 
@@ -45,6 +43,7 @@ files:
 - `mod.test.json`: an offline test that runs `/hello` with the argument `author`.
 - `debug.test.json`: a test that expects an error, so you can see how errors look.
 - `package.json` and `tsconfig.json`: the `pnpm` scripts, TypeScript and its settings.
+- `AGENTS.md`: points a coding agent working in the folder at the mod-building guide.
 
 `index.ts` registers a `/hello` command:
 
@@ -144,7 +143,8 @@ omd install ./my_mod
 omd mods enable my_mod
 ```
 
-Each command shows what the mod can do and asks `Proceed? [y/N]`. The mod runs from your next message in `codex`.
+Each command lists in plain words what the mod can do, riskiest first, and asks `Proceed? [y/N]`. Answer `d` to
+see its source and integrity first. The mod runs from your next message in `codex`.
 
 A folder install runs the folder itself. After any edit to it, even whitespace, the mod stops until you review it
 again:
@@ -153,7 +153,7 @@ again:
 omd mods update my_mod
 ```
 
-Until then, `omd-mod status STORE` lists the mod under `rejected` as `untrusted_source`. `STORE` is the path of your
+Until then, `omd-mod status STORE` lists the mod under `rejected` as `source_changed`. `STORE` is the path of your
 mod store, listed under [`omd-mod`](../commands.md#omd-mod) in Commands. To install a fixed version instead, share
 the mod through Git or npm and install that.
 

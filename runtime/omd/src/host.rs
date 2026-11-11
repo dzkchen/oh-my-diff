@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
@@ -131,11 +133,15 @@ pub fn secret_like(name: &str) -> bool {
             .any(|part| name.contains(part))
 }
 
-fn credential_paths() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+pub fn codex_home() -> Option<PathBuf> {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|home| home.join(".codex")))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
+}
+
+fn credential_paths() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    codex_home()
         .into_iter()
         .chain(
             home.iter()
@@ -146,6 +152,7 @@ fn credential_paths() -> Vec<PathBuf> {
 
 pub type SessionDispatcher = Arc<
     dyn Fn(
+            Option<&str>,
             &str,
             &str,
             Option<&str>,
@@ -214,6 +221,7 @@ pub fn reserve_session_dispatcher() -> std::io::Result<SessionRegistration> {
 }
 
 pub fn session_call(
+    terminal_owner: Option<&str>,
     thread: &str,
     caller: &str,
     source: Option<&str>,
@@ -221,6 +229,9 @@ pub fn session_call(
     call: crate::ModHostCall,
     active: &dyn Fn() -> bool,
 ) -> std::io::Result<Value> {
+    if !active() {
+        return Err(std::io::Error::other("callback_cancelled"));
+    }
     let dispatcher = SESSION_DISPATCHER
         .lock()
         .ok()
@@ -232,7 +243,7 @@ pub fn session_call(
         .ok_or_else(|| {
             std::io::Error::other("host_operation_unavailable: no session in this process")
         })?;
-    dispatcher(thread, caller, source, policy, call, active)
+    dispatcher(terminal_owner, thread, caller, source, policy, call, active)
 }
 
 /// A protected root's canonical form, resolved again whenever the root itself (for example a retargeted symlink) changes.
@@ -699,8 +710,10 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     let path = Path::new(name);
     if path.is_absolute() {
         let canonical = path.canonicalize().ok()?;
-        return (canonical == path && canonical.is_file() && !canonical.starts_with(repository))
-            .then_some(canonical);
+        return (canonical == path
+            && canonical.is_file()
+            && !crate::agent_writable(&canonical, repository))
+        .then_some(canonical);
     }
     if name.is_empty()
         || name.len() > 64
@@ -712,7 +725,7 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     }
     std::env::split_paths(&std::env::var_os("PATH")?).find_map(|directory| {
         let candidate = directory.join(name).canonicalize().ok()?;
-        (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
+        (candidate.is_file() && !crate::agent_writable(&candidate, repository)).then_some(candidate)
     })
 }
 
@@ -736,7 +749,8 @@ pub fn unrestricted_program(
     } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
         std::env::var_os("PATH").and_then(|paths| {
             std::env::split_paths(&paths).find_map(|directory| {
-                link(&directory.join(name)).filter(|(_, target)| !target.starts_with(repository))
+                link(&directory.join(name))
+                    .filter(|(_, target)| !crate::agent_writable(target, repository))
             })
         })
     } else {
@@ -748,12 +762,12 @@ pub fn unrestricted_program(
         .programs
         .iter()
         .any(|allowed| Path::new(allowed) == resolved || Path::new(allowed) == path);
-    if resolved.starts_with(repository) && !listed
+    if crate::agent_writable(&resolved, repository) && !listed
         || !access.allows(name, &resolved) && !access.allows(name, path)
     {
         return Err(format!("os_access_denied: {name}"));
     }
-    Ok(if launch.starts_with(repository) {
+    Ok(if crate::agent_writable(&launch, repository) {
         resolved
     } else {
         launch
@@ -821,10 +835,101 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
     let metadata = fs::symlink_metadata(&path).ok()?;
     (path.is_absolute()
         && path.canonicalize().ok()? == path
-        && !path.starts_with(repository)
+        && !crate::agent_writable(&path, repository)
         && metadata.file_type().is_socket()
         && metadata.uid() == rustix::process::geteuid().as_raw())
     .then_some(path)
+}
+
+const EXEC_ARTIFACT_BLOCK_BYTES: usize = 64 * 1024;
+
+struct VerifiedOutput {
+    stamp: crate::FileStamp,
+    len: usize,
+    blocks: Vec<[u8; 32]>,
+}
+
+static VERIFIED_OUTPUTS: LazyLock<Mutex<BTreeMap<PathBuf, Arc<VerifiedOutput>>>> =
+    LazyLock::new(Default::default);
+
+fn remember_output(path: &Path, stamp: crate::FileStamp, bytes: &[u8]) -> Arc<VerifiedOutput> {
+    let verified = Arc::new(VerifiedOutput {
+        stamp,
+        len: bytes.len(),
+        blocks: bytes
+            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
+            .map(|block| Sha256::digest(block).into())
+            .collect(),
+    });
+    let mut outputs = VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if outputs.len() >= 1024 {
+        outputs.clear();
+    }
+    outputs.insert(path.to_path_buf(), verified.clone());
+    verified
+}
+
+/// An exec output artifact's block hashes, rehashed in full only when its file stamp changes.
+fn verified_output(
+    path: &Path,
+    file: &mut fs::File,
+    digest: &str,
+) -> Result<Arc<VerifiedOutput>, String> {
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let stamp = crate::file_stamp(&metadata);
+    if let Some(verified) = VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        .filter(|verified| verified.stamp == stamp)
+    {
+        return Ok(verified.clone());
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(file)
+        .take((EXEC_ARTIFACT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > EXEC_ARTIFACT_BYTES
+        || crate::sha256_hex(&bytes) != digest
+        || std::str::from_utf8(&bytes).is_err()
+    {
+        return Err("exec_output_integrity_failed".into());
+    }
+    Ok(remember_output(path, stamp, &bytes))
+}
+
+fn verified_page(
+    file: &mut fs::File,
+    verified: &VerifiedOutput,
+    cursor: usize,
+    max: usize,
+) -> Result<Vec<u8>, String> {
+    let end = (cursor + max + 3).min(verified.len);
+    let first = cursor / EXEC_ARTIFACT_BLOCK_BYTES;
+    let start = first * EXEC_ARTIFACT_BLOCK_BYTES;
+    let span = (end.div_ceil(EXEC_ARTIFACT_BLOCK_BYTES) * EXEC_ARTIFACT_BLOCK_BYTES)
+        .min(verified.len)
+        .saturating_sub(start);
+    file.seek(SeekFrom::Start(start as u64))
+        .map_err(|error| error.to_string())?;
+    let mut window = Vec::with_capacity(span);
+    Read::by_ref(file)
+        .take(span as u64)
+        .read_to_end(&mut window)
+        .map_err(|error| error.to_string())?;
+    if window.len() != span
+        || window
+            .chunks(EXEC_ARTIFACT_BLOCK_BYTES)
+            .zip(&verified.blocks[first..])
+            .any(|(block, hash)| Sha256::digest(block)[..] != hash[..])
+    {
+        return Err("exec_output_integrity_failed".into());
+    }
+    window.truncate(end - start);
+    Ok(window.split_off(cursor - start))
 }
 
 /// A program's SHA-256, rehashed only when its file stamp changes.
@@ -899,13 +1004,13 @@ impl Host<'_> {
         let thread = caller.thread.unwrap_or("cli");
         if !crate::resource_data::token(caller.id)
             || !crate::resource_data::token(thread)
-            || !crate::is_sha256_hex(&caller.source_sha256)
+            || !crate::is_sha256_hex(caller.source_sha256)
             || self
                 .data_root
                 .canonicalize()
                 .map_err(|error| error.to_string())?
                 != self.data_root
-            || self.data_root.starts_with(self.repository())
+            || crate::inside_repository(self.data_root, self.repository())
         {
             return Err("exec_output_binding_invalid".into());
         }
@@ -978,6 +1083,8 @@ impl Host<'_> {
             crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Ordered)
                 .map_err(|error| error.to_string())?;
         }
+        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+        remember_output(&path, crate::file_stamp(&metadata), bytes);
         Ok(json!({"reference": digest, "sha256": digest}))
     }
 
@@ -993,7 +1100,7 @@ impl Host<'_> {
         }
         let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let digest = &input.artifact.sha256;
-        if !crate::is_sha256_hex(&digest) || input.artifact.reference != *digest {
+        if !crate::is_sha256_hex(digest) || input.artifact.reference != *digest {
             return Err("exec_output_reference_invalid".into());
         }
         let directory = self.output_directory(caller)?;
@@ -1001,41 +1108,40 @@ impl Host<'_> {
         let mut file = fs::OpenOptions::new()
             .read(true)
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(path)
+            .open(&path)
             .map_err(|_| "exec_output_unavailable")?;
-        let mut bytes = Vec::new();
-        Read::by_ref(&mut file)
-            .take((EXEC_ARTIFACT_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if bytes.len() > EXEC_ARTIFACT_BYTES || crate::sha256_hex(&bytes) != *digest {
-            return Err("exec_output_integrity_failed".into());
-        }
+        let verified = verified_output(&path, &mut file, digest)?;
         if !(self.active)() {
             return Err("host_operation_cancelled".into());
         }
-        let text = std::str::from_utf8(&bytes).map_err(|_| "exec_output_integrity_failed")?;
-        if input.cursor > bytes.len() || !text.is_char_boundary(input.cursor) {
+        let len = verified.len;
+        if input.cursor > len {
             return Err("exec_output_cursor_invalid".into());
         }
         let max = input
             .max_bytes
             .unwrap_or(EXEC_ARTIFACT_PAGE_BYTES)
             .clamp(1, EXEC_ARTIFACT_PAGE_BYTES);
-        let mut end = input.cursor.saturating_add(max).min(bytes.len());
-        while end > input.cursor && !text.is_char_boundary(end) {
+        let bytes = verified_page(&mut file, &verified, input.cursor, max)?;
+        let continuation = |byte: &u8| byte & 0xC0 == 0x80;
+        if bytes.first().is_some_and(continuation) {
+            return Err("exec_output_cursor_invalid".into());
+        }
+        let mut end = max.min(bytes.len());
+        while end > 0 && bytes.get(end).is_some_and(continuation) {
             end -= 1;
         }
-        if end == input.cursor && end < bytes.len() {
-            end += text[end..]
-                .chars()
-                .next()
-                .ok_or("exec_output_cursor_invalid")?
-                .len_utf8();
+        if end == 0 && !bytes.is_empty() {
+            end = 1 + bytes[1..]
+                .iter()
+                .take_while(|byte| continuation(byte))
+                .count();
         }
+        let text =
+            std::str::from_utf8(&bytes[..end]).map_err(|_| "exec_output_integrity_failed")?;
+        let next = input.cursor + end;
         Ok(
-            json!({"text": &text[input.cursor..end], "cursor": if end < bytes.len() { Some(end) } else { None },
-            "bytes": bytes.len(), "sha256": digest}),
+            json!({"text": text, "cursor": (next < len).then_some(next), "bytes": len, "sha256": digest}),
         )
     }
 
@@ -1133,6 +1239,9 @@ impl Host<'_> {
             )
         {
             return self.external(caller, operation, arguments);
+        }
+        if crate::workspace_refused(operation, &arguments, self.repository()) {
+            return Err("workspace_unavailable".into());
         }
         let source = match operation {
             "workspace.transaction" | "workspace.restore" => Some("transaction"),
@@ -1378,7 +1487,7 @@ impl Host<'_> {
             return Err("exec_program_declined".into());
         }
         let cwd = match (input.cwd.as_deref(), unrestricted) {
-            (None | Some("") | Some("."), _) => repository.clone(),
+            (None | Some("") | Some("."), _) => repository,
             (Some(name), Some(_)) if Path::new(name).is_absolute() || relative(name) => repository
                 .join(name)
                 .canonicalize()
@@ -1514,8 +1623,8 @@ impl Host<'_> {
         let started = Instant::now();
         let mut child = spawn_session(&command, input.stdin.is_some())
             .map_err(|error| format!("exec_spawn_failed: {error}"))?;
-        if let (Some(bytes), Some(mut pipe)) = (input.stdin.as_ref(), child.stdin.take()) {
-            let bytes = bytes.clone().into_bytes();
+        if let (Some(bytes), Some(mut pipe)) = (input.stdin, child.stdin.take()) {
+            let bytes = bytes.into_bytes();
             std::thread::spawn(move || {
                 let _ = pipe.write_all(&bytes);
             });
@@ -1642,7 +1751,7 @@ impl Host<'_> {
         for name in selected {
             let value = match snapshot.files.get(&name) {
                 Some(file) => json!({
-                    "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
+                    "text": std::str::from_utf8(&file.bytes).map_err(|_| "workspace_text_not_utf8")?,
                     "sha256": crate::sha256_hex(&file.bytes),
                 }),
                 None => Value::Null,
@@ -1833,7 +1942,7 @@ impl Host<'_> {
     fn save_backup(
         &self,
         caller: &Caller<'_>,
-        files: &BTreeMap<String, Option<Vec<u8>>>,
+        files: &BTreeMap<&str, Option<&[u8]>>,
     ) -> std::io::Result<Value> {
         let directory = self
             .backup_directory(caller)
@@ -1843,7 +1952,7 @@ impl Host<'_> {
             "owner": caller.id,
             "repository": repository_key(self.repository()),
             "created_ms": crate::peers::now_ms(),
-            "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
+            "files": files.iter().map(|(name, bytes)| ((*name).to_owned(), bytes.map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
         });
         let bytes = serde_json::to_vec(&record)?;
         let digest = crate::sha256_hex(&bytes);
@@ -1882,7 +1991,7 @@ impl Host<'_> {
             &transaction.expected.keys().cloned().collect::<Vec<_>>(),
             true,
         )?;
-        let sink = |files: &BTreeMap<String, Option<Vec<u8>>>| self.save_backup(caller, files);
+        let sink = |files: &BTreeMap<&str, Option<&[u8]>>| self.save_backup(caller, files);
         let result = transaction
             .apply_with_backup(self.repository(), || (self.active)(), Some(&sink))
             .map_err(|error| error.to_string())?;
@@ -1903,7 +2012,7 @@ impl Host<'_> {
             .map_err(|error| error.to_string())?;
         let mut files = BTreeMap::new();
         for (name, expected) in &input.expected {
-            let current = snapshot.files.get(name).map(|file| file.bytes.clone());
+            let current = snapshot.files.get(name).map(|file| file.bytes.as_slice());
             let stat = Self::file_stat(
                 &crate::workspace_path(self.repository(), name)
                     .map_err(|error| error.to_string())?,
@@ -1920,7 +2029,7 @@ impl Host<'_> {
             if !matches {
                 return Err(format!("stale expected version for {name}"));
             }
-            files.insert(name.clone(), current);
+            files.insert(name.as_str(), current);
         }
         let backup = self
             .save_backup(caller, &files)
@@ -1993,6 +2102,26 @@ mod installation_tests {
     use super::*;
 
     #[test]
+    fn resolve_program_refuses_programs_the_agent_can_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        if crate::git_work_tree(&root).is_some() {
+            return;
+        }
+        let launch = root.join("launch");
+        fs::create_dir(&launch).unwrap();
+        let [outside, planted] = [root.join("tool"), launch.join("tool")];
+        for program in [&outside, &planted] {
+            fs::write(program, "").unwrap();
+        }
+        let resolve = |program: &Path| resolve_program(program.to_str().unwrap(), &launch);
+        assert_eq!(resolve(&planted), None);
+        assert_eq!(resolve(&outside), Some(outside.clone()));
+        fs::create_dir(root.join(".git")).unwrap();
+        assert_eq!(resolve(&outside), None);
+    }
+
+    #[test]
     fn unrestricted_commands_pass_the_ssh_agent_and_declared_names_only() {
         let access = crate::ModOsAccess {
             programs: vec!["env".to_owned()],
@@ -2024,7 +2153,8 @@ mod installation_tests {
     fn singleton_rejects_replacement_and_stale_teardown() {
         let dispatcher = || {
             Arc::new(
-                |_: &str,
+                |_: Option<&str>,
+                 _: &str,
                  _: &str,
                  _: Option<&str>,
                  _: Option<&Value>,

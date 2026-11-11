@@ -26,18 +26,29 @@ omd mods disable omd_mods
 | `/` | Fuzzy-search names, ids, descriptions and command names across every tab; `Esc` clears the search. The line below the list shows the highlighted mod's state and commands. |
 | `Esc` | Close the panel, or go back from a mod's own panel. |
 | `/mods MOD` | Open one mod's panel: its settings, Update, Roll back and Remove. |
-| `/mods ACTION MOD` | Run an action without the panel. Actions are `enable`, `disable`, `update`, `rollback`, `remove` and `trust`. |
+| `/mods ACTION MOD` | Run an action without the panel. Actions are `enable`, `disable`, `toggle`, `update`, `rollback`, `remove` and `trust`. |
+| `/mods install SOURCE` | Review installing `npm:NAME[@VERSION]`, `git+URL#TAG`, an absolute folder or a directory id. |
+| `/mods plugin MARKETPLACE/PLUGIN` | Review turning on the mod component of a Codex plugin you added, such as `oh-my-diff/omd-anchored-edit`. One approval installs and turns it on. |
+| `/mods scope user` or `/mods scope project` | Choose where `/mods install` and Directory installs go: your user store or this project. |
 | `/mods reload` | Reload every mod. |
 | `/mods apply` or `/mods cancel` | Confirm or drop a pending action. |
 
 The panel's tabs:
 
-- All lists your mods as switches, grouped into Needs attention, On, Off and Available, with counts.
-- Settings opens one mod's own panel.
+- All lists your mods as switches, grouped into Needs attention, On, Off and Available, with counts. A mod that's off
+  still shows the commands and keys it adds, and experimental mods are marked. Available holds directory mods you
+  haven't installed and the mod components of Codex plugins you added.
+- Settings opens one mod's panel, with its On switch followed by its settings. Edit a list of words as
+  comma-separated text (or as a JSON list when an entry contains a comma). Edit objects and lists of objects as JSON.
+  **Changes apply to**, below the settings, chooses every terminal or only this one. Only the active copy's settings
+  can change. A disabled copy, or a user or project copy overridden by another scope, shows the reason instead.
 - Directory installs from a source or updates.
 
 For example, `/mods enable omd_frecency` turns on `omd_frecency` without opening the panel, after you approve
 its permissions.
+
+When the same id is installed both for you and for this project, a typed command asks which one you mean: write
+`user:ID` or `project:ID`.
 
 In Directory, Add from source takes `npm:NAME[@VERSION]`, `git+URL#TAG`, an absolute folder or a directory id. A
 directory entry installs its newest available version. To update a mod that's already installed, use its own panel
@@ -58,6 +69,8 @@ It has no settings.
 ## Needs and limits
 
 - Turning a mod on asks for approval and lists any new permissions.
+- A mod whose permissions were revoked, or that asks for new ones, shows as needs approval. Review it from a shell
+  with `omd mods update ID`.
 - Choose a model reads the ChatGPT model list (`routes.models`, under `packages`) and the conversation's model
   (`session.info`, under `inventory`).
 - Every install is reviewed and starts off.
@@ -70,3 +83,16 @@ It has no settings.
 - [Packaging](../../reference/packaging.md) in the mod API reference
 
 Trust previews warn when an ID is already installed in another scope: same-ID copies share storage and owned credential authority.
+
+## Terminal choices and saved settings
+
+By default, switches and setting edits save for every terminal. In a mod's panel, set **Changes apply to** to
+**Only this terminal** to keep changes in that terminal until you close it. If the terminal already has choices for
+the mod, its panel opens on **Only this terminal** until you pick **Every terminal**. The list marks it "only this
+terminal".
+
+The panel also offers **Use saved settings** and **Keep these for every terminal**. Each previews its changes and
+asks before applying them. A mod the installer keeps on can't be turned off from the panel, but you can change its
+settings. An administrator's mod shows its settings read-only.
+
+When user and project copies have the same mod ID, settings edits apply to the selected copy and its schema.

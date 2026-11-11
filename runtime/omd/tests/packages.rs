@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModPackageGrant;
@@ -64,7 +66,10 @@ fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
             packages: BTreeMap::from([(
                 path.file_name().unwrap().to_str().unwrap().to_owned(),
                 ModPackageGrant {
-                    capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
+                    capabilities: capabilities
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
                     dependencies: false,
                     lifecycle: Vec::new(),
                     secret_environment: Vec::new(),
@@ -1057,7 +1062,10 @@ fn npm_request(origin: &str, version: &str, capabilities: &[&str]) -> ModInstall
             packages: BTreeMap::from([(
                 "npm_mod".into(),
                 ModPackageGrant {
-                    capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
+                    capabilities: capabilities
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
                     ..ModPackageGrant::default()
                 },
             )]),
@@ -1164,7 +1172,7 @@ fn hostile_npm_archives_and_registry_substitution_are_refused() {
     let store = store(&temp);
     let (origin, routes) = registry();
     let honest = npm_archive("1.0.0", &["commands"]);
-    publish(&origin, &routes, &[("1.0.0", honest.clone())]);
+    publish(&origin, &routes, &[("1.0.0", honest)]);
     let mut pinned = npm_request(&origin, "1.0.0", &["commands"]);
     let plan = store.package_plan(pinned.clone()).unwrap();
     pinned.source = plan.packages[0].source.clone();
@@ -1673,4 +1681,277 @@ fn a_store_written_by_1_0_0_is_read_and_its_node_entry_dropped() {
         serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
     assert!(written.get("node").is_none(), "{written}");
     assert_eq!(written["mods"][0]["enabled"], true);
+}
+
+#[test]
+fn mods_list_names_quarantined_and_revoked_mods_and_the_command_that_restores_them() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
+    let store = store(&temp);
+    install(&store, request(&package, &["commands"]));
+    store.package_enable("fixture").unwrap();
+    let omd = |arguments: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_omd"))
+            .arg("mods")
+            .args(arguments)
+            .env(codex_omd::MOD_STORE_ENV, root.join("store"))
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr)
+    };
+
+    omd(&["quarantine", "fixture", "testing"]);
+    let listed = omd(&["list"]);
+    assert!(
+        listed.contains(
+            "fixture 1.0.0 user quarantined (local): testing; `omd mods unblock fixture` lifts it"
+        ),
+        "{listed}"
+    );
+
+    omd(&["unblock", "fixture"]);
+    let revoked = omd(&["revoke", "fixture"]);
+    assert!(
+        revoked.contains("`omd mods update fixture` approves it again"),
+        "{revoked}"
+    );
+    let listed = omd(&["list"]);
+    assert!(
+        listed.contains(
+            "fixture 1.0.0 user needs approval (local): review it with `omd mods update fixture`"
+        ),
+        "{listed}"
+    );
+    let needs_approval = || {
+        codex_omd::package_controls::list(&store, None).unwrap()["packages"][0]["needs_approval"]
+            .clone()
+    };
+    assert_eq!(needs_approval(), true);
+    let refused = omd(&["enable", "fixture", "--yes"]);
+    assert!(
+        refused.contains("omd mods update fixture") && !refused.contains("--yes"),
+        "{refused}"
+    );
+    omd(&["update", "fixture", "--yes"]);
+    let enabled = omd(&["enable", "fixture", "--yes"]);
+    assert!(enabled.contains("fixture is enabled."), "{enabled}");
+    assert_eq!(needs_approval(), false);
+}
+
+#[test]
+fn mods_update_reviews_a_trusted_copy_again_after_its_source_changes_or_is_revoked() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
+    let store = store(&temp);
+    let sha256 = ModStore::inspect_package(&package).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(package.clone(), &sha256, vec!["commands".into()], "user")
+        .unwrap();
+    store.enable(&package, true).unwrap();
+    let omd = |arguments: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_omd"))
+            .arg("mods")
+            .args(arguments)
+            .env(codex_omd::MOD_STORE_ENV, root.join("store"))
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr)
+    };
+
+    std::fs::write(package.join("main.ts"), "export default () => { }\n").unwrap();
+    let listed = omd(&["list"]);
+    assert!(
+        listed.contains("source_changed: fixture changed after it was trusted; review it in /omd or run omd mods update fixture\n"),
+        "{listed}"
+    );
+    store.enable(&package, false).unwrap();
+    let refused = store.enable(&package, true).unwrap_err().to_string();
+    assert!(
+        refused.contains("omd mods update fixture") && !refused.contains("--yes"),
+        "{refused}"
+    );
+    let updated = omd(&["update", "fixture", "--yes"]);
+    assert!(updated.contains("Updated fixture."), "{updated}");
+    store.enable(&package, true).unwrap();
+    assert!(omd(&["list"]).contains("fixture 1.0.0 user on (selection)\n"));
+
+    omd(&["revoke", "fixture"]);
+    let refused = store.enable(&package, true).unwrap_err().to_string();
+    assert!(
+        refused.contains("omd mods update fixture") && !refused.contains("--yes"),
+        "{refused}"
+    );
+    omd(&["update", "fixture", "--yes"]);
+    store.enable(&package, true).unwrap();
+}
+
+fn omd_cli(store: &Path, arguments: &[&str]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_omd"))
+        .arg("mods")
+        .args(arguments)
+        .env(codex_omd::MOD_STORE_ENV, store)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr)
+}
+
+#[test]
+fn reviewing_a_trusted_copy_shows_a_newly_requested_secret_and_respects_the_scope() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["exec"], json!([]));
+    let store = store(&temp);
+    let sha256 = ModStore::inspect_package(&package).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(package.clone(), &sha256, vec!["exec".into()], "user")
+        .unwrap();
+    edit_manifest(&package, |manifest| {
+        manifest["exec_environment"] = json!(["GITHUB_TOKEN"]);
+    });
+    let summary = omd_cli(&root.join("store"), &["update", "fixture"]);
+    assert!(
+        summary.contains("trust fixture") && summary.contains("secret environment: GITHUB_TOKEN"),
+        "{summary}"
+    );
+
+    let other = root.join("packaged");
+    std::fs::create_dir(&other).unwrap();
+    let packaged = mod_package(&other, "fixture", "1.0.0", &["exec"], json!([]));
+    install(&store, request(&packaged, &["exec"]));
+    let summary = omd_cli(
+        &root.join("store"),
+        &["update", "fixture", "--scope", "project"],
+    );
+    assert!(!summary.contains("update fixture"), "{summary}");
+}
+
+#[test]
+fn approving_a_revoked_npm_package_again_keeps_its_pinned_version_offline() {
+    for capabilities in [&["commands"][..], &[]] {
+        let temp = TempDir::new().unwrap();
+        let store = store(&temp);
+        let (origin, routes) = registry();
+        publish(
+            &origin,
+            &routes,
+            &[("1.0.0", npm_archive("1.0.0", capabilities))],
+        );
+        install(&store, npm_request(&origin, "1.0.0", capabilities));
+        publish(
+            &origin,
+            &routes,
+            &[
+                ("1.0.0", npm_archive("1.0.0", capabilities)),
+                ("1.1.0", npm_archive("1.1.0", capabilities)),
+            ],
+        );
+        store.revoke("npm_mod").unwrap();
+        routes.lock().unwrap().clear();
+        let preview = codex_omd::package_controls::preview(
+            &store,
+            json!({"action": "update", "id": "npm_mod", "scope": "user"}),
+        )
+        .unwrap();
+        assert_eq!(
+            preview.public["changes"]["packages"][0]["version"]["to"], "1.0.0",
+            "{}",
+            preview.public
+        );
+        codex_omd::package_controls::apply(&store, &preview.control).unwrap();
+        let listed = codex_omd::package_controls::list(&store, None).unwrap();
+        assert_eq!(listed["packages"][0]["needs_approval"], false, "{listed}");
+    }
+}
+
+#[test]
+fn reinstalling_an_enabled_folder_mod_does_not_say_it_is_off() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
+    let store = root.join("store");
+    ModStore::create(store.clone()).unwrap();
+    let folder = package.to_str().unwrap();
+    let installed = omd_cli_install(&store, folder);
+    assert!(installed.contains("It is off"), "{installed}");
+    omd_cli(&store, &["enable", "fixture", "--yes"]);
+    let reinstalled = omd_cli_install(&store, folder);
+    assert!(
+        reinstalled.contains("Installed fixture (user).") && !reinstalled.contains("It is off"),
+        "{reinstalled}"
+    );
+    assert!(omd_cli(&store, &["list"]).contains("fixture 1.0.0 user on"));
+}
+
+fn omd_cli_install(store: &Path, folder: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_omd"))
+        .args(["install", folder, "--yes"])
+        .env(codex_omd::MOD_STORE_ENV, store)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr)
+}
+
+#[test]
+fn install_previews_name_os_access_codex_config_and_exec_environment() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["exec", "os"], json!([]));
+    edit_manifest(&package, |manifest| {
+        manifest["os_access"] = json!({"programs": ["/bin/echo"]});
+        manifest["exec_environment"] = json!(["FIXTURE_VALUE"]);
+        manifest["codex_config"] = json!({"tools.update_plan.enabled": true});
+        manifest["compatibility"] = json!({"required_features": ["codex_config_v1"]});
+    });
+    let store = root.join("store");
+    ModStore::create(store.clone()).unwrap();
+    let summary = omd_cli(&store, &["inspect", package.to_str().unwrap()]);
+    let json_field = |prefix: &str| {
+        let value = summary
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix(prefix))
+            .unwrap_or_else(|| panic!("missing {prefix}\n{summary}"));
+        serde_json::from_str::<serde_json::Value>(value).unwrap()
+    };
+    assert_eq!(
+        json_field("os access: "),
+        json!({"programs": ["/bin/echo"], "network": false})
+    );
+    assert_eq!(
+        json_field("codex config: "),
+        json!({"tools.update_plan.enabled": true})
+    );
+    assert!(
+        summary.contains("exec environment: FIXTURE_VALUE"),
+        "{summary}"
+    );
+}
+
+#[test]
+fn updating_a_mod_installed_at_another_scope_names_that_scope() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
+    let store = store(&temp);
+    install(
+        &store,
+        ModInstallRequest {
+            scope: "project".into(),
+            ..request(&package, &["commands"])
+        },
+    );
+    let refused = omd_cli(&root.join("store"), &["update", "fixture"]);
+    assert!(
+        refused.contains("fixture is installed at scope project; pass --scope project"),
+        "{refused}"
+    );
 }

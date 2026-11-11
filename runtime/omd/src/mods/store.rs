@@ -208,7 +208,7 @@ mod provenance_tests {
         let mut changed = selection.clone();
         changed.sha256 = "b".repeat(64);
         assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
-        changed = selection.clone();
+        changed = selection;
         changed.path = "/other".into();
         assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
     }
@@ -321,9 +321,10 @@ pub(super) fn refuse_second_copy(
     path: &Path,
     scope: &str,
     id: &str,
+    enabled: &dyn Fn(&ModSelection) -> bool,
 ) -> Result<()> {
     match config.mods.iter().find(|other| {
-        other.enabled
+        enabled(other)
             && other.path != path
             && other.scope == scope
             && package(&other.path).is_ok_and(|(manifest, _, _)| manifest.id == id)
@@ -486,6 +487,8 @@ pub struct ModStore {
 pub(super) const STATE_LIMIT: usize = 524_288;
 pub(super) const PACKAGE_FILE_LIMIT: u64 = 524_288;
 const SECURITY_EVENTS: &str = "security-events.jsonl";
+/// Kept out of `mods.json` so the previous release, which rejects unknown fields, still reads the store after a rollback.
+pub(super) const CONFIGURATION_EPOCHS: &str = "configuration-epochs.json";
 const SECURITY_EVENT_LIMIT: usize = 65_536;
 
 #[derive(Clone, Debug)]
@@ -667,7 +670,19 @@ impl ModStore {
             return Err(failure("store_file_not_resettable"));
         }
         let path = self.root.join(name);
-        let aside = self.root.join(format!("{name}.corrupt"));
+        if !path.try_exists()? {
+            return Err(failure(format!(
+                "store_file_absent: {} does not exist; nothing to reset",
+                path.display()
+            )));
+        }
+        let aside = (0u32..)
+            .map(|copy| match copy {
+                0 => self.root.join(format!("{name}.corrupt")),
+                copy => self.root.join(format!("{name}.corrupt.{copy}")),
+            })
+            .find(|aside| !aside.exists())
+            .ok_or_else(|| failure("store_file_not_resettable"))?;
         let empty = match name {
             "mods.json" => Some(serde_json::to_value(ModConfiguration {
                 schema: 1,
@@ -732,6 +747,13 @@ impl ModStore {
         value: &Value,
         approved: &BTreeSet<String>,
     ) -> Result<()> {
+        let stripped;
+        let value = if name == "mods.json" {
+            stripped = self.write_epochs(value)?;
+            &stripped
+        } else {
+            value
+        };
         let bytes = serde_json::to_vec_pretty(value)?;
         let brokered = match name {
             "mods.json" => brokered_grants(&self.root)?,
@@ -773,7 +795,29 @@ impl ModStore {
         })
     }
 
-    fn write_staged(
+    fn write_epochs(&self, config: &Value) -> Result<Value> {
+        let mut config = config.clone();
+        let epochs: Vec<_> = config["mods"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .filter_map(|selection| {
+                let epoch = selection.as_object_mut()?.remove("configuration_epoch")?;
+                Some(json!([selection["scope"], selection["path"], epoch]))
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&json!({"revision": config["revision"], "epochs": epochs}))?;
+        if read(&self.root.join(CONFIGURATION_EPOCHS), 65_536)
+            .ok()
+            .as_deref()
+            != Some(bytes.as_slice())
+        {
+            self.write_staged(CONFIGURATION_EPOCHS, &bytes, || Ok(()))?;
+        }
+        Ok(config)
+    }
+
+    pub(super) fn write_staged(
         &self,
         name: &str,
         bytes: &[u8],
@@ -909,6 +953,54 @@ impl ModStore {
         self.selection_status_inspected_in(project, &configuration, &lock, None)
     }
 
+    pub(crate) fn data_selection(
+        &self,
+        project: &Path,
+        owner: &str,
+        source_sha256: &str,
+    ) -> Result<(u64, ModSelection)> {
+        let managed = self.managed()?;
+        let configuration = match self.configuration() {
+            Ok(configuration) => configuration,
+            Err(_) if managed.is_some() => ModConfiguration {
+                schema: 1,
+                revision: 0,
+                node: None,
+                mods: Vec::new(),
+            },
+            Err(error) => return Err(error),
+        };
+        let brokered = brokered_grants(&self.root)?;
+        let mut selections = match &managed {
+            Some(managed) => {
+                managed
+                    .selections(
+                        &self.managed_deployment()?,
+                        &self.managed_user(),
+                        Some(project),
+                    )
+                    .0
+            }
+            None => Vec::new(),
+        };
+        let administered = selections.len();
+        selections.extend(configuration.mods);
+        let selection = super::ModHost::select(
+            &selections,
+            administered,
+            true,
+            brokered.as_ref().map(|(_, grants)| grants),
+            managed.as_ref().map(|managed| &managed.policy),
+            &mut Vec::new(),
+            |path| verified_package(path).map(|(package, sha256)| (package, String::new(), sha256)),
+        )?
+        .remove(owner)
+        .map(|(selection, _, _)| selection)
+        .filter(|selection| selection.sha256 == source_sha256 && selection.authority_current())
+        .ok_or_else(|| failure("data_source_not_selected"))?;
+        Ok((configuration.revision, selection))
+    }
+
     pub(crate) fn selection_status_inspected_in(
         &self,
         project: Option<&Path>,
@@ -1002,6 +1094,8 @@ impl ModStore {
                             "version": manifest.version,
                             "description": manifest.description,
                             "settings_schema": manifest.settings_schema,
+                            "provenance": manifest.provenance,
+                            "contributes": manifest.contributes,
                         }));
                     }
                     let defaults = manifest
@@ -1032,20 +1126,15 @@ impl ModStore {
                         };
                         settings_origin.insert(key.clone(), origin);
                     }
-                    // A user can re-trust an edited source; administered content needs a package sync instead.
-                    let error = if integrity != selection.sha256 && !administered {
-                        Some("source_changed: inspect and trust the new digest".to_owned())
-                    } else {
-                        super::selection_verdict(
-                            selection,
-                            &manifest,
-                            &integrity,
-                            administered,
-                            brokered.as_ref().map(|(_, grants)| grants),
-                            managed.as_ref().map(|managed| &managed.policy),
-                        )
-                        .unwrap_or_else(|error| Some(error.to_string()))
-                    };
+                    let error = super::selection_verdict(
+                        selection,
+                        &manifest,
+                        &integrity,
+                        administered,
+                        brokered.as_ref().map(|(_, grants)| grants),
+                        managed.as_ref().map(|managed| &managed.policy),
+                    )
+                    .unwrap_or_else(|error| Some(error.to_string()));
                     (Some(manifest.id), error, manifest.exec_environment)
                 }
                 Err(error) => {
@@ -1204,6 +1293,10 @@ impl ModStore {
             config.mods.retain(|m| m.path != path);
             trusted.insert(path.clone());
             config.mods.push(ModSelection {
+                configuration_epoch: config
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| failure("revision_overflow"))?,
                 path,
                 sha256: actual,
                 enabled: false,
@@ -1290,6 +1383,10 @@ impl ModStore {
         });
         let mut config = self.configuration()?;
         let mut revoked = Vec::new();
+        let epoch = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
         for selection in &mut config.mods {
             if managed
                 .as_ref()
@@ -1300,7 +1397,8 @@ impl ModStore {
                 selection.enabled = false;
                 selection.capabilities.clear();
                 selection.secret_environment.clear();
-                selection.expires_at = None;
+                selection.expires_at = Some(0);
+                selection.configuration_epoch = epoch;
                 revoked.push(json!({"path": selection.path, "scope": selection.scope}));
             }
         }
@@ -1350,18 +1448,36 @@ impl ModStore {
         if enabled {
             let selection = &config.mods[index];
             let (manifest, _, hash) = package(path)?;
+            if !selection.authority_current() {
+                return Err(failure(format!(
+                    "grant_expired: {}: approve it again with omd mods update {}",
+                    manifest.id, manifest.id
+                )));
+            }
             if hash != selection.sha256 {
-                return Err(failure("source_changed: inspect and trust the new digest"));
+                return Err(failure(format!(
+                    "source_changed: {}: review it again with omd mods update {}",
+                    manifest.id, manifest.id
+                )));
             }
             if manifest
                 .capabilities
                 .iter()
                 .any(|capability| !selection.capabilities.contains(capability))
             {
-                return Err(failure("capability_denied: trust the package again"));
+                return Err(failure(format!(
+                    "capability_denied: {}: approve it again with omd mods update {}",
+                    manifest.id, manifest.id
+                )));
             }
-            self.check_service_providers(&manifest, path)?;
-            refuse_second_copy(&config, path, &selection.scope, &manifest.id)?;
+            self.check_service_providers(&manifest, path, &|selection| selection.enabled)?;
+            refuse_second_copy(
+                &config,
+                path,
+                &selection.scope,
+                &manifest.id,
+                &|selection| selection.enabled,
+            )?;
         }
         config.mods[index].enabled = enabled;
         next_revision(&mut config.revision)?;
@@ -1385,7 +1501,12 @@ impl ModStore {
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
-    pub(super) fn check_service_providers(&self, package: &ModPackage, path: &Path) -> Result<()> {
+    pub(super) fn check_service_providers(
+        &self,
+        package: &ModPackage,
+        path: &Path,
+        enabled: &dyn Fn(&ModSelection) -> bool,
+    ) -> Result<()> {
         let selections = self.configuration()?.mods;
         for import in package
             .services
@@ -1411,7 +1532,7 @@ impl ModStore {
                                     .iter()
                                     .any(|export| export.name == import.name)
                             });
-                            (manifest.id, selection.enabled || cyclic)
+                            (manifest.id, enabled(selection) || cyclic)
                         })
                 })
                 .collect::<Vec<_>>();
@@ -1520,6 +1641,38 @@ impl ModStore {
             &Self::state_name(id, scope),
             &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
         )
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+
+    #[test]
+    fn reset_reports_a_missing_file_and_keeps_earlier_copies() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ModStore::open(temp.path().canonicalize().unwrap()).unwrap();
+        let lock = store.root().join("packages.lock.json");
+        let error = store.reset("packages.lock.json").unwrap_err().to_string();
+        assert!(error.starts_with("store_file_absent: "), "{error}");
+        for (copy, text) in ["first", "second"].into_iter().enumerate() {
+            std::fs::write(&lock, text).unwrap();
+            let aside = store.reset("packages.lock.json").unwrap();
+            let expected = if copy == 0 {
+                "packages.lock.json.corrupt".to_owned()
+            } else {
+                format!("packages.lock.json.corrupt.{copy}")
+            };
+            assert_eq!(aside, store.root().join(expected));
+        }
+        assert_eq!(
+            std::fs::read_to_string(store.root().join("packages.lock.json.corrupt")).unwrap(),
+            "first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(store.root().join("packages.lock.json.corrupt.1")).unwrap(),
+            "second"
+        );
     }
 }
 

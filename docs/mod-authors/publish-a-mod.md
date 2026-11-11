@@ -21,12 +21,13 @@ omd install ./my_mod
 omd mods enable my_mod
 ```
 
-Each command shows the mod's permissions and asks `Proceed? [y/N]`. Installing never turns a mod on. Add
+Each command lists the mod's permissions in plain words, riskiest first, and asks `Proceed? [y/N]`; answer `d`
+(or pass `--details`) to see its source and integrity. Installing never turns a mod on. Add
 `--scope project` to `omd install` to install it for the current project only.
 
 A folder install runs the folder itself, not the release copy in `dist/` (see
 [Build a release copy](#build-a-release-copy)). After any edit, even whitespace, the mod stops until you review it
-again with `omd mods update my_mod`. Meanwhile `omd-mod status STORE` lists it under `rejected` as `untrusted_source`,
+again with `omd mods update my_mod`. Meanwhile `omd-mod status STORE` lists it under `rejected` as `source_changed`,
 where `STORE` is your mod store. To install a fixed version, use a Git tag or an npm package.
 
 In a shell with no terminal, the prompt can't show and the command stops with `package_approval_required`. Pass

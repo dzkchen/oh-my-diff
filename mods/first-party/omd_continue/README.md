@@ -46,8 +46,9 @@ Enable both mods and set observation masking's `mode` to `continue`. `/continue`
 cache expiry; `/continue --compact [note]` forces the request when cache status is unknown or still warm.
 The same interruption checks apply. Without the integration, `--compact` displays setup guidance and submits nothing.
 
-This removes eligible tool-output bulk, not the conversation's user messages or instructions. It makes no summarization
-request. Existing idle compaction remains independent, so disable that mod for a continuation-only workflow.
+Masking omits the full text of eligible tool outputs while keeping user messages and instructions. It makes no
+summarization request. The separate idle-compaction timer can still run; disable that mod if you want context
+reduction only when you use `/continue`.
 
 ## Settings
 

@@ -1,5 +1,5 @@
 import type { FileStat, Json, ModAPI } from '../../api.d.ts';
-import { ORDER, OBSERVED_REPOSITORY_KEY, HELD_REASON, adapterFor, doc, failure, number, object, pathFromUri, rewrite, renameEdit, serializedBytes, state, string, markSynced, textWorkspaceEdit, uri, fail, ok } from './protocol.ts';
+import { ORDER, OBSERVED_REPOSITORY_KEY, adapterFor, doc, failure, number, object, pathFromUri, rewrite, renameEdit, serializedBytes, state, string, markSynced, textWorkspaceEdit, uri, fail, ok } from './protocol.ts';
 import type { Answer, Item, Result, State } from './protocol.ts';
 import { createClient } from './client.ts';
 import { createSemantic } from './semantic.ts';
@@ -54,15 +54,15 @@ export default function activate(api: ModAPI) {
         else {
           const reason = event.reason ?? 'workspace_index_unavailable';
           s.status = 'synced';
-          // omd_lsp_view shows the `degraded:` prefix as a warning; keep both in step.
-          s.reason = `${reason === INDEX_BOUNDS ? 'degraded' : 'resynced'}: ${reason}`;
+          s.recovery = reason === INDEX_BOUNDS ? 'degraded' : 'resynced';
+          s.reason = `${s.recovery}: ${reason}`;
         }
         save(s);
         continue;
       }
       const paths = event.changes.map(change => change.path).filter(path => adapterFor(path) === adapter);
       if (!paths.length) {
-        if (HELD_REASON.test(s.reason)) { s.reason = ''; save(s); }
+        if (s.recovery) { s.recovery = null; s.reason = ''; save(s); }
         continue;
       }
       const previous = Object.keys(s.documents);
@@ -70,7 +70,7 @@ export default function activate(api: ModAPI) {
       if (!started.ok) { failure(s, started.error); save(s); continue; }
       const synced = synchronize(s, started.value ? [...previous, ...paths] : paths);
       if (!synced.ok) failure(s, synced.error, true);
-      else { s.status = 'synced'; s.reason = ''; }
+      else { s.status = 'synced'; s.recovery = null; s.reason = ''; }
       save(s);
     }
     announce(0);
@@ -416,7 +416,7 @@ export default function activate(api: ModAPI) {
   }, () => {
     return { adapters: Object.fromEntries(ORDER.map(adapter => {
       const s = state(api.state.get(), adapter);
-      return [adapter, { status: s.status, reason: s.reason, repository: s.repository, documents: Object.keys(s.documents).length, diagnostics: s.diagnostics, server: s.running ? s.server : null }];
+      return [adapter, { status: s.status, recovery: s.recovery, reason: s.reason, repository: s.repository, documents: Object.keys(s.documents).length, diagnostics: s.diagnostics, server: s.running ? s.server : null }];
     })) };
   });
   api.tool({

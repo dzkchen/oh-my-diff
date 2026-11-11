@@ -96,10 +96,12 @@ impl Grant {
 
 #[derive(Default)]
 pub(super) struct Services {
+    terminal_owner: Option<String>,
     records: tokio::sync::Mutex<BTreeMap<String, Service>>,
 }
 
 struct Service {
+    terminal_owner: Option<String>,
     mod_id: String,
     generation: u64,
     started_at_ms: u64,
@@ -114,8 +116,16 @@ struct Service {
 impl Drop for Service {
     fn drop(&mut self) {
         if let Some(route) = &self.route {
-            codex_models_manager::runtime_models::set(&route.provider, Vec::new());
-            codex_models_manager::runtime_models::set_name(&route.provider, None);
+            codex_models_manager::runtime_models::set_for(
+                self.terminal_owner.as_deref(),
+                &route.provider,
+                Vec::new(),
+            );
+            codex_models_manager::runtime_models::set_name_for(
+                self.terminal_owner.as_deref(),
+                &route.provider,
+                None,
+            );
         }
         if let Some(job) = self.job.take() {
             job.abort();
@@ -139,46 +149,51 @@ impl Service {
     }
 }
 
+async fn stop_services(services: Vec<Service>) {
+    for service in &services {
+        if let Some(job) = &service.job {
+            job.abort();
+        }
+    }
+    for service in services {
+        service.stop().await;
+    }
+}
+
 impl Services {
+    pub(super) fn new(terminal_owner: Option<String>) -> Self {
+        Self {
+            terminal_owner,
+            records: Default::default(),
+        }
+    }
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "Stop stale services before admitting replacements"
     )]
     pub(super) async fn cleanup_stale(&self, generation: u64, owners: &BTreeMap<String, String>) {
         let mut records = self.records.lock().await;
-        let stale = {
-            let keys = records
-                .iter()
-                .filter(|(_, service)| {
-                    service.generation != generation || !owners.contains_key(&service.mod_id)
-                })
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|id| records.remove(&id))
-                .collect::<Vec<_>>()
-        };
-        for service in stale {
-            service.stop().await;
-        }
+        let stale = records
+            .extract_if(.., |_, service| {
+                service.generation != generation || !owners.contains_key(&service.mod_id)
+            })
+            .map(|(_, service)| service)
+            .collect::<Vec<_>>();
+        stop_services(stale).await;
         drop(records);
     }
 
     pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
         let owned = {
             let mut records = self.records.lock().await;
-            let keys = records
-                .iter()
-                .filter(|(_, agent)| agent.mod_id == mod_id && agent.generation == generation)
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|key| records.remove(&key))
+            records
+                .extract_if(.., |_, agent| {
+                    agent.mod_id == mod_id && agent.generation == generation
+                })
+                .map(|(_, agent)| agent)
                 .collect::<Vec<_>>()
         };
-        for agent in owned {
-            agent.stop().await;
-        }
+        stop_services(owned).await;
     }
 
     pub(super) async fn cleanup_session(&self, session: &Session) {
@@ -193,9 +208,7 @@ impl Services {
                 .filter_map(|key| records.remove(&key))
                 .collect::<Vec<_>>()
         };
-        for service in owned {
-            service.stop().await;
-        }
+        stop_services(owned).await;
     }
 
     async fn publish_models(
@@ -255,8 +268,11 @@ impl Services {
                     .any(|known: &codex_protocol::openai_models::ModelInfo| {
                         known.slug == model.slug
                     })
-                || codex_models_manager::runtime_models::find(&model.slug)
-                    .is_some_and(|(owner, _)| owner != input.provider)
+                || codex_models_manager::runtime_models::find_for(
+                    self.terminal_owner.as_deref(),
+                    &model.slug,
+                )
+                .is_some_and(|(owner, _)| owner != input.provider)
             {
                 return Err(format!("provider_model_invalid: {}", model.slug));
             }
@@ -285,7 +301,6 @@ impl Services {
                 codex_protocol::openai_models::TruncationPolicyConfig::tokens(10_000);
             info.supports_search_tool = true;
             info.multi_agent_version = Some(codex_protocol::protocol::MultiAgentVersion::V2);
-            info.used_fallback_model_metadata = false;
             models.push(info);
         }
         let records = self.records.lock().await;
@@ -301,8 +316,16 @@ impl Services {
             return Err("provider_not_registered_or_stopped".into());
         }
         let count = models.len();
-        codex_models_manager::runtime_models::set_name(&input.provider, input.name);
-        codex_models_manager::runtime_models::set(&input.provider, models);
+        codex_models_manager::runtime_models::set_name_for(
+            self.terminal_owner.as_deref(),
+            &input.provider,
+            input.name,
+        );
+        codex_models_manager::runtime_models::set_for(
+            self.terminal_owner.as_deref(),
+            &input.provider,
+            models,
+        );
         drop(records);
         Ok(json!({"provider": input.provider, "models": count}))
     }
@@ -434,7 +457,7 @@ impl Services {
                 return Err("service_code_roots_overlap".into());
             }
             let files = launch_snapshot::capture(root)?;
-            if launch_snapshot::digest(&files) != *expected {
+            if launch_snapshot::digest(&files)? != *expected {
                 return Err("service_source_changed".into());
             }
             source_bytes += files.files.values().map(Vec::len).sum::<usize>();
@@ -511,7 +534,7 @@ impl Services {
                     .into_owned();
             }
         }
-        if grant.program.starts_with(&host.repository)
+        if codex_omd::agent_writable(&grant.program, &host.repository)
             || grant.program.canonicalize().map_err(|e| e.to_string())? != grant.program
         {
             return Err("service_executable_must_be_canonical_and_outside_repository".into());
@@ -622,7 +645,7 @@ impl Services {
                 .secret_refs
                 .get(reference)
                 .ok_or("unknown_secret_reference")?;
-            if path.starts_with(&host.repository)
+            if codex_omd::inside_repository(path, &host.repository)
                 || !path.is_absolute()
                 || std::fs::symlink_metadata(path)
                     .map_err(|_| "secret_reference_unavailable")?
@@ -840,6 +863,7 @@ impl Services {
         records.insert(
             grant.id.clone(),
             Service {
+                terminal_owner: self.terminal_owner.clone(),
                 mod_id: mod_id.into(),
                 generation,
                 started_at_ms: codex_omd::peers::now_ms(),
@@ -982,6 +1006,71 @@ async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, 
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn service_cleanup_aborts_all_jobs_before_waiting_for_the_first() {
+        let root = tempfile::tempdir().unwrap();
+        let task = Arc::new(
+            Task::create(
+                codex_omd::Limits {
+                    requests: 3,
+                    exposure_microusd: 100,
+                    seconds: 30,
+                    concurrent_workers: 2,
+                    max_depth: 2,
+                },
+                root.path().join("evidence"),
+            )
+            .unwrap(),
+        );
+        let (release, wait) = std::sync::mpsc::channel();
+        let (started, start) = tokio::sync::oneshot::channel();
+        let first = tokio::task::spawn_blocking(move || {
+            started.send(()).unwrap();
+            let _ = wait.recv();
+            Ok(Value::Null)
+        });
+        start.await.unwrap();
+        struct Cancelled(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Cancelled {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+        let (cancelled, cancellation) = tokio::sync::oneshot::channel();
+        let guard = Cancelled(Some(cancelled));
+        let second = tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+            Ok(Value::Null)
+        });
+        let service = |job| Service {
+            terminal_owner: None,
+            mod_id: "m".into(),
+            generation: 1,
+            started_at_ms: 0,
+            route: None,
+            job: Some(job),
+            task: task.clone(),
+            worker: "worker".into(),
+            _gateway: None,
+            _snapshot: tempfile::tempdir().unwrap(),
+        };
+        let first = service(first);
+        let snapshot = first._snapshot.path().to_path_buf();
+        let cleanup = tokio::spawn(stop_services(vec![first, service(second)]));
+        tokio::time::timeout(Duration::from_secs(5), cancellation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!cleanup.is_finished());
+        assert!(snapshot.exists());
+        release.send(()).unwrap();
+        cleanup.await.unwrap();
+        assert!(!snapshot.exists());
+    }
+
     #[test]
     fn loopback_provider_grants_define_their_provider() {
         let store = tempfile::tempdir().unwrap();
@@ -1010,8 +1099,8 @@ mod tests {
         assert_eq!(
             provider
                 .experimental_bearer_token
-                .map(|token| token.into_inner())
-                .as_deref(),
+                .as_deref()
+                .map(String::as_str),
             Some("local-secret")
         );
         assert!(!provider.requires_openai_auth && !provider.supports_websockets);
@@ -1043,6 +1132,7 @@ mod tests {
         let config =
             execution::isolated(&parent, &root, std::slice::from_ref(&endpoint), &[], false)
                 .unwrap();
+        assert!(config.features.enabled(codex_features::Feature::CodexHooks));
         let output = request_output(&config, vec!["/bin/sh".into(), "-c".into(),
             "value=$(cat \"$1\") || exit 10; if cat \"$2\"; then exit 11; fi; if printf bad > \"$1\"; then exit 12; fi; printf '{\"exit_code\":0,\"stdout\":\"%s\"}\\n' \"$value\"".into(),
             "check".into(), endpoint.display().to_string(), private.display().to_string()]).await.unwrap();

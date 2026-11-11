@@ -1,6 +1,6 @@
 # omd-artifact-reading
 
-Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from. It's experimental: no install profile stages it. [Experimental plugins](../../../../README.md#experimental-plugins)
+Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from. It's experimental, and neither install profile puts it on disk. [Experimental plugins](../../../../README.md#experimental-plugins)
 has the steps to add it.
 
 Everything except PDFs works once you add the plugin. PDF reading also needs Ghostscript (`gs`). An optional mod
@@ -29,7 +29,8 @@ GitHub reads are optional and need the component.
 
 2. Find the canonical paths and digests the entry needs. The host rejects a `program` that isn't its own canonical
    path. It also compares `program_sha256` and each `read_hashes` value with the file's SHA-256. `ROOT` is the
-   plugin's installed folder, found as in [Turn on a component](../../../../README.md#turn-on-a-component):
+   plugin's installed folder, `${CODEX_HOME:-$HOME/.codex}/plugins/cache/oh-my-diff-experimental/omd-artifact-reading/VERSION`,
+   with `VERSION` from `codex plugin list --marketplace oh-my-diff-experimental`:
 
    ```sh
    PYTHON=$(realpath "$(command -v python3)")

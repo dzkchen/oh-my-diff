@@ -10,6 +10,12 @@ Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 ## Stability
 
 API `1.0.0` is stable.
+
+Terminal configuration targeting (`target`, `reset`, settings `scope`, package `reset` and `save-defaults` actions) and package
+inheritance metadata are experimental additions. Settings and enablement changes are saved for every terminal by default;
+`target: "terminal"` opts in to a change for the current terminal only.
+`PackageState.scope` now includes `managed`: `packages.list` already returned administrator-managed mods, and the type
+was corrected to match.
 [The conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json) marks each
 public operation, event, capability, interceptor, component, render site, view field, classic hook and author command as
 frozen or experimental:
@@ -32,7 +38,7 @@ The registry marks these entries experimental in Mod API `1.0.0`:
 | Capabilities | `approve.override`, `autonomous`, `fs.external`, `history_write`, `mcp`, `peers`, `power`, `unix_sockets` |
 | Events | `config_change`, `contract`, `elicitation_result`, `focus`, `host_operation`, `instructions_loaded`, `migrate`, `mods_changed`, `peer_message`, `peer_receipt`, `prompt`, `prompt_expanded`, `session`, `tool_batch_end`, `tool_exposure`, `turn_queue`, `view`, `worktree` |
 | Interceptors | `agent_offers`, `agent_spawn`, `compaction`, `component_change`, `composer_key`, `elicitation`, `mention`, `peer_receive`, `peer_send`, `turn_stop` |
-| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access`, `workspace.unwatch` |
+| Operations | `agents.list`, `agents.message`, `app.routes`, `builtins.invoke`, `commands.describe`, `config.describe`, `config.set`, `environment.read`, `exec.output_page`, `http.close`, `http.open`, `http.read`, `ledger.settle`, `mcp.connect`, `mcp.disconnect`, `model.fork`, `models.context_window`, `mods.service`, `peers.list`, `peers.send`, `plugins.components`, `power.hold`, `power.release`, `prompts.consent`, `prompts.revoke`, `prompts.status`, `prompts.submit`, `routes.models`, `routes.write`, `sidecars.stop`, `store.export`, `store.list`, `store.reset`, `terminal.blit`, `terminal.image_sample`, `terminal.panes`, `time.sleep`, `tools.invoke`, `tools.list`, `tools.original`, `tools.undefine`, `turns.dequeue`, `turns.queue`, `turns.queued`, `workspace.check_access` |
 | Components | `raster` |
 | Render sites | `composer_hint`, `notice`, `session_mode`, `tool_result`, `turn_duration`, `user_message` |
 | View fields | `background`, `footer`, `foreground`, `header`, `key_contexts`, `panels`, `placeholder`, `surface_styles`, `underlay` |
@@ -56,6 +62,8 @@ These experimental features have no registry entry of their own:
 | `settings_file_v1` | `api.settingsFile` and the settings file |
 | `terminal_focus_v1` | Focus regions, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus` |
 | `terminal_pty_v2` | The terminal pane extension: keys, mouse, cursor, OSC signals, session directories, binary pins and `autofocus` |
+| Plugin components | [The `.codex-plugin/omd.json` mod component descriptor and `omd COMMAND` shell dispatch](plugin-components.md) |
+| `package_contributes_v1` | The manifest's [`contributes`](packaging.md#contributes) declaration |
 
 ### Frozen entries with experimental fields
 
@@ -73,11 +81,15 @@ These frozen entries have experimental fields:
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
 | `operations:agents.spawn` | `model` | none |
 | `operations:events.schedule` | `data` | `timer_data_v1` |
+| `operations:packages.apply` | `enable` | `plugin_components_v1` |
+| `operations:packages.list` | `needs_approval`, `maintainer`, `contributes` | `package_needs_approval_v1`, `package_contributes_v1` |
+| `operations:packages.preview` | `enable` | `plugin_components_v1` |
 | `operations:routes.add` | `model`, `effort` | `routes_add_model_v1` |
 | `operations:routes.list` | `data` | `route_write_v1` |
 | `operations:session.info` | `process_id`, `omd_version` | none |
 | `operations:sidecars.status` | `started_at_ms` | none |
 | `operations:terminal.panel` | `group`, `keywords`, `detail`, `query`, `selected`, `close_args` | `terminal_panel_navigation_v1` |
+| `operations:workspace.unwatch` | `key` | `workspace_watch_key_v1` |
 | `operations:workspace.watch` | `key`, `git` | `workspace_watch_key_v1`, `workspace_watch_git_v1` |
 | `components:code` | `start` | `terminal_code_highlight_v1` |
 | `view_fields:keybindings` | `region`, `help` | `terminal_focus_v1` |
@@ -90,6 +102,17 @@ OMD doesn't provide closure-based client modules, vendor kill switches, raw secr
 clients, rich children inside buttons (a button uses its typed `text`), audio, telemetry and floating panes.
 
 ## Migration notes
+
+These changes ship in OMD 1.6.0.
+
+- Mods run in any session directory, including the home directory and `/`; before, the host stayed off there.
+- Programs and sockets the host runs or passes unsandboxed (`os_access` programs, `exec.run` sockets, managed
+  processes and services, frozen in Mod API `1.0.0`) are refused anywhere the agent can write: the whole Git work tree
+  around the session directory, or the session directory outside one. Before, only the session directory was
+  checked, so a launch from a repository's subfolder allowed programs elsewhere in the work tree. This is a safety
+  fix; a mod that runs such a program needs it installed outside the repository (or outside the session directory).
+- `workspace.*` without `root` fails with `workspace_unavailable` when the session directory is `/`, the home
+  directory or a directory above it and isn't in a Git work tree. Other directories behave as before.
 
 These changes ship in OMD 1.4.0.
 
@@ -128,5 +151,6 @@ These changes ship in OMD 1.3.0.
 
 Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
 Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
-Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
-Package previews report `identity_warning` when the ID is installed in another scope.
+Do not copy old grants to a new digest. Mods with the same ID share storage and the right to use or manage
+credentials owned by that ID. A project copy takes precedence over a user copy. Package previews report
+`identity_warning` when the ID is installed in another scope.

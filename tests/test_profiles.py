@@ -111,12 +111,10 @@ class ProfileModeTests(unittest.TestCase):
                 self.assertFalse((prefix / profiles.UNINSTALL_JOURNAL).exists())
                 self.assertEqual((account / "credentials").read_text(), "keep for retry")
 
-    def test_every_selection_keeps_the_background_server_off(self):
-        for selection in ("platform", "full", "direct"):
-            with self.subTest(selection=selection):
-                record = {"binary": {"installed_path": "/omd/codex"}, "store": "/omd/store", "profile": "full",
-                          "activation": {"selection": selection}}
-                self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
+    def test_the_direct_selection_keeps_the_background_server_off(self):
+        record = {"bin_dir": "/omd/bin", "binary": {"installed_path": "/omd/codex"}, "store": "/omd/store", "profile": "full",
+                  "activation": {"selection": "direct"}}
+        self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
 
     def test_a_route_launch_refreshes_a_catalog_that_lacks_routes_added_in_a_session(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -183,13 +181,129 @@ class ProfileModeTests(unittest.TestCase):
                     (record, ["uninstall", "--keep-broker"], "control uninstall --keep-broker"),
                     (record, ["uninstall", "--purge"], "control uninstall --purge"),
                     (record, ["update"], "tool update /omd/store"),
-                    (record, ["help", "--all"], "tool --help")):
+                    (record, ["help", "--all"], "tool --help"),
+                    (record, ["doctor", "--json"], "control doctor --json")):
                 with self.subTest(managed="update" in current, argv=argv):
                     launcher = base / "omd"
                     launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
                     run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True,
                                          env={**os.environ, "OMD_MOD_STORE": ""})
                     self.assertEqual(run.stdout.strip(), expected)
+
+    def test_omd_help_lists_doctor_and_lists_omd_mini_only_once_it_is_installed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = Path(temporary)
+            launcher = store / "omd"
+            launcher.write_text(profiles.omd_text({"store": str(store), "profile": "full"}, "tool", store / "control"))
+            text = lambda: subprocess.run(["sh", launcher], capture_output=True, text=True, check=True).stdout
+            (store / "mods.json").write_text(json.dumps({"mods": [{"path": str(store / "sources/omd_logo")}]}))
+            self.assertIn("omd doctor [--json]", text())
+            self.assertNotIn("omd mini", text())
+            (store / "mods.json").write_text(json.dumps({"mods": [{"path": str(store / "sources/omd_mini")}]}))
+            self.assertIn("omd mini", text())
+            self.assertTrue(text().rstrip().endswith("Docs: https://github.com/dzkchen/oh-my-diff"))
+
+    def test_reconcile_restores_a_reset_store_from_the_saved_choices_or_the_profile_defaults(self):
+        for saved in (True, False):
+            with self.subTest(saved=saved), tempfile.TemporaryDirectory() as temporary:
+                store = Path(temporary).resolve()
+                sources = store / "sources"
+                record = {"default_active": ["omd_mods", "omd_statusline", "omd_update"],
+                          "packages": {name: {"sha256": name, "capabilities": ["commands"]}
+                                       for name in ("omd_logo", "omd_mods", "omd_statusline", "omd_update", "omd_usage")}}
+                (store / "mods.json.corrupt").write_text(json.dumps({"mods": [
+                    {"path": str(sources / "omd_statusline"), "enabled": False, "settings": {"position": "above"}},
+                    {"path": str(sources / "omd_usage"), "enabled": True},
+                    {"path": "/elsewhere/my_mod", "enabled": True}]}) if saved else "{broken")
+                calls = []
+
+                def invoke(_manager, command, _store, *arguments):
+                    calls.append((command, *(Path(item).name if command != "trust-all" else len(json.loads(item)) for item in arguments)))
+                    return {"selections": []} if command == "selection-status" else {}
+
+                with patch.object(profiles, "invoke", side_effect=invoke):
+                    result = profiles.restore_selection("manager", store, record)
+                enabled = sorted(call[1] for call in calls if call[0] == "enable")
+                if saved:
+                    self.assertEqual(enabled, ["omd_logo", "omd_mods", "omd_update", "omd_usage"])
+                    self.assertNotIn("omd_statusline", enabled)
+                    self.assertIn(("settings", "omd_statusline", '{"position": "above"}'), calls)
+                    self.assertEqual(result["not_restored"], ["/elsewhere/my_mod"])
+                else:
+                    self.assertEqual(enabled, ["omd_logo", "omd_mods", "omd_statusline", "omd_update"])
+                    self.assertEqual(result["selections_from"], "profile defaults")
+                self.assertEqual(calls[1], ("trust-all", 5))
+                self.assertEqual(sorted(call[1] for call in calls if call[0] == "require"), list(profiles.PLATFORM_PACKAGES))
+                self.assertEqual(calls[-1][0], "reload")
+                self.assertFalse((store / "mods.json.corrupt").exists())
+                self.assertTrue((store / "mods.json.restored").exists())
+
+    def test_the_launcher_restores_mods_after_a_reset_before_starting_codex(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            (base / "bin").mkdir()
+            (base / "bin/omd-package").write_text(f"#!/bin/sh\necho \"$@\" > {base / 'ran'}\n")
+            (base / "bin/omd-package").chmod(0o755)
+            record = {"bin_dir": str(base / "bin"), "binary": {"installed_path": "/usr/bin/true"}, "store": str(base / "store"),
+                      "profile": "full", "activation": {"selection": "full"}}
+            launcher = base / "codex"
+            launcher.write_text(profiles.selected_text(record))
+            subprocess.run(["sh", launcher], check=True, capture_output=True)
+            self.assertFalse((base / "ran").exists())
+            (base / "store").mkdir()
+            (base / "store/mods.json.corrupt").write_text("{")
+            result = subprocess.run(["sh", launcher], check=True, capture_output=True, text=True)
+            self.assertEqual((base / "ran").read_text(), "reconcile --summary\n")
+            self.assertEqual(result.stderr, "")
+
+    def test_an_update_names_retired_mods_new_defaults_left_off_and_added_capabilities(self):
+        store = Path("/store")
+        previous = {"retired": ["omd_old"], "default_active": ["omd_logo"],
+                    "packages": {"omd_logo": {"capabilities": ["terminal"]}, "omd_git": {"capabilities": ["commands"]}}}
+        record = {"retired": ["omd_gone", "omd_old"], "default_active": ["omd_logo", "omd_new", "omd_on"],
+                  "packages": {"omd_logo": {"capabilities": ["terminal"]}, "omd_git": {"capabilities": ["commands", "exec"]},
+                               "omd_new": {"capabilities": ["exec"]}, "omd_on": {"capabilities": []}}}
+        selections = {"selections": [{"path": "/store/sources/omd_on", "selected": True}]}
+        with patch.object(profiles, "invoke", return_value=selections):
+            self.assertEqual(profiles.update_changes("manager", store, previous, record),
+                             {"retired": ["omd_gone"], "left_off": ["omd_new"], "capabilities": {"omd_git": ["exec"]}})
+
+    def test_activate_names_the_install_command_for_a_profile_that_is_not_installed(self):
+        with patch.object(profiles, "load", return_value={"profile": "platform"}), patch.object(profiles, "check"), \
+                self.assertRaisesRegex(ValueError, "^OMD\\+ isn't installed here; .*install.sh \\| sh -s -- --profile full$"):
+            profiles.activate(Path("/prefix"), Path("/bin"), "full")
+
+    def test_doctor_names_one_fix_per_failure_and_adds_codex_doctor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            store, root = base / "store", base / "root"
+            (store / "sources/omd_update").mkdir(parents=True)
+            shutil.copy2(ROOT / "mods/first-party/omd_update/mod.json", store / "sources/omd_update/mod.json")
+            (store / "mods.json").write_text(json.dumps({"mods": [{"path": str(store / "sources/omd_update"), "enabled": True,
+                                                                   "settings": {"checks": "off"}}]}))
+            (root / "update").mkdir(parents=True)
+            (root / "update/state.json").write_text(json.dumps({"blocked": {"version": "2.0.0", "reasons": ["Codex 0.170.x is required"]}}))
+            (root / "current").mkdir()
+            (root / "current/receipt.json").write_text(json.dumps({"bin_dir": str(base / "links")}))
+            record = {"store": str(store), "profile": "full", "version": "1.5.0", "activation": {"selection": "full"},
+                      "manager": {"installed_path": "m"}, "runner": {"installed_path": "/usr/bin/true"}, "update": {"root": str(root)}}
+            host = {"mods": [{"id": "omd_logo", "error": None}, {"id": "omd_bad", "error": "activation_failed"}], "rejected": []}
+            with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
+                    patch.object(profiles, "invoke", return_value=host), patch.object(profiles.shutil, "which", return_value="/usr/local/bin/codex"), \
+                    patch.object(profiles.authority_broker, "status", return_value={"deployed": False, "loaded": False, "authority": "unprotected (same-user)"}):
+                checks = {item["check"]: item for item in profiles.doctor_checks(base, base / "bin")}
+                self.assertEqual({name: item["status"] for name, item in checks.items()},
+                                 {"path": "fail", "launcher": "ok", "store": "fail", "runner": "ok", "broker": "ok", "updates": "warn"})
+                self.assertIn(f'export PATH="{base / "links"}:$PATH"', checks["path"]["fix"])
+                self.assertEqual(checks["store"]["detail"], "omd_bad: activation_failed")
+                self.assertTrue(checks["updates"]["detail"].startswith("stable channel, update checks off; 2.0.0 can't be installed"))
+                upstream = subprocess.CompletedProcess([], 0, stdout='{"checks": []}', stderr="")
+                printed = []
+                with patch.object(profiles.subprocess, "run", return_value=upstream) as ran, patch("builtins.print", side_effect=printed.append):
+                    self.assertEqual(profiles.doctor(base, base / "bin", ["--summary"], True), 1)
+                self.assertEqual(ran.call_args_list[-1].args[0], [base / "bin/codex", "doctor", "--summary", "--json"])
+                report = json.loads(printed[0])
+                self.assertEqual((report["omd"]["ok"], report["codex"]), (False, {"checks": []}))
 
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):
@@ -378,7 +492,7 @@ class ProfileModeTests(unittest.TestCase):
             codex = base / "fake-codex"
             codex.write_text(f'#!/bin/sh\necho $$ > {base}/pid\nls {base}/root/sessions > {base}/seen\nexit 7\n')
             codex.chmod(0o755)
-            record = {"binary": {"installed_path": str(codex)}, "store": str(base / "store"), "profile": "platform",
+            record = {"bin_dir": "/omd/bin", "binary": {"installed_path": str(codex)}, "store": str(base / "store"), "profile": "platform",
                       "activation": {"selection": "platform"},
                       "update": {"root": str(base / "root"), "installer": str(base / "install.sh"), "python": "python3"}}
             launcher = base / "launcher"
@@ -400,7 +514,7 @@ class ProfileModeTests(unittest.TestCase):
             for path, text in ((base / "root/current/bin/codex", "#!/bin/sh\n"), (base / "install.sh", f'echo "$@" >> {base}/calls\n')):
                 path.write_text(text)
             (base / "root/current/bin/codex").chmod(0o755)
-            record = {"binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
+            record = {"bin_dir": "/omd/bin", "binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
                       "profile": "platform", "activation": {"selection": "platform"},
                       "update": {"root": str(base / "root"), "installer": str(base / "install.sh"), "python": "python3"}}
             launcher = base / "launcher"
@@ -443,7 +557,7 @@ class ProfileModeTests(unittest.TestCase):
             (base / "root/current/bin/codex").write_text("#!/bin/sh\n")
             (base / "root/current/bin/codex").chmod(0o755)
             (base / "install.sh").write_text(f'echo "$@" >> {base}/calls\n')
-            record = {"binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
+            record = {"bin_dir": "/omd/bin", "binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
                       "profile": "platform", "activation": {"selection": "platform"},
                       "update": {"root": str(base / "root"), "installer": str(base / "install.sh"), "python": "python3"}}
             launcher = base / "launcher"
@@ -470,7 +584,7 @@ class ProfileModeTests(unittest.TestCase):
             for path, text in ((base / "root/current/bin/codex", "#!/bin/sh\n"), (base / "install.sh", f'echo "$@" >> {base}/calls\n')):
                 path.write_text(text)
             (base / "root/current/bin/codex").chmod(0o755)
-            record = {"binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
+            record = {"bin_dir": "/omd/bin", "binary": {"installed_path": str(base / "root/current/bin/codex")}, "store": str(base / "store"),
                       "profile": "platform", "activation": {"selection": "platform"},
                       "update": {"root": str(base / "root"), "installer": str(base / "install.sh"), "python": "python3"}}
             launcher = base / "launcher"
@@ -490,6 +604,97 @@ class ProfileModeTests(unittest.TestCase):
             os.utime(base / "root/update/ready.json", (old - 60, old - 60))
             subprocess.run(["sh", launcher], check=True)
             self.assertEqual(calls(), 1)
+
+    def test_author_launcher_explains_a_missing_node(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            launcher = Path(temporary) / "omd-mod-author"
+            launcher.write_text(profiles.author_launcher_text(None, Path(temporary) / "cli.mjs"))
+            result = subprocess.run(["/bin/sh", launcher], capture_output=True, text=True, env={"PATH": temporary})
+            self.assertEqual(result.returncode, 127)
+            self.assertEqual(result.stderr, "omd-mod-author needs Node.js 24.18 or a later 24.x on PATH\n")
+        self.assertTrue(profiles.author_launcher_text("/opt/node", "/cli.mjs").endswith('exec /opt/node /cli.mjs "$@"\n'))
+
+    def test_plugins_creates_codex_home_before_the_first_codex_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, home = base / "root/releases/generation/prefix", base / "codex"
+            marketplace = prefix / "bundles/oh-my-diff"
+            (marketplace / ".agents/plugins").mkdir(parents=True)
+            (marketplace / ".agents/plugins/marketplace.json").write_text('{"name": "oh-my-diff"}')
+            record = {"plugin_bundle": {"marketplace": str(marketplace), "plugins": ["omd-anchored-edit"]},
+                      "shared_state": {"codex_home": str(home)}}
+
+            def run(arguments, **kwargs):
+                self.assertTrue(home.is_dir())
+                (home / "config.toml").write_text(f'[marketplaces.oh-my-diff]\nsource = "{arguments[-1]}"\n')
+
+            with (patch.object(profiles, "load", return_value=record),
+                  patch.object(profiles, "check", return_value=(base / "codex-bin", None)),
+                  patch.object(profiles.support, "run", side_effect=run)):
+                result = profiles.register_plugins(prefix, base / "bin")
+            self.assertEqual(result["plugins"], ["omd-anchored-edit"])
+            self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+
+    def test_plugin_mod_reviews_the_added_plugins_component_through_omd_and_grants_nothing_itself(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            marketplace, home = base / "bundle", base / "codex"
+            (marketplace / ".agents/plugins").mkdir(parents=True)
+            (marketplace / ".agents/plugins/marketplace.json").write_text('{"name": "oh-my-diff"}')
+            component = home / "plugins/cache/oh-my-diff/omd-anchored-edit/1.2.0/mod"
+            component.mkdir(parents=True)
+            (component / "mod.json").write_text('{"id": "omd_anchored_edit"}')
+            record = {"plugin_bundle": {"marketplace": str(marketplace)}, "shared_state": {"codex_home": str(home)},
+                      "tools": {"omd": {"installed_path": "/omd"}}, "store": "/store"}
+            listed = {"installed": [{"pluginId": "other@oh-my-diff", "version": "9"},
+                                    {"pluginId": "omd-anchored-edit@oh-my-diff", "version": "1.2.0"}]}
+            manager, ran = [], []
+
+            def run(arguments, **kwargs):
+                ran.append((arguments, kwargs))
+                if arguments[1] == "install" and declined:
+                    raise RuntimeError("command failed (2)")
+
+            for declined in (False, True):
+                manager.clear()
+                ran.clear()
+                with (patch.object(profiles, "load", return_value=record),
+                      patch.object(profiles, "check", return_value=("/codex", "/omd-mod")),
+                      patch.object(profiles.support, "output", return_value=json.dumps(listed)) as output,
+                      patch.object(profiles, "invoke", side_effect=lambda *arguments: manager.append(arguments) or {"component": str(component)}),
+                      patch.object(profiles.support, "run", side_effect=run)):
+                    if declined:
+                        with self.assertRaisesRegex(RuntimeError, "failed"):
+                            profiles.plugin_mod(Path("/prefix"), Path("/bin"), "enable", "omd-anchored-edit")
+                    else:
+                        profiles.plugin_mod(Path("/prefix"), Path("/bin"), "enable", "omd-anchored-edit")
+                self.assertEqual(output.call_args.args[0], ["/codex", "plugin", "list", "--json", "--marketplace", "oh-my-diff"])
+                self.assertEqual(output.call_args.kwargs["env"]["CODEX_HOME"], str(home))
+                self.assertEqual(manager, [("/omd-mod", "plugin-component", component.parent)])
+                expected = [["/omd", "install", str(component), "--store", "/store"]]
+                if not declined:
+                    expected.append(["/omd", "mods", "enable", "omd_anchored_edit", "--store", "/store"])
+                self.assertEqual([arguments for arguments, _ in ran], expected)
+                self.assertTrue(all(kwargs == {"capture": False} for _, kwargs in ran))
+            with (patch.object(profiles, "load", return_value=record), patch.object(profiles, "check", return_value=("/codex", "/omd-mod")),
+                  patch.object(profiles.support, "output", return_value='{"installed": []}')):
+                with self.assertRaisesRegex(ValueError, "codex plugin add omd-anchored-edit@oh-my-diff-experimental"):
+                    profiles.plugin_mod(Path("/prefix"), Path("/bin"), "enable", "omd-anchored-edit@oh-my-diff-experimental")
+
+    def test_status_summary_shows_off_and_quarantined_profile_mods(self):
+        package = {"error": None, "active": False, "enabled_in_store": False, "installed": True, "quarantined": None}
+        result = {"product": "p", "profile_label": "OMD+", "activation": "full", "mod_api": "1", "store": "/store",
+                  "packages": [{**package, "id": "omd_logo"}, {**package, "id": "omd_theme", "quarantined": "testing"},
+                               {**package, "id": "omd_mini", "installed": False}]}
+        self.assertEqual(profiles.status_summary(result).splitlines()[2:5],
+                         ["  omd_logo: off", "  omd_theme: quarantined: testing", "  omd_mini: missing"])
+
+    def test_status_marks_only_the_installed_version_quarantined(self):
+        lock = {"packages": {"omd_theme": {"version": "1.1.1", "integrity": "new"}, "omd_logo": {"version": "1.0.0", "integrity": "x"}},
+                "blocked": [{"id": "omd_theme", "version": "1.1.0", "integrity": "old", "reason": "bad"},
+                            {"id": "omd_logo", "version": "0.9.0", "integrity": "x", "reason": "same bytes"},
+                            {"id": "omd_mini", "version": "1.0.0", "integrity": "y", "reason": "absent"}]}
+        self.assertEqual(profiles.quarantined(lock), {"omd_logo": "same bytes"})
 
     def test_uninstall_removes_plugins_added_from_this_installation(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -646,7 +851,8 @@ enabled = true
             (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": {"catalogued": [
                 {"version": "1.0.0", "integrity": "sha-old", "source": {"kind": "local", "path": "old"}}]}}))
             record = {"schema": profiles.SCHEMA, "product": profiles.PRODUCT, "prefix": str(prefix), "store": str(store),
-                      "management": {"files": {}}, "packages": {"one": {"sha256": "sha-old"}, "two": {"sha256": "sha-same"}},
+                      "management": {"files": {}}, "packages": {"one": {"sha256": "sha-old", "capabilities": ["old"]},
+                                                                  "two": {"sha256": "sha-same", "capabilities": ["same"]}},
                       "sources": {identifier: package["files"] for identifier, package in lock["packages"].items()}}
             profiles.write(prefix, record)
             selection = {"path": str(store / "sources/one"), "sha256": "sha-old", "selected": True}
@@ -677,7 +883,7 @@ enabled = true
                     profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True)
                 (bundle / "sources/one/index.ts").write_text("new")
                 before = state()
-                self.assertEqual(profiles.update_mods(prefix, base / "bin", bundle, 1), {"updated": ["one"]})
+                self.assertEqual(profiles.update_mods(prefix, base / "bin", bundle, 1), {"updated": ["one"], "capabilities": {"one": ["new"]}})
                 self.assertEqual(state(), ({"one": "new", "two": "same", "catalogued": "new"}, "new",
                                            {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new"}, "sha-new", {"serial": 1}, True))
                 index = json.loads((store / "package-index.json").read_text())["packages"]["catalogued"][0]
@@ -685,7 +891,7 @@ enabled = true
                 self.assertEqual(json.loads((prefix / "install.json").read_text())["management"]["files"]["runtime/mods.lock.json"],
                                  profiles.support.digest(prefix / "management/runtime/mods.lock.json"))
                 self.assertFalse((prefix / "sources/added").exists())
-                self.assertEqual(profiles.rollback_mods(prefix, base / "bin"), {"updated": ["one"]})
+                self.assertEqual(profiles.rollback_mods(prefix, base / "bin"), {"updated": ["one"], "capabilities": {"one": ["old"]}})
                 self.assertEqual(state(), before)
                 self.assertFalse((prefix / "mods-previous").exists())
                 with self.assertRaisesRegex(ValueError, "no first-party mod update to roll back"):
@@ -734,6 +940,76 @@ enabled = true
         with patch.object(profiles, "invoke", side_effect=invoke):
             profiles.keep_bundled_copies("manager", store)
         self.assertEqual(commands, [("selection-status",), ("package-disable", "omd_advisor")])
+
+    def test_an_upgrade_turns_off_only_profile_copies_of_newly_experimental_mods(self):
+        store = Path("/store")
+        selections = [
+            {"id": "omd_inspector", "path": "/store/sources/omd_inspector", "selected": True},
+            {"id": "omd_advisor", "path": "/store/sources/omd_advisor", "selected": True},
+            {"id": "omd_btw", "path": "/store/package-cache/omd_btw/old", "selected": True},
+            {"id": "omd_continue", "path": "/store/sources/omd_continue", "selected": False},
+            {"id": "omd_logo", "path": "/store/sources/omd_logo", "selected": True}]
+        commands = []
+
+        def invoke(_manager, command, _store, *arguments):
+            commands.append((command, *arguments))
+            return {"selections": selections} if command == "selection-status" else {}
+
+        with patch.object(profiles, "invoke", side_effect=invoke):
+            retired = profiles.retire_packages("manager", store, "full", {"retired": ["omd_advisor"]})
+            self.assertEqual(commands, [("selection-status",), ("disable", "/store/sources/omd_inspector")])
+            self.assertIn("omd_inspector", retired)
+            self.assertNotIn("omd_logo", retired)
+            commands.clear()
+            self.assertEqual(profiles.retire_packages("manager", store, "core", {"retired": ["omd_advisor"]}), {"omd_advisor"})
+            self.assertEqual(profiles.retire_packages("manager", store, "core", None), retired)
+            profiles.retire_packages("manager", store, "full", {"retired": sorted(retired)})
+            profiles.retire_packages("manager", store, "full", None)
+        self.assertEqual(commands, [])
+
+    def test_activation_and_mod_selection_report_in_one_line(self):
+        packages = [{"id": "omd_logo", "active": True}, {"id": "omd_theme", "active": False}]
+        self.assertEqual(profiles.activation_summary({"activation": "full", "profile": "full", "profile_label": "OMD+",
+                                                      "packages": packages}), "OMD+ is active with 1 of 2 mods on.")
+        self.assertIn("omd-package activate full", profiles.activation_summary(
+            {"activation": "direct", "profile": "full", "profile_label": "OMD+", "packages": packages}))
+        record = {"packages": {"omd_theme": {}}, "store": "/store"}
+        moved = {"selections": [{"id": "omd_theme", "path": "/store/package-cache/omd_theme/abc", "selected": True}]}
+        with patch.object(profiles, "load", return_value=record), \
+                patch.object(profiles, "check", return_value=(None, "manager")), \
+                patch.object(profiles, "invoke", return_value=moved):
+            with self.assertRaisesRegex(ValueError, "use omd mods enable omd_theme$"):
+                profiles.select_mod(Path("/prefix"), Path("/bin"), "omd_theme", True)
+
+    def test_an_upgrade_retrusts_store_copies_of_mods_outside_the_profile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            store, origin = base / "store", base / "origin"
+            for identifier, text in (("omd_inspector", "new"), ("omd_logo", "logo"), ("omd_btw", "btw")):
+                (origin / identifier).mkdir(parents=True)
+                (origin / identifier / "index.ts").write_text(text)
+            (store / "sources/omd_inspector").mkdir(parents=True)
+            (store / "sources/omd_inspector/index.ts").write_text("old")
+            packages = {identifier: {"package_sha256": identifier * 2, "capabilities": ["terminal"],
+                                     "files": {"index.ts": profiles.support.digest(origin / identifier / "index.ts")}}
+                        for identifier in ("omd_inspector", "omd_logo", "omd_btw")}
+            selections = [{"id": "omd_inspector", "path": str(store / "sources/omd_inspector"),
+                           "selected": False, "sha256": "stale"}]
+            commands = []
+
+            def invoke(_manager, command, _store, *arguments):
+                commands.append((command, *arguments))
+                return {"selections": selections} if command == "selection-status" else {}
+
+            with patch.object(profiles, "invoke", side_effect=invoke):
+                changed = profiles.refresh_kept_copies("manager", store, origin, packages, {"omd_logo": {}})
+            self.assertEqual(changed, ["omd_inspector"])
+            self.assertEqual((store / "sources/omd_inspector/index.ts").read_text(), "new")
+            self.assertFalse((store / "sources/omd_btw").exists())
+            trusted = [json.loads(arguments[0]) for command, *arguments in commands if command == "trust-all"]
+            self.assertEqual(trusted, [[{"path": str(store / "sources/omd_inspector"), "sha256": "omd_inspector" * 2,
+                                         "capabilities": ["terminal"]}]])
+            self.assertNotIn("enable", [command for command, *_ in commands])
 
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
@@ -832,7 +1108,10 @@ enabled = true
                 code = profiles.mini(Path("/prefix"), base, ["--model", "m", "-s=danger-full-access", "-C", "/repo", "-c", "a=1",
                                                              "-i", "x.png", "--yolo", "--no-alt-screen", "fix it"])
                 selections["selections"][0]["effective"] = False
-                with self.assertRaisesRegex(ValueError, "needs its mod enabled"):
+                with self.assertRaisesRegex(ValueError, "needs its mod enabled: omd mods enable omd_mini$"):
+                    profiles.mini(Path("/prefix"), base, [])
+                selections["selections"] = []
+                with self.assertRaisesRegex(ValueError, "omd install omd_mini, then omd mods enable omd_mini$"):
                     profiles.mini(Path("/prefix"), base, [])
             runs = [line.split("|") for line in log.read_text().splitlines()]
             self.assertEqual(code, 3)

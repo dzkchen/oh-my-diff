@@ -1,11 +1,14 @@
 {
   "schema": 1,
   "id": "omd_checkpoint",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "checkout",
   "description": "Snapshots files before and after each turn in hidden Git refs; /undo puts back what the last turn changed and /redo brings it back",
+  "contributes": {
+    "commands": [{ "name": "undo", "description": "Put back the files the last turn changed in this repository" }, { "name": "redo", "description": "Bring back the changes /undo removed" }]
+  },
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_checkpoint"},
   "capabilities": ["commands", "lifecycle", "inventory", "store", "exec", "os", "fs.read", "fs.write"],

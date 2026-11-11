@@ -116,15 +116,11 @@ pub fn routes() -> Value {
     )
 }
 
-pub fn unscoped_directory(directory: &Path) -> bool {
-    directory.parent().is_none()
-        || std::env::var_os("HOME")
-            .and_then(|home| Path::new(&home).canonicalize().ok())
-            .is_some_and(|home| home == directory)
-}
-
 pub fn session_roots(repository: &Path) -> Vec<PathBuf> {
     let mut roots = vec![repository.to_path_buf()];
+    if crate::git_work_tree(repository).is_none() {
+        return roots;
+    }
     let output = std::process::Command::new("git")
         .args([
             "-c",
@@ -188,7 +184,7 @@ pub fn response_allowed(method: &str, result: &Value) -> Result<(), String> {
                 && object
                     .get("permissions")
                     .and_then(Value::as_object)
-                    .is_some_and(|value| value.is_empty())
+                    .is_some_and(serde_json::Map::is_empty)
             {
                 Ok(())
             } else {

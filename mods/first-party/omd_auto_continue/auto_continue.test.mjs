@@ -41,6 +41,16 @@ test('a request hops to the channel, arms the deadline and is answered without a
   assert.deepEqual(fired.calls.at(-1), ['events.schedule', { key: 'deadline', delay_ms: 30_000 }]);
   const notice = fired.calls.find(([operation]) => operation === 'terminal.notice')[1];
   assert.equal(notice.audience, 'user');
+  assert.equal(fired.calls.some(([operation, args]) => operation === 'terminal.notice' && args.audience === 'model'), false);
+});
+
+test('each declined approval queues one model notice saying it was a timeout', () => {
+  const pending = { a: { request_id: 'a', kind: 'approval', questions: [], deadline: NOW }, b: { request_id: 'b', kind: 'approval', questions: [], deadline: NOW }, c: { request_id: 'c', kind: 'permission', questions: [], deadline: NOW } };
+  const fired = run('timer', { key: 'deadline' }, { pending });
+  const model = fired.calls.filter(([operation, args]) => operation === 'terminal.notice' && args.audience === 'model').map(([, args]) => args);
+  assert.equal(model.length, 2);
+  assert.match(model[0].text, /timeout, not a refusal\. Do not retry actions that need approval/);
+  assert.ok(Buffer.byteLength(model[0].text) <= 512);
 });
 
 test('delivery delays and duplicate notifications preserve the original deadline and human answers win', () => {
@@ -75,3 +85,20 @@ test('timeouts deny authority, retry only transient refusals and clear stale or 
   }
 });
 
+
+test('the first fire ever adds a one-time how-to-turn-it-off line, kept in the user-scope store', () => {
+  const pending = { a: { request_id: 'a', kind: 'approval', questions: [], deadline: NOW }, b: { request_id: 'b', kind: 'question', questions: ['q'], deadline: NOW } };
+  const notices = fired => fired.calls.filter(([operation, args]) => operation === 'terminal.notice' && args.audience === 'user').map(([, args]) => args.text);
+  const first = run('timer', { key: 'deadline' }, { pending });
+  const put = first.calls.find(([operation]) => operation === 'store.put');
+  assert.deepEqual(put[1], { key: 'first_notice', value: true, expected_revision: null, scope: 'user' });
+  assert.equal(first.calls.filter(([operation]) => operation === 'store.put').length, 2);
+  const taken = call => call.operation === 'store.put' && taken.seen++ ? new Error('store_revision_conflict') : {};
+  taken.seen = 0;
+  const [once, again] = notices(run('timer', { key: 'deadline' }, { pending }, { answer: taken }));
+  assert.match(once, /open \/mods and disable it/);
+  assert.ok(Buffer.byteLength(once) <= 512);
+  assert.doesNotMatch(again, /\/mods/);
+  const later = run('timer', { key: 'deadline' }, { pending }, { answer: call => call.operation === 'store.put' ? new Error('store_revision_conflict') : {} });
+  assert.deepEqual(notices(later).filter(text => /\/mods/.test(text)), []);
+});

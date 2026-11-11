@@ -262,6 +262,37 @@ test('agent commits stay, a later session can undo the checkout\'s last turn, an
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('threads and previews reuse one snapshot index, and a locked one moves a snapshot to the next', () => {
+  const root = repo();
+  try {
+    const s = session(root);
+    s.turn('t-1', agent(root));
+    s.box.world.thread = 't2';
+    s.turn('t-2', () => write(root, 'c.txt', 'three\n'));
+    s.command('undo', 'show');
+    assert.deepEqual(readdirSync(join(root, '.git')).filter(name => name.endsWith('.index')), ['omd-checkpoint-0.index']);
+    assert.match(s.command('undo'), /Restored 1 file|Deleted 1 file/);
+    writeFileSync(join(root, '.git/omd-checkpoint-0.index.lock'), '');
+    s.turn('t-3', () => write(root, 'd.txt', 'four\n'));
+    assert.deepEqual(readdirSync(join(root, '.git')).filter(name => name.endsWith('.index')), ['omd-checkpoint-0.index', 'omd-checkpoint-1.index']);
+    assert.equal(s.box.state.error, null);
+    assert.equal(s.box.state.entries.at(-1).turn, 't-3');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the first turn removes snapshot indexes left by earlier versions and nothing else', () => {
+  const root = repo();
+  try {
+    const stale = ['omd-checkpoint.index', 'omd-checkpoint-t1.index', 'omd-checkpoint-t1-preview.index'];
+    for (const name of [...stale, 'omd-checkpoint-notes.txt']) writeFileSync(join(root, '.git', name), '');
+    const s = session(root);
+    s.turn('t-1', agent(root));
+    assert.deepEqual(readdirSync(join(root, '.git')).filter(name => name.startsWith('omd-checkpoint')).sort(), ['omd-checkpoint-0.index', 'omd-checkpoint-notes.txt']);
+    assert.match(sh(root, 'status', '--short'), /a\.txt/);
+    assert.equal(s.box.state.tidied, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('outside a Git repository or without write access it explains itself and changes nothing', () => {
   const plain = realpathSync(mkdtempSync(join(tmpdir(), 'omd-checkpoint-plain-')));
   const root = repo();
@@ -349,4 +380,53 @@ test('a turn still marked running after three hours no longer blocks undo, and f
     s.box.state.pending = { live: { turn: 'y', before: s.box.state.entries[0].before, at: Date.now() } };
     assert.match(s.command('redo'), /A turn is running/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a forced undo that fails halfway and is retried still lets /redo bring back edits made after the turn', () => {
+  const root = repo();
+  try {
+    const s = session(root);
+    s.turn('t-1', agent(root));
+    write(root, 'new.txt', 'I kept working on it\n');
+    s.box.world.failRestore = true;
+    assert.match(s.command('undo', 'force'), /^Checkpoints are unavailable here: simulated failure/);
+    assert.equal(text(root, 'new.txt'), null);
+    assert.match(s.command('undo', 'force'), /^Undid/);
+    assert.match(s.command('redo'), /^Redid/);
+    assert.deepEqual([text(root, 'new.txt'), text(root, 'a.txt')], ['I kept working on it\n', 'two\n']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a file made between a failed undo and its retry survives /redo, and checkpoint refs outside any checkout are removed', () => {
+  const root = repo();
+  try {
+    const s = session(root);
+    s.turn('t-1', agent(root));
+    s.box.world.failRestore = true;
+    assert.match(s.command('undo', 'force'), /simulated failure/);
+    write(root, 'later.txt', 'made after the failure\n');
+    sh(root, 'update-ref', 'refs/omd/checkpoints/' + s.box.state.entries[0].before, s.box.state.entries[0].before);
+    assert.match(s.command('undo', 'force'), /^Undid/);
+    assert.match(s.command('redo'), /^Redid/);
+    assert.equal(text(root, 'later.txt'), 'made after the failure\n');
+    const refs = sh(root, 'for-each-ref', '--format=%(refname)', 'refs/omd/checkpoints/').trim().split('\n');
+    assert.ok(refs.every(ref => ref.slice('refs/omd/checkpoints/'.length).includes('/')), refs.join(' '));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a turn in a linked worktree keeps the refs protecting another checkout\'s checkpoints', () => {
+  const root = repo();
+  const linked = `${root}-linked`;
+  try {
+    sh(root, 'worktree', 'add', '-q', '--detach', linked);
+    const a = session(root);
+    a.turn('t-a', () => write(root, 'a.txt', 'from a\n'));
+    const b = session(linked);
+    b.turn('t-b', () => write(linked, 'b.txt', 'from b\n'));
+    const refs = new Set(sh(root, 'for-each-ref', '--format=%(refname)', 'refs/omd/checkpoints/').trim().split('\n').map(ref => ref.split('/').at(-1)));
+    for (const entry of [...a.box.state.entries, ...b.box.state.entries]) for (const commit of [entry.before, entry.after]) assert.ok(refs.has(commit), commit);
+  } finally {
+    rmSync(linked, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });

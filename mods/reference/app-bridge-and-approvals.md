@@ -111,7 +111,7 @@ whole, and check every leaf of a table value as its own key.
 - every line that looks like a credential (bearer tokens, key prefixes, private keys, user information in URLs; the
   other lines of multi-line text stay).
 
-They also reduce an MCP server `url` or provider `base_url` to scheme, host and port: user information becomes
+`config/read` also reduces an MCP server `url` or provider `base_url` to scheme, host and port: user information becomes
 `<redacted>@`, and anything after the host becomes `/<redacted>`. This applies in the effective config and in each
 layer. `hooks/list` applies the same line rule to hook `command` strings.
 
@@ -174,6 +174,12 @@ An approve outside the grant, an expired grant, an error, a timeout or an invali
 - A command that the user's own execpolicy rules forbid reaches the middleware with `host_decision: 'forbidden'`.
   Only a mod with `approve.override` (experimental) can approve it; anything else keeps it forbidden.
 - Managed requirements and other host denials never reach the middleware.
+- A command that managed requirements mark `prompt-user` always needs a fresh human decision: a mod's `{approve}`
+  counts as `ask`, and `approve.override` can't lift a user-rule `forbidden` on it.
+- An `ask` still runs `PermissionRequest` hooks, whose deny wins; where the session requires automatic review, the
+  forced request goes to the reviewer instead of the user.
+- In `thread/guardianReview`, a mod's deny or `ask` fails the review (`ask` reports that a human must approve); an
+  `{approve}` leaves the assessment to the reviewer.
 - `permissions` requests (`request_permissions`) are not delegable: `approves.kinds` can't list them, so a mod's
   `{approve}` counts as `ask`.
 - An `exec` or `stdin` grant also covers requests of that kind that ask to leave the sandbox or widen it.

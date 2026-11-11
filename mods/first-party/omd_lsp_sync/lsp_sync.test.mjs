@@ -426,14 +426,18 @@ test('LSP an unavailable workspace index resynchronizes open documents and recor
   const unavailable = { repository: host.repository, source: 'rescan', call_id: null, status: 'unavailable', reason, changes: [] };
   const changes = () => host.sent.filter(message => message.method === 'textDocument/didChange').map(message => [message.params.textDocument.uri.split('/').at(-1), message.params.textDocument.version]);
   host.files['a.py'] = 'value = 2\n';
-  const degraded = drive(host, 'workspace_change', unavailable, opened.state).state.servers.python;
+  const recovered = drive(host, 'workspace_change', unavailable, opened.state);
+  const degraded = recovered.state.servers.python;
   assert.deepEqual(changes(), [['a.py', 2]]);
   assert.deepEqual([degraded.running, degraded.status, degraded.reason], [true, 'synced', `degraded: ${reason}`]);
+  assert.equal(degraded.recovery, 'degraded');
+  assert.equal(host.published.at(-1).data.find(server => server.adapter === 'python').recovery, 'degraded');
   assert.deepEqual(Object.fromEntries(Object.entries(degraded.documents).map(([name, entry]) => [name, entry.version])), { 'a.py': 2, 'b.py': 1 });
   host.failSync = true;
   host.files['a.py'] = 'value = 3\n';
-  const failed = drive(host, 'workspace_change', unavailable, opened.state).state.servers.python;
+  const failed = drive(host, 'workspace_change', unavailable, recovered.state).state.servers.python;
   assert.deepEqual([failed.running, failed.status, failed.reason], [false, 'stale', 'synthetic_sync_failure']);
+  assert.equal(failed.recovery, null);
   const empty = drive(createHost({ server: diagnosticServer }), 'workspace_change', unavailable, null).state;
   assert.equal(empty?.servers?.python?.status ?? 'idle', 'idle');
 });
@@ -445,15 +449,23 @@ test('LSP an unavailable event for other causes resyncs neutrally, keeps its rea
   host.files['a.py'] = 'value = 2\n';
   const resynced = drive(host, 'workspace_change', unavailable('workspace_change_batch_limit'), opened.state);
   assert.equal(resynced.state.servers.python.reason, 'resynced: workspace_change_batch_limit');
+  assert.equal(resynced.state.servers.python.recovery, 'resynced');
+  const message = 'Recovered after batch overflow';
+  resynced.state.servers.python.reason = message;
   host.files['a.py'] = 'value = 3\n';
   const fed = drive(host, 'tool_output', output({ input: '*** Update File: a.py' }), resynced.state);
-  assert.equal(fed.state.servers.python.reason, 'resynced: workspace_change_batch_limit');
+  assert.equal(fed.state.servers.python.reason, message);
+  assert.equal(fed.state.servers.python.recovery, 'resynced');
   host.files['b.py'] = 'other = 2\n';
   const turn = drive(host, 'turn_start', null, fed.state);
-  assert.equal(turn.state.servers.python.reason, 'resynced: workspace_change_batch_limit');
+  assert.equal(turn.state.servers.python.reason, message);
+  assert.equal(turn.state.servers.python.recovery, 'resynced');
   host.files['a.py'] = 'value = 4\n';
   const cleared = drive(host, 'workspace_change', change(host, ['a.py']), turn.state);
   assert.deepEqual([cleared.state.servers.python.status, cleared.state.servers.python.reason], ['synced', '']);
+  assert.equal(cleared.state.servers.python.recovery, null);
+  const unrelated = drive(host, 'workspace_change', change(host, ['other.txt']), turn.state).state.servers.python;
+  assert.deepEqual([unrelated.recovery, unrelated.reason], [null, '']);
   const foreign = createHost({ repository: '/other', server: diagnosticServer });
   foreign.store[observed.key] = { revision: 1, value: { repository: '/other' } };
   const bound = drive(foreign, 'workspace_change', unavailable('workspace_change_batch_limit'), opened.state).state.servers.python;
@@ -503,6 +515,29 @@ test('LSP errors trimmed to fit the state limit are reported as existing, not ne
   const next = drive(host, 'tool_output', patch([again]), first.state);
   assert.match(next.value.append, new RegExp(`${again.replace('.', '\\.')}: 50 existing`));
   assert.doesNotMatch(next.value.append, /50 new/);
+});
+
+test('LSP a language without an installed server says so once', () => {
+  const host = createHost({ files: { 'a.py': 'ok = 1\n' } });
+  host.observe();
+  const notices = [];
+  const told = new Set();
+  host.intercept = call => {
+    if (call.operation === 'terminal.notice') { notices.push(call.arguments); return { shown: true }; }
+    if (call.operation === 'store.put' && call.arguments.key.startsWith('lsp.told.')) {
+      if (told.has(call.arguments.key)) throw failure('store_revision_conflict');
+      told.add(call.arguments.key);
+      return { revision: 1 };
+    }
+  };
+  const first = drive(host, 'tool_output', output({ input: '*** Update File: a.py' }));
+  assert.match(first.value.append, /python_server_absent/);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0].text, /No python language server found.*pyright-langserver/);
+  assert.equal(notices[0].placement, 'transcript');
+  drive(host, 'tool_output', output({ input: '*** Update File: a.py' }), first.state);
+  drive(host, 'tool_output', output({ input: '*** Update File: a.py' }), null);
+  assert.equal(notices.length, 1, 'a new thread shares the repository store');
 });
 
 test('LSP an apply_patch that only deletes files starts no server', () => {

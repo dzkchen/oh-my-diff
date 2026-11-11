@@ -38,6 +38,7 @@ function run(event, payload, { state = null, name, world = {} } = {}) {
     if (operation === 'workspace.read') return { files: Object.fromEntries(args.paths.map(path => [path, files[path] === undefined ? null : { text: files[path], sha256: 'x' }])) };
     if (operation === 'workspace.watch') return { watch_id: world.watch ?? 'w1' };
     if (operation === 'mods.service') {
+      if (args.name === 'omd.frecency' && world.rankError) throw new Error(world.rankError);
       if (args.name === 'omd.frecency') return { paths: ['src/lib/util.ts', 'docs/guide.md'] };
       return args.method === 'panels' ? { panels: [{ id: 'files' }] } : { registered: 'files' };
     }
@@ -212,6 +213,11 @@ test('find selects matches, z jumps to a frecency-ranked file and @ mentions it,
   const write = result => result.calls.find(call => call.operation === 'composer.write').arguments.edit.text;
   assert.equal(write(key(prompted.state, '@', { cwd: `${ROOT}/src` })), '@lib/util.ts ');
   assert.equal(write(key(keys(started(), ['l', 'j']), '@')), '@"docs/my notes.md" ');
+});
+
+test('z says why it cannot list files instead of claiming there are none', () => {
+  assert.match(status(key(started(), 'z', { rankError: 'optional_service_unavailable' }).state), /No frequent files yet/);
+  assert.match(status(key(started(), 'z', { rankError: 'service_output_limit' }).state), /omd_frecency could not rank files: service_output_limit/);
 });
 
 test('d moves to the Trash with the first command that runs, D deletes for good, both after a confirm', () => {

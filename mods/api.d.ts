@@ -127,7 +127,7 @@ export type PeerSender = { session: string; repository: string; package: string;
 export type PeerReceipt = { id: string; status: 'queued' | 'delivered' | 'refused' | 'failed' | 'expired' | 'closed'; reason?: string | null; at_ms?: number; by?: { session: string; package: string | null }; correlation?: string | null; to?: PeerAddress };
 export type TurnQueueEntry = { key: string; priority: 'high' | 'normal' | 'low'; event: string; queued_at_ms: number; deadline_ms: number | null };
 export type AgentFailure = { category: 'transport' | 'rate_limit' | 'authorization' | 'sandbox' | 'allowance' | 'invalid_request' | 'unknown'; code: Json; message: string };
-export type AgentResult = { status: 'running' } | { status: 'failed'; error: string; failure?: AgentFailure | null } | { status: 'completed'; text: string; consumed: boolean; evidence: ResourceRef; candidate_sha256?: string; changed_paths?: string[] };
+export type AgentResult = { status: 'running' } | { status: 'failed'; error: string; failure?: AgentFailure | null; delivered?: true | 'pending' } | { status: 'completed'; text: string; consumed: boolean; evidence: ResourceRef; candidate_sha256?: string; changed_paths?: string[]; delivered?: true | 'pending' };
 
 export type Letter = 'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'i'|'j'|'k'|'l'|'m'|'n'|'o'|'p'|'q'|'r'|'s'|'t'|'u'|'v'|'w'|'x'|'y'|'z';
 export type FunctionKey = 'F2'|'F3'|'F4'|'F5'|'F6'|'F7'|'F8'|'F9'|'F10'|'F11'|'F12';
@@ -260,12 +260,12 @@ export type RenderExecCall = { call_id: string; kind: 'exec'; command: string; p
 /** One agent tool row with its arguments, status and output summary. `expanded` is true while the user has the row open or reads the full transcript; return the native row then. */
 export type RenderToolCall = { expanded: boolean } & (RenderExecCall
   | { call_id: string; kind: 'explore'; status: RenderToolStatus; duration_ms: number | null; calls: RenderExecCall[] }
-  | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
-  | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
+  | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: number | null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
+  | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: number | null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
   | { call_id: string; kind: 'agent'; tool: 'spawn_agent' | 'send_input' | 'resume_agent' | 'wait' | 'close_agent' | 'agent'; status: RenderToolStatus; duration_ms: null; agents: string[]; prompt: string }
-  | { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
-  | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null }
-  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: null; path: string | null; prompt: string | null });
+  | { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null; /** The failure's first non-empty line, or null. */ error?: string | null }
+  | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null; /** The failure's first non-empty line, or null. */ error?: string | null }
+  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: number | null; path: string | null; prompt: string | null });
 export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
 export interface RenderProps {
   user_message: { text: string; images: number; spoken: boolean };
@@ -289,6 +289,7 @@ export type RenderEvent<C extends RenderComponent = RenderComponent> = C extends
 } : never;
 export type RenderTree = { tree: TerminalComponent[] };
 export type ComponentKey = { kind: 'key'; key: string | null; text: string | null };
+/** Component-relative signed 32-bit coordinates; captured drag and release positions may be negative. */
 export type ComponentPointer = { kind: 'pointer'; column: number; row: number; half?: 0 | 1 | null;
   action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
 /** The region a component module draws: its width in cells, its height in rows (the node's `height`, 0 when it has none), the props of its `module` node, and `post`, which hands the mod's `component_post` hooks at most one value per frame. */
@@ -357,9 +358,14 @@ export type TurnActivity = {
   files: { path: string; before: string | null; after: string | null; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external' }[];
   truncated: boolean;
 };
-export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; required: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; settings: { [key: string]: Json } };
-export type PackageSource = { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string } | { kind: 'npm'; package: string; version?: string; registry?: string; integrity?: string };
-export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust'; id?: string; source?: PackageSource; reference?: string; version?: string; index?: string; scope?: 'user' | 'project' };
+export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project' | 'managed'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; required: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; needs_approval: boolean; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; /** Requires package_contributes_v1: `provenance.maintainer` from the manifest. */ maintainer: string | null; /** Requires package_contributes_v1: what the manifest's optional `contributes` declares, readable while the mod is off. */ contributes: PackageContributes; inherited_enabled: boolean; inherited_settings: { [key: string]: Json }; overrides: { enabled?: boolean; settings: { [key: string]: Json } }; settings: { [key: string]: Json } };
+export type PackageContributes = { commands: { name: string; description: string }[]; keys: { key: string; description: string }[] };
+/** Requires plugin_components_v1: an installed Codex plugin's mod component. `sha256` is the verified descriptor digest; `error` says why it can't be installed. */
+export type PluginComponent = { plugin: string; marketplace: string; version: string; id: string | null; description: string | null; sha256: string | null; error: string | null; installed: boolean; enabled: boolean };
+export type PackageSource = { kind: 'plugin'; plugin: string; marketplace?: string } | { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string } | { kind: 'npm'; package: string; version?: string; registry?: string; integrity?: string };
+export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust' | 'reset' | 'save-defaults'; id?: string; source?: PackageSource; reference?: string; version?: string; index?: string; /** `enable` and `disable` default to `shared` (saved for every terminal); `terminal` changes only this terminal. `reset` and `save-defaults` act on this terminal's changes and take only `terminal`. */ target?: 'terminal' | 'shared'; scope?: 'user' | 'project'; /** Requires plugin_components_v1: `install` also turns the package on, under the same approval. */ enable?: boolean };
+/** `enabled` is null and `settings` empty when nothing differs. */
+export type ConfigurationChanges = { target: 'terminal' | 'shared'; enabled: { before: boolean; after: boolean } | null; settings: { key: string; before: Json; after: Json }[] };
 export type PackageCatalogEntry = { id: string; latest: string; description: string; support: string | null; versions: { version: string; blocked: string | null }[]; installed: string | null };
 export type KeymapAction = `${string}.${string}`;
 export type Declined = { status: 'declined' };
@@ -394,6 +400,7 @@ export interface HostOperations {
   'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null; generation: number } };
   'store.export': { arguments: { scope?: StoreScope; cursor?: string }; result: { schema: 1; owner: string; scope: StoreScope; generation: number; entries: Record<string, { value: Json; revision: number; provenance: StoreProvenance }>; cursor: string | null } };
   'store.reset': { arguments: { expected_generation: number; scope?: StoreScope }; result: { generation: number } };
+  /** Evidence is bound to the current thread, repository, mod source and configuration generation under the effective selection. */
   'evidence.write': { arguments: { media_type: 'application/json' | 'text/plain'; content: Json; label?: string } | { media_type: 'image/png' | 'image/jpeg' | 'image/svg+xml' | 'application/octet-stream'; base64: string; label?: string }; result: ResourceRef };
   'evidence.read': { arguments: { reference: ResourceRef; cursor?: number; max_bytes?: number }; result: { reference: ResourceRef; text: string; cursor: number | null; bytes: number } };
   'sessions.list': { arguments: { since?: string; until?: string; cursor?: string; limit?: number }; result: { sessions: SessionSummary[]; cursor: string | null; revision: string; scan_truncated: boolean; unavailable: number; projection: string } };
@@ -412,10 +419,10 @@ export interface HostOperations {
   'contract.status': { arguments: null; result: ContractStatus };
   'contract.restrict': { arguments: { operations?: string[]; scoped?: ContractRestriction[]; reason: string }; result: { restrictions: string[]; scoped_restrictions: ContractRestriction[] } };
   'contract.select': { arguments: { contract: string }; result: { selected: Json; applies: 'next_session' } | Declined };
-  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] }; model?: string }; result: Agent };
+  'agents.spawn': { arguments: { role?: string; route?: string; prompt: string; definition?: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] }; model?: string; hold_failure?: boolean }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
-  'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
-  'agents.result': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
+  'agents.cancel': { arguments: { handle: string; deliver?: boolean }; result: { cancelled: boolean; delivered: boolean | 'pending' } };
+  'agents.result': { arguments: { handle: string; consume?: boolean; claim?: boolean }; result: AgentResult };
   'agents.wait': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
   'agents.list': { arguments: null; result: { handle: string; finished: boolean; consumed: boolean }[] };
   'agents.inventory': { arguments: null; result: { agents: AgentRecord[] } };
@@ -496,10 +503,12 @@ export interface HostOperations {
   /** `fields` keeps only those keys of each package. */
   'packages.list': { arguments: { fields: (keyof PackageState)[] } | null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.index': { arguments: { index?: string; query?: string; cursor?: string; limit?: number }; result: { index: string; packages: PackageCatalogEntry[]; total: number; cursor: string | null } };
-  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; identity_warning?: string | null } };
-  'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
+  'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; /** `ConfigurationChanges` for this terminal's `enable`, `disable`, `reset` and `save-defaults`. */ changes: Json; grants_added: string[]; /** `grants_added` in plain words, `risky` ones (authority capabilities) first. */ phrases?: { capability: string; phrase: string; risky: boolean }[]; identity_warning?: string | null } };
+  'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number; enabled?: boolean; reason?: string } | Declined };
+  /** Requires plugin_components_v1: the mod components of the Codex plugins installed for this user. */
+  'plugins.components': { arguments: null; result: { components: PluginComponent[] } };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
-  'settings.write': { arguments: { id?: string; values: { [key: string]: Json } }; result: { settings: { [key: string]: Json } } };
+  'settings.write': { arguments: { id?: string; scope?: 'user' | 'project'; values: { [key: string]: Json }; /** Defaults to `shared` (saved for every terminal); `terminal` changes only this terminal, where `reset` drops this terminal's change to a setting. */ target?: 'terminal' | 'shared'; reset?: string[] }; result: { settings: { [key: string]: Json } } };
   'terminal.open': { arguments: { url: string } | { path: string } | { path: string; line?: number; editor: true }; result: { opened: true } | Declined };
   'terminal.prompt': { arguments: { kind: 'confirm'; title: string; message: string } | { kind: 'text'; title: string; message: string; masked?: boolean }
     | { kind: 'choice'; title: string; message: string; options: { value: string; label: string }[]; multiple?: boolean; other?: boolean };
@@ -642,7 +651,7 @@ export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfac
 export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
-export type BuiltinControls = { group_exec?: boolean; commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+export type BuiltinControls = { group_exec?: boolean; commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: ('status_line' | 'context_indicator')[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 /** Callback completion rejects cancelled or stale authority before committing state. The `crypto` global exists only when mod.json declares `"environment": ["crypto"]`. See REFERENCE.md. */
 export interface ModAPI {
   readonly version: '1.0.0';

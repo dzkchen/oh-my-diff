@@ -1,12 +1,31 @@
 use super::*;
 use codex_core::CodexThread;
+use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::turn_input::TurnInputRequest;
 use codex_protocol::user_input::UserInput;
+use futures_util::StreamExt;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 const AGENT_LIMIT: usize = 16;
+
+// Keeps teardown alive after its waiter is cancelled and publishes in input order.
+fn teardown_in_order<F, T>(
+    pending: Vec<F>,
+    mut publish: impl FnMut(T) + Send + 'static,
+) -> tokio::task::JoinHandle<()>
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut pending = futures_util::stream::iter(pending).buffered(AGENT_LIMIT);
+        while let Some(completed) = pending.next().await {
+            publish(completed);
+        }
+    })
+}
 
 pub(super) fn classify_error(
     code: &Option<codex_protocol::protocol::CodexErrorInfo>,
@@ -190,6 +209,242 @@ fn integration_receipt(
 #[cfg(test)]
 mod history_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn teardown_overlaps_slots_and_retains_locks_until_ordered_publication() {
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let (published, mut publications) = tokio::sync::mpsc::unbounded_channel();
+        struct Resource(
+            usize,
+            tokio::sync::mpsc::UnboundedSender<(&'static str, usize)>,
+        );
+        impl Drop for Resource {
+            fn drop(&mut self) {
+                let _ = self.1.send(("removed", self.0));
+            }
+        }
+        let slots = (0..3)
+            .map(|_| Arc::new(tokio::sync::Mutex::new(())))
+            .collect::<Vec<_>>();
+        let mut releases = Vec::new();
+        let mut pending = Vec::new();
+        for (index, slot) in slots.iter().cloned().enumerate() {
+            let (release, wait) = tokio::sync::oneshot::channel();
+            releases.push(release);
+            let started = started.clone();
+            let resource = Resource(index, published.clone());
+            pending.push(async move {
+                let guard = slot.lock_owned().await;
+                started.send(index).unwrap();
+                wait.await.unwrap();
+                (index, guard, resource)
+            });
+        }
+        let cleanup = teardown_in_order(pending, move |(index, guard, resource)| {
+            drop(resource);
+            published.send(("stopped", index)).unwrap();
+            drop(guard);
+        });
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(5), starts.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        releases.pop().unwrap().send(()).unwrap();
+        releases.pop().unwrap().send(()).unwrap();
+        tokio::task::yield_now().await;
+        assert!(publications.try_recv().is_err());
+        assert!(slots.iter().all(|slot| slot.try_lock().is_err()));
+        releases.pop().unwrap().send(()).unwrap();
+        cleanup.await.unwrap();
+        for index in 0..3 {
+            assert_eq!(publications.recv().await, Some(("removed", index)));
+            assert_eq!(publications.recv().await, Some(("stopped", index)));
+        }
+        assert!(slots.iter().all(|slot| slot.try_lock().is_ok()));
+    }
+
+    #[tokio::test]
+    async fn teardown_survives_a_cancelled_waiter_and_retains_owned_resources() {
+        let resource = tempfile::tempdir().unwrap();
+        let path = resource.path().to_path_buf();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let (started, start) = tokio::sync::oneshot::channel();
+        let (published, publication) = tokio::sync::oneshot::channel();
+        let mut published = Some(published);
+        let cleanup = teardown_in_order(
+            vec![async move {
+                started.send(()).unwrap();
+                wait.await.unwrap();
+                resource
+            }],
+            move |resource| {
+                assert!(resource.path().exists());
+                drop(resource);
+                published.take().unwrap().send(()).unwrap();
+            },
+        );
+        let waiter = tokio::spawn(cleanup);
+        start.await.unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        assert!(path.exists());
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), publication)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn teardown_bounds_work_in_flight() {
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let pending = (0..AGENT_LIMIT + 2)
+            .map(|index| {
+                let started = started.clone();
+                let gate = gate.clone();
+                async move {
+                    started.send(index).unwrap();
+                    gate.acquire().await.unwrap().forget();
+                }
+            })
+            .collect();
+        let cleanup = teardown_in_order(pending, |_| {});
+        for index in 0..AGENT_LIMIT {
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(5), starts.recv())
+                    .await
+                    .unwrap(),
+                Some(index)
+            );
+        }
+        assert!(starts.try_recv().is_err());
+        gate.add_permits(AGENT_LIMIT + 2);
+        cleanup.await.unwrap();
+    }
+
+    #[test]
+    fn mailbox_skips_results_a_waiter_returned_and_holds_failures_until_release() {
+        let mailbox = |hold_failure| Mailbox {
+            manager: Weak::new(),
+            parent: ThreadId::new(),
+            child: ThreadId::new(),
+            name: "worker".into(),
+            hold_failure,
+            state: Mutex::new(Mail::Open),
+        };
+        let done = || AgentStatus::Completed(Some("done".into()));
+        let failed = || AgentStatus::Errored("rate limited".into());
+
+        let plain = mailbox(false);
+        assert_eq!(plain.finished(done()), Some(done()));
+        let waited = mailbox(false);
+        waited.waiting();
+        assert_eq!(waited.finished(done()), None);
+        assert_eq!(waited.waited(true), None);
+        let timed_out = mailbox(false);
+        timed_out.waiting();
+        assert_eq!(timed_out.waited(false), None);
+        assert_eq!(timed_out.finished(done()), Some(done()));
+        let abandoned = mailbox(false);
+        abandoned.waiting();
+        assert_eq!(abandoned.finished(done()), None);
+        assert_eq!(abandoned.waited(false), Some(done()));
+
+        let held = mailbox(true);
+        assert_eq!(held.finished(done()), Some(done()));
+        let held = mailbox(true);
+        assert_eq!(held.finished(failed()), None);
+        assert_eq!(held.release(true), Some(failed()));
+        assert_eq!(held.release(true), None);
+        let dropped = mailbox(true);
+        assert_eq!(dropped.finished(failed()), None);
+        assert_eq!(dropped.release(false), None);
+
+        let shared = mailbox(false);
+        shared.waiting();
+        shared.waiting();
+        assert_eq!(shared.waited(false), None);
+        assert_eq!(shared.finished(done()), None);
+        assert_eq!(shared.waited(false), Some(done()));
+        let shared = mailbox(false);
+        shared.waiting();
+        shared.waiting();
+        assert_eq!(shared.waited(false), None);
+        assert_eq!(shared.finished(done()), None);
+        assert_eq!(shared.waited(true), None);
+        assert_eq!(shared.release(true), None);
+
+        let returned = mailbox(true);
+        returned.waiting();
+        assert_eq!(returned.finished(failed()), None);
+        assert_eq!(returned.waited(true), None);
+        assert_eq!(returned.release(true), Some(failed()));
+        let raced = mailbox(true);
+        raced.waiting();
+        assert_eq!(raced.waited(true), None);
+        assert_eq!(raced.finished(failed()), None);
+        assert_eq!(raced.release(true), Some(failed()));
+        let raced = mailbox(false);
+        raced.waiting();
+        assert_eq!(raced.waited(true), None);
+        assert_eq!(raced.finished(done()), None);
+
+        let polled = mailbox(false);
+        polled.claim();
+        assert_eq!(polled.finished(done()), None);
+        let polled = mailbox(true);
+        polled.claim();
+        assert_eq!(polled.finished(failed()), None);
+        assert_eq!(polled.release(true), Some(failed()));
+    }
+
+    #[tokio::test]
+    async fn delivered_is_pending_while_sending_and_set_only_by_a_send() {
+        let mailbox = |hold_failure| Mailbox {
+            manager: Weak::new(),
+            parent: ThreadId::new(),
+            child: ThreadId::new(),
+            name: "worker".into(),
+            hold_failure,
+            state: Mutex::new(Mail::Open),
+        };
+        let done = || AgentStatus::Completed(Some("done".into()));
+
+        let released = mailbox(false);
+        assert_eq!(released.finished(done()), Some(done()));
+        assert_eq!(released.delivered(), Some(json!("pending")));
+        released.claim();
+        assert_eq!(released.delivered(), Some(json!("pending")));
+        assert!(!released.send(Some(done())).await);
+        assert_eq!(
+            released.delivered(),
+            None,
+            "a failed send is not a delivery"
+        );
+
+        let claimed = mailbox(false);
+        claimed.claim();
+        assert_eq!(claimed.finished(done()), None);
+        assert_eq!(claimed.delivered(), None);
+
+        let held = mailbox(true);
+        assert_eq!(held.finished(AgentStatus::Errored("failed".into())), None);
+        assert_eq!(held.delivered(), None);
+        assert!(held.release(true).is_some());
+        assert_eq!(held.delivered(), Some(json!("pending")));
+
+        let abandoned = Arc::new(mailbox(false));
+        drop(Waiter::new(abandoned.clone()));
+        assert_eq!(
+            abandoned.finished(done()),
+            Some(done()),
+            "a dropped waiter releases its count"
+        );
+    }
 
     #[tokio::test]
     async fn waiting_does_not_hold_the_slot_lock() {
@@ -448,7 +703,7 @@ mod history_tests {
 type AgentSlot = Arc<tokio::sync::Mutex<Agent>>;
 
 pub(super) struct Agents {
-    records: tokio::sync::Mutex<BTreeMap<String, AgentSlot>>,
+    records: Arc<tokio::sync::Mutex<BTreeMap<String, AgentSlot>>>,
     spawning: Arc<std::sync::atomic::AtomicUsize>,
     snapshots: Mutex<snapshots::Snapshots>,
     notifier: Notifier,
@@ -463,6 +718,18 @@ struct Notifier {
 }
 
 impl Notifier {
+    fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
+        if let (Some(core), Some(thread)) = (
+            self.core.upgrade(),
+            handle.strip_prefix(&format!("mod-{}-", agent.mod_id)),
+        ) && let Some(record) = core
+            .inventory
+            .end(thread, "cancelled", Some(reason.to_owned()))
+        {
+            inventory::notify(&self.runtime, &core.inventory, "end", record);
+        }
+    }
+
     fn agent_end(&self, mod_id: String, generation: u64, payload: Value, lead: Lead) {
         let handle = tokio::runtime::Handle::current();
         let notifier = self.clone();
@@ -483,28 +750,30 @@ impl Notifier {
                 "agent_end",
                 "",
                 payload,
-                || lead.session.task.check_active().is_ok(),
-                |caller, call| {
-                    let (source, grants) = ownership.get(caller).cloned().unwrap_or_default();
-                    handle
-                        .block_on(operations::dispatch(
-                            &core,
-                            &lead,
-                            operations::Caller {
-                                id: caller,
-                                source: &source,
-                                grants,
-                                generation,
-                                origin: codex_omd::data_store::Origin::Event,
-                                record_changes: true,
-                            },
-                            None,
-                            call,
-                            &cancelled,
-                        ))
-                        .map_err(std::io::Error::other)
+                codex_omd::ModInvokeOptions {
+                    active: &|| lead.session.task.check_active().is_ok(),
+                    host: codex_omd::ModHostCallback::Scoped(&mut |caller, call| {
+                        let (source, grants) = ownership.get(caller).cloned().unwrap_or_default();
+                        handle
+                            .block_on(operations::dispatch(
+                                &core,
+                                &lead,
+                                operations::Caller {
+                                    id: caller,
+                                    source: &source,
+                                    grants,
+                                    generation,
+                                    origin: codex_omd::data_store::Origin::Event,
+                                    record_changes: true,
+                                },
+                                None,
+                                call,
+                                &cancelled,
+                            ))
+                            .map_err(std::io::Error::other)
+                    }),
+                    ..codex_omd::ModInvokeOptions::default()
                 },
-                |_| {},
             ) {
                 notifier.views.diagnostic(
                     &notifier.host,
@@ -519,6 +788,7 @@ impl Notifier {
                 &mut runtime,
                 &notifier.host,
                 &notifier.views,
+                core.terminal_owner.as_deref(),
                 "agent_end",
                 lead.ledger(),
                 || lead.session.task.check_active().is_ok(),
@@ -544,6 +814,208 @@ struct Agent {
     candidate: Option<(String, Vec<String>)>,
     evidence: Option<String>,
     resolution: Option<ResolutionBinding>,
+    mailbox: Arc<Mailbox>,
+}
+
+enum Mail {
+    Open,
+    Waiting {
+        waiters: usize,
+        status: Option<AgentStatus>,
+        claimed: bool,
+    },
+    Held(AgentStatus),
+    Sending,
+    Delivered,
+    Done,
+}
+
+struct Mailbox {
+    manager: Weak<ThreadManager>,
+    parent: ThreadId,
+    child: ThreadId,
+    name: String,
+    hold_failure: bool,
+    state: Mutex<Mail>,
+}
+
+struct Waiter(Option<Arc<Mailbox>>);
+
+impl Waiter {
+    fn new(mailbox: Arc<Mailbox>) -> Self {
+        mailbox.waiting();
+        Self(Some(mailbox))
+    }
+
+    async fn done(mut self, claimed: bool) {
+        if let Some(mailbox) = self.0.take() {
+            mailbox.send(mailbox.waited(claimed)).await;
+        }
+    }
+}
+
+impl Drop for Waiter {
+    fn drop(&mut self) {
+        if let Some(mailbox) = self.0.take()
+            && let Some(status) = mailbox.waited(false)
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            runtime.spawn(async move { mailbox.send(Some(status)).await });
+        }
+    }
+}
+
+impl Mailbox {
+    fn settle(&self, state: &mut Mail, status: AgentStatus) -> Option<AgentStatus> {
+        if self.hold_failure && matches!(status, AgentStatus::Errored(_)) {
+            *state = Mail::Held(status);
+            return None;
+        }
+        Some(status)
+    }
+
+    fn resolve(
+        &self,
+        state: &mut Mail,
+        waiters: usize,
+        status: Option<AgentStatus>,
+        claimed: bool,
+    ) -> Option<AgentStatus> {
+        match status {
+            Some(status) if claimed => {
+                *state = Mail::Done;
+                self.settle(state, status);
+                None
+            }
+            Some(status) if waiters == 0 => self.settle(state, status),
+            None if waiters == 0 && !claimed => {
+                *state = Mail::Open;
+                None
+            }
+            status => {
+                *state = Mail::Waiting {
+                    waiters,
+                    status,
+                    claimed,
+                };
+                None
+            }
+        }
+    }
+
+    fn update(
+        &self,
+        next: impl FnOnce(&Self, &mut Mail, Mail) -> Option<AgentStatus>,
+    ) -> Option<AgentStatus> {
+        let mut state = self.state.lock().ok()?;
+        let current = std::mem::replace(&mut *state, Mail::Done);
+        let released = next(self, &mut state, current);
+        if released.is_some() {
+            *state = Mail::Sending;
+        }
+        released
+    }
+
+    async fn send(&self, status: Option<AgentStatus>) -> bool {
+        let Some(status) = status else {
+            return false;
+        };
+        let sent = match self.manager.upgrade() {
+            Some(manager) => manager
+                .deliver_subagent_result(self.parent, self.child, &self.name, status)
+                .await
+                .unwrap_or(false),
+            None => false,
+        };
+        if let Ok(mut state) = self.state.lock()
+            && matches!(*state, Mail::Sending)
+        {
+            *state = if sent { Mail::Delivered } else { Mail::Done };
+        }
+        sent
+    }
+
+    fn delivered(&self) -> Option<Value> {
+        match *self.state.lock().ok()? {
+            Mail::Sending => Some(json!("pending")),
+            Mail::Delivered => Some(json!(true)),
+            _ => None,
+        }
+    }
+
+    fn finished(&self, status: AgentStatus) -> Option<AgentStatus> {
+        self.update(|mailbox, state, current| match current {
+            Mail::Open => mailbox.settle(state, status),
+            Mail::Waiting {
+                waiters, claimed, ..
+            } => mailbox.resolve(state, waiters, Some(status), claimed),
+            other => {
+                *state = other;
+                None
+            }
+        })
+    }
+
+    fn waiting(&self) {
+        self.update(|_, state, current| {
+            *state = match current {
+                Mail::Open => Mail::Waiting {
+                    waiters: 1,
+                    status: None,
+                    claimed: false,
+                },
+                Mail::Waiting {
+                    waiters,
+                    status,
+                    claimed,
+                } => Mail::Waiting {
+                    waiters: waiters + 1,
+                    status,
+                    claimed,
+                },
+                other => other,
+            };
+            None
+        });
+    }
+
+    fn waited(&self, claimed: bool) -> Option<AgentStatus> {
+        self.update(|mailbox, state, current| match current {
+            Mail::Waiting {
+                waiters,
+                status,
+                claimed: earlier,
+            } => mailbox.resolve(state, waiters.saturating_sub(1), status, earlier || claimed),
+            other => {
+                *state = other;
+                None
+            }
+        })
+    }
+
+    fn claim(&self) {
+        self.update(|mailbox, state, current| match current {
+            Mail::Open => mailbox.resolve(state, 0, None, true),
+            Mail::Waiting {
+                waiters, status, ..
+            } => mailbox.resolve(state, waiters, status, true),
+            other => {
+                *state = other;
+                None
+            }
+        });
+    }
+
+    fn release(&self, deliver: bool) -> Option<AgentStatus> {
+        self.update(|_, state, current| match current {
+            Mail::Held(status) if deliver => Some(status),
+            Mail::Held(_) => None,
+            other => {
+                *state = other;
+                None
+            }
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -733,13 +1205,21 @@ impl Agent {
                 .is_some_and(Result::is_ok))
     }
 
-    async fn shutdown(&mut self) {
-        if let Some(job) = self.job.take() {
+    async fn shutdown(&mut self) -> Option<Workspace> {
+        let job = self.job.take();
+        if let Some(job) = &job {
             job.abort();
-            let _ = job.await;
         }
-        execution::stop_worker(&self.thread, &self.task, &self.worker, !self.consumed).await;
-        self.workspace.take();
+        let cleanup = execution::stop_dropped(
+            &self.runtime,
+            self.thread.clone(),
+            self.task.clone(),
+            self.worker.clone(),
+            !self.consumed,
+            job,
+            self.workspace.take(),
+        );
+        cleanup.await.ok().flatten()
     }
 }
 
@@ -786,6 +1266,8 @@ struct Spawn {
     parent_history: bool,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    hold_failure: bool,
 }
 
 #[derive(Deserialize)]
@@ -847,6 +1329,10 @@ struct Handle {
     message: Option<String>,
     #[serde(default)]
     consume: bool,
+    #[serde(default)]
+    claim: bool,
+    #[serde(default)]
+    deliver: bool,
     #[serde(default)]
     acceptance_sha256: Option<String>,
 }
@@ -921,7 +1407,7 @@ impl Agents {
         host: Arc<Host>,
     ) -> Self {
         Self {
-            records: tokio::sync::Mutex::new(BTreeMap::new()),
+            records: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             spawning: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             snapshots: Mutex::new(snapshots::Snapshots::default()),
             notifier: Notifier {
@@ -1030,12 +1516,14 @@ impl Agents {
         if let Ok(mut snapshots) = self.snapshots.lock() {
             snapshots.remove_owner(mod_id, generation);
         }
-        self.cleanup_where(|agent| agent.mod_id == mod_id && agent.generation == generation)
+        let mod_id = mod_id.to_owned();
+        self.cleanup_where(move |agent| agent.mod_id == mod_id && agent.generation == generation)
             .await;
     }
 
     pub(super) async fn cleanup_session(&self, session: &Session) {
-        self.cleanup_where(|agent| Arc::ptr_eq(&agent.task, &session.task))
+        let task = session.task.clone();
+        self.cleanup_where(move |agent| Arc::ptr_eq(&agent.task, &task))
             .await;
     }
 
@@ -1340,30 +1828,55 @@ impl Agents {
         Ok((snapshot, digest))
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "Remove and shut down a handle without releasing it to a concurrent call"
-    )]
-    async fn cleanup_where(&self, selected: impl Fn(&Agent) -> bool) {
-        for (id, slot) in self.slots().await {
-            let mut agent = slot.lock().await;
-            if selected(&agent) && self.remove(&id, &slot).await {
-                agent.shutdown().await;
-                self.stopped(&id, &agent, "stopped with its mod or session");
-            }
+    async fn cleanup_where(&self, selected: impl Fn(&Agent) -> bool + Send + Sync + 'static) {
+        let selected = Arc::new(selected);
+        let pending: Vec<_> = self
+            .slots()
+            .await
+            .into_iter()
+            .map(|(id, slot)| {
+                let records = self.records.clone();
+                let selected = selected.clone();
+                async move {
+                    let mut agent = slot.clone().lock_owned().await;
+                    if !selected(&agent) {
+                        return None;
+                    }
+                    let removed = {
+                        let mut records = records.lock().await;
+                        if records
+                            .get(&id)
+                            .is_some_and(|current| Arc::ptr_eq(current, &slot))
+                        {
+                            records.remove(&id);
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if !removed {
+                        return None;
+                    }
+                    let workspace = agent.shutdown().await;
+                    Some((id, agent, workspace))
+                }
+            })
+            .collect();
+        if pending.is_empty() {
+            return;
         }
+        let notifier = self.notifier.clone();
+        let cleanup = teardown_in_order(pending, move |completed| {
+            if let Some((id, agent, workspace)) = completed {
+                drop(workspace);
+                notifier.stopped(&id, &agent, "stopped with its mod or session");
+            }
+        });
+        let _ = cleanup.await;
     }
 
     fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
-        if let (Some(core), Some(thread)) = (
-            self.notifier.core.upgrade(),
-            handle.strip_prefix(&format!("mod-{}-", agent.mod_id)),
-        ) && let Some(record) = core
-            .inventory
-            .end(thread, "cancelled", Some(reason.to_owned()))
-        {
-            inventory::notify(&self.notifier.runtime, &core.inventory, "end", record);
-        }
+        self.notifier.stopped(handle, agent, reason);
     }
 
     async fn integrate(
@@ -1593,7 +2106,23 @@ impl Agents {
         }
         match request.operation.as_str() {
             "agents.cancel" => {
-                agent.shutdown().await;
+                let released = agent
+                    .mailbox
+                    .send(agent.mailbox.release(handle.deliver))
+                    .await;
+                let mailbox = agent.mailbox.clone();
+                let _ = tokio::time::timeout(Duration::from_secs(5), async {
+                    while mailbox.delivered() == Some(json!("pending")) {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                })
+                .await;
+                let delivered = if released {
+                    json!(true)
+                } else {
+                    mailbox.delivered().unwrap_or(json!(false))
+                };
+                drop(agent.shutdown().await);
                 if let Some(thread) = handle
                     .handle
                     .strip_prefix(&format!("mod-{}-", agent.mod_id))
@@ -1606,7 +2135,7 @@ impl Agents {
                     inventory::notify(&self.notifier.runtime, &core.inventory, "end", record);
                 }
                 self.remove(&handle.handle, &slot).await;
-                Ok(json!({"cancelled":true}))
+                Ok(json!({"cancelled":true,"delivered":delivered}))
             }
             "agents.message" => {
                 if agent.finished() {
@@ -1633,10 +2162,14 @@ impl Agents {
                         .map_err(|e| e.to_string())?
                         .0
                         .min(Duration::from_secs(30));
+                    let waiter = Waiter::new(agent.mailbox.clone());
                     drop(agent);
                     tokio::select! {
                         _ = tokio::time::timeout(deadline, wait_finished(&slot, Agent::finished)) => (),
-                        () = until_cancelled(cancelled) => return Err("callback_cancelled".into()),
+                        () = until_cancelled(cancelled) => {
+                            waiter.done(false).await;
+                            return Err("callback_cancelled".into());
+                        }
                     }
                     agent = slot.lock().await;
                     if let Some(job) = agent.job.take_if(|job| job.is_finished())
@@ -1645,16 +2178,25 @@ impl Agents {
                         *agent.result.lock().map_err(|_| "agent_result_poisoned")? =
                             Some(Err(error.to_string()));
                     }
+                    let finished = agent
+                        .result
+                        .lock()
+                        .map_err(|_| "agent_result_poisoned")?
+                        .is_some();
+                    waiter.done(finished).await;
                 }
                 let result = agent
                     .result
                     .lock()
                     .map_err(|_| "agent_result_poisoned")?
                     .clone();
-                match result {
-                    None => Ok(json!({"status":"running"})),
-                    Some(Err(error)) => Ok(json!({"status":"failed","error":error,
-                        "failure":agent.failure.lock().map_err(|_| "agent_failure_poisoned")?.clone()})),
+                if handle.claim && result.is_some() {
+                    agent.mailbox.claim();
+                }
+                let mut value = match result {
+                    None => json!({"status":"running"}),
+                    Some(Err(error)) => json!({"status":"failed","error":error,
+                        "failure":agent.failure.lock().map_err(|_| "agent_failure_poisoned")?.clone()}),
                     Some(Ok(text)) => {
                         if handle.consume && !agent.consumed {
                             lead.session
@@ -1684,9 +2226,15 @@ impl Agents {
                             value["candidate_sha256"] = json!(sha256);
                             value["changed_paths"] = json!(paths);
                         }
-                        Ok(value)
+                        value
                     }
+                };
+                if value["status"] != "running"
+                    && let Some(delivered) = agent.mailbox.delivered()
+                {
+                    value["delivered"] = delivered;
                 }
+                Ok(value)
             }
             _ => Err("unsupported_agent_operation".into()),
         }
@@ -1724,8 +2272,11 @@ impl Agents {
             {
                 return Err("worker_route_authority_exceeded".into());
             }
-            let runtime = codex_models_manager::runtime_models::find(&route.model)
-                .is_some_and(|(provider, _)| provider == route.provider);
+            let runtime = codex_models_manager::runtime_models::find_for(
+                core.terminal_owner.as_deref(),
+                &route.model,
+            )
+            .is_some_and(|(provider, _)| provider == route.provider);
             unchanged_model(request, route)?;
             return Ok((route.clone(), !runtime));
         }
@@ -1734,16 +2285,22 @@ impl Agents {
             .filter(|route| {
                 !route.roles.contains(&config::RouteRole::Worker)
                     && (route.mods.is_empty() || route.mods.iter().any(|id| id == caller.id))
-                    && codex_models_manager::runtime_models::find(&route.model)
-                        .is_some_and(|(provider, _)| provider == route.provider)
+                    && codex_models_manager::runtime_models::find_for(
+                        core.terminal_owner.as_deref(),
+                        &route.model,
+                    )
+                    .is_some_and(|(provider, _)| provider == route.provider)
             });
         if let Some(route) = provider_lead {
             let mut route = route.clone();
             if let Some(model) = request.model.take() {
-                let info = codex_models_manager::runtime_models::find(&model)
-                    .filter(|(provider, _)| *provider == route.provider)
-                    .map(|(_, info)| info)
-                    .ok_or("agent_model_not_in_route_provider_catalog")?;
+                let info = codex_models_manager::runtime_models::find_for(
+                    core.terminal_owner.as_deref(),
+                    &model,
+                )
+                .filter(|(provider, _)| *provider == route.provider)
+                .map(|(_, info)| info)
+                .ok_or("agent_model_not_in_route_provider_catalog")?;
                 if !info
                     .supported_reasoning_levels
                     .iter()
@@ -1915,7 +2472,7 @@ impl Agents {
                     }
                 }
                 Err(reason) => {
-                    agent.shutdown().await;
+                    drop(agent.shutdown().await);
                     self.stopped(&handle, &agent, reason);
                     drop(agent);
                     self.remove(&handle, &slot).await;
@@ -2468,6 +3025,17 @@ impl Agents {
         let generation = caller.generation;
         let handle = id.clone();
         let end_lead = lead.clone();
+        let mailbox = Arc::new(Mailbox {
+            manager: host.manager.clone(),
+            parent: lead.thread,
+            child: thread_id,
+            name: id
+                .to_ascii_lowercase()
+                .replace(|c: char| !c.is_ascii_alphanumeric(), "_"),
+            hold_failure: request.hold_failure,
+            state: Mutex::new(Mail::Open),
+        });
+        let delivery = mailbox.clone();
         let mut turn = TurnInputRequest::user_input(
             shape
                 .context
@@ -2580,9 +3148,16 @@ impl Agents {
                     inventory::notify(&notifier.runtime, &core.inventory, "end", record);
                 }
             }
+            let status = match &completed {
+                Ok(text) => AgentStatus::Completed(Some(text.clone())),
+                Err(error) if error == "native_agent_interrupted" => AgentStatus::Interrupted,
+                Err(error) => AgentStatus::Errored(error.clone()),
+            };
+            let release = delivery.finished(status);
             if let Ok(mut output) = output.lock() {
                 *output = Some(completed);
             }
+            delivery.send(release).await;
             notifier.agent_end(owning_mod, generation, payload, end_lead);
         });
         self.records.lock().await.insert(
@@ -2605,6 +3180,7 @@ impl Agents {
                     .map(|reference| (reference.sha256.clone(), Vec::new())),
                 evidence,
                 resolution: resolution.map(|(binding, _)| binding),
+                mailbox,
             })),
         );
         admission.transferred = true;

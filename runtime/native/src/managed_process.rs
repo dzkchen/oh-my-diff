@@ -633,7 +633,8 @@ fn program(name: &str, repository: &Path) -> Option<PathBuf> {
     }
     std::env::split_paths(&std::env::var_os("PATH")?).find_map(|directory| {
         let candidate = directory.join(name).canonicalize().ok()?;
-        (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
+        (candidate.is_file() && !codex_omd::agent_writable(&candidate, repository))
+            .then_some(candidate)
     })
 }
 
@@ -1044,32 +1045,28 @@ impl ManagedProcesses {
                             kill_group_if_alive(group, &reaped)
                         })
                     });
-                    let raster_input = raster
-                        .as_ref()
-                        .map(|_| input_sink(writer_sender.clone(), group, reaped.clone()));
-                    let mut binding =
-                        raster
-                            .as_ref()
-                            .zip(raster_input.as_ref())
-                            .map(|((key, keys, _), sink)| {
-                                let mut components =
-                                    vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
-                                components.extend(keys.iter().map(|keys| {
-                                    (keys.clone(), codex_omd::process_raster::Role::Keys)
-                                }));
-                                codex_omd::process_raster::Binding::prepare(
-                                    thread,
-                                    id,
-                                    components,
-                                    sink.clone(),
-                                )
-                            });
-                    if let Some(binding) = &mut binding {
+                    let mut binding = raster.as_ref().map(|(key, keys, _)| {
+                        let sink = input_sink(writer_sender.clone(), group, reaped.clone());
+                        let mut components =
+                            vec![(key.clone(), codex_omd::process_raster::Role::Raster)];
+                        components.extend(
+                            keys.iter()
+                                .map(|keys| (keys.clone(), codex_omd::process_raster::Role::Keys)),
+                        );
+                        let binding = codex_omd::process_raster::Binding::prepare(
+                            thread,
+                            id,
+                            components,
+                            sink.clone(),
+                        );
+                        (binding, sink)
+                    });
+                    if let Some((binding, sink)) = &mut binding {
                         if input.pixels {
                             let initialized = binding
                                 .pixels(&scratch.join("pixels.raw"), Some(generation))
                                 .and_then(|message| {
-                                    raster_input.as_ref().unwrap()(message)
+                                    sink(message)
                                         .then_some(())
                                         .ok_or("process_pixels_init_failed".to_owned())
                                 });
@@ -1122,13 +1119,8 @@ impl ManagedProcesses {
                     }
                     let mut frames = frames;
                     for mut next in readers.drain(..) {
-                        let (sender, frames, alive, open, announced) = (
-                            sender.clone(),
-                            frames.take(),
-                            alive.clone(),
-                            open.clone(),
-                            announced.clone(),
-                        );
+                        let (sender, frames, alive, open) =
+                            (sender.clone(), frames.take(), alive.clone(), open.clone());
                         let (notifier, owner, session) =
                             (notifier.clone(), owner.clone(), session.clone());
                         let reader_reaped = Arc::clone(&reaped);
@@ -1169,18 +1161,6 @@ impl ManagedProcesses {
                                 let bytes = (result.is_ok() && notify_output).then_some(size);
                                 if sender.send(result).is_err() || terminal {
                                     alive.store(false, std::sync::atomic::Ordering::Release);
-                                    if announced.swap(true, std::sync::atomic::Ordering::AcqRel) {
-                                        break;
-                                    }
-                                    if let Some(notifier) = &notifier {
-                                        notifier(ProcessNotice {
-                                            owner: owner.clone(),
-                                            session: session.clone(),
-                                            output_bytes: None,
-                                            exited: true,
-                                            deliver: notify_exit,
-                                        });
-                                    }
                                     break;
                                 }
                                 if let (Some(notifier), Some(bytes)) = (&notifier, bytes) {
@@ -1207,7 +1187,7 @@ impl ManagedProcesses {
                         scratch: scratch.clone(),
                         last_used: Instant::now(),
                         reaped,
-                        _raster: binding,
+                        _raster: binding.map(|(binding, _)| binding),
                     })
                 })();
                 match launched {
@@ -1714,7 +1694,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         {
             std::thread::yield_now();
         }
-        let remover = fixture.clone();
+        let remover = fixture;
         let removing = session.clone();
         let (sent, received) = mpsc::channel();
         let remover = std::thread::spawn(move || {
@@ -1869,6 +1849,41 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             "process_stopped"
         );
         assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn output_eof_does_not_announce_exit_before_the_leader_exits() {
+        for framing in ["raw", "ndjson", "content-length"] {
+            let fixture = Fixture::new();
+            let (sender, notices) = mpsc::channel();
+            fixture
+                .processes
+                .set_notifier(Arc::new(move |notice: ProcessNotice| {
+                    if notice.exited {
+                        let _ = sender.send(notice.session);
+                    }
+                }));
+            fixture
+                .start(
+                    "server",
+                    "exec 1>&- 2>&-; sleep 2",
+                    json!({"framing":framing,"notify":["exit"]}),
+                )
+                .unwrap();
+            assert_eq!(
+                notices.recv_timeout(Duration::from_millis(300)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
+            assert_eq!(fixture.processes.running("fixture", "server"), Some(true));
+            assert_eq!(
+                notices.recv_timeout(Duration::from_secs(5)).as_deref(),
+                Ok("server")
+            );
+            assert_eq!(
+                notices.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
+        }
     }
 
     #[test]
@@ -2104,7 +2119,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             blit: None,
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
-        let sha256 = codex_omd::sha256_hex(&fs::read(&sh).unwrap());
+        let sha256 = codex_omd::sha256_hex(fs::read(&sh).unwrap());
         let pidfile = repository.join("child.pid");
         let start = |owner: ProcessOwner<'_>, session: &str| {
             processes.call(

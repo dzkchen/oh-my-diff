@@ -30,6 +30,22 @@ pub(super) fn broadcast(state: &State, event: &'static str, payload: Value) {
     delivery::push(state, delivery::Pending::Broadcast { event, payload });
 }
 
+pub(super) fn broadcast_thread(
+    state: &State,
+    thread: ThreadId,
+    event: &'static str,
+    payload: Value,
+) {
+    delivery::push(
+        state,
+        delivery::Pending::ThreadBroadcast {
+            thread,
+            event,
+            payload,
+        },
+    );
+}
+
 pub(super) fn worktree(state: &State, phase: &str, path: &std::path::Path, owner: &str) {
     broadcast(
         state,
@@ -51,6 +67,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "packages.index",
     "packages.preview",
     "packages.reload",
+    "plugins.components",
     "settings.write",
     "tools.list",
     "tools.define",
@@ -76,7 +93,7 @@ pub(super) struct State {
     tool_specs_required: AtomicBool,
     inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
     tool_batch: AtomicBool,
-    gates: Mutex<std::collections::VecDeque<(String, String)>>,
+    gates: Mutex<std::collections::VecDeque<(String, Option<String>)>>,
     current: Mutex<Option<LeadHandle>>,
     leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
     threads: Mutex<std::collections::HashMap<ThreadId, (LeadHandle, String, u32)>>,
@@ -85,6 +102,7 @@ pub(super) struct State {
     pub(super) turns: Mutex<BTreeMap<String, u64>>,
     restarted: Mutex<BTreeMap<String, bool>>,
     watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
+    bus_scope: BusScope,
     subscribed: Mutex<BTreeSet<String>>,
     bus_cursor: Mutex<String>,
     subscriptions: Mutex<Vec<(String, codex_omd::ModSubscriptions)>>,
@@ -105,6 +123,19 @@ pub(super) struct State {
     pub(super) agent_spawn: Mutex<Option<bool>>,
     pub(super) turn_stop: Mutex<Option<bool>>,
     pub(super) peers: AtomicBool,
+}
+
+#[derive(Default)]
+struct BusScope(Option<String>);
+
+impl Drop for BusScope {
+    fn drop(&mut self) {
+        if let Some(scope) = &self.0
+            && let Ok(mut bus) = codex_omd::event_bus::global().lock()
+        {
+            bus.release_scope(scope);
+        }
+    }
 }
 
 struct Delivery {
@@ -150,6 +181,13 @@ impl LeadHandle {
 }
 
 impl State {
+    pub(super) fn scoped(bus_scope: Option<String>) -> Self {
+        Self {
+            bus_scope: BusScope(bus_scope),
+            ..Self::default()
+        }
+    }
+
     pub(super) fn current(&self) -> Option<Lead> {
         self.current
             .lock()
@@ -176,6 +214,22 @@ impl State {
             depth: *depth,
             ..handle.upgrade()?
         })
+    }
+
+    pub(super) fn select_thread(&self, core: &Arc<Core>, lead: &Lead) {
+        let _ = self.core.set(Arc::downgrade(core));
+        if let Ok(runtime) = core.runtime.try_lock() {
+            self.refresh(&runtime);
+        }
+        delivery::ensure_delivery(core);
+        *self
+            .current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(LeadHandle::new(lead));
+        self.leads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(lead.thread, LeadHandle::new(lead));
     }
 
     pub(super) fn thread_started(&self, lead: &Lead) {
@@ -366,6 +420,7 @@ async fn invoke_one_guarded(
     timer: Option<(String, String, u64)>,
 ) -> Option<Result<Value, String>> {
     let (views, owner, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
+    let terminal_owner = core.terminal_owner.clone();
     let timer_core = core.this.upgrade()?;
     let timer_thread = lead.thread.to_string();
     run(
@@ -411,9 +466,11 @@ async fn invoke_one_guarded(
                 event,
                 "",
                 payload,
-                active,
-                host,
-                |_| {},
+                codex_omd::ModInvokeOptions {
+                    active,
+                    host: codex_omd::ModHostCallback::Scoped(host),
+                    ..codex_omd::ModInvokeOptions::default()
+                },
             )
             .map_err(|error| error.to_string());
             // The tool_result event that follows every tool_output republishes the view.
@@ -421,7 +478,15 @@ async fn invoke_one_guarded(
                 && let Ok(mut runtime) = runtime.lock()
                 && runtime.state(&id) != before.as_ref()
             {
-                publish(&mut runtime, &owner, &views, event, ledger, active);
+                publish(
+                    &mut runtime,
+                    &owner,
+                    &views,
+                    terminal_owner.as_deref(),
+                    event,
+                    ledger,
+                    active,
+                );
             }
             result
         },
@@ -561,36 +626,41 @@ pub(super) async fn dispatch(
             .await
         }
         "packages.list" => {
+            let store =
+                codex_omd::ModStore::open(core.host.root.clone()).map_err(|e| e.to_string())?;
             let runtime = core
-                .runtime
+                .input_runtime
                 .lock()
-                .map_err(|_| "mod_runtime_poisoned")?
-                .status();
-            let arguments = request.arguments;
-            blocking(Box::new(move || {
-                codex_omd::ModStore::open(host.root.clone())
-                    .and_then(|store| {
-                        codex_omd::package_controls::list_fields(
-                            &store,
-                            Some(&runtime),
-                            arguments,
-                            Some(&host.repository),
-                        )
-                    })
-                    .map_err(|error| error.to_string())
-            }))
-            .await
+                .map_err(|_| "mod_runtime_poisoned")?;
+            let status = runtime.status();
+            let listed = if request.arguments["fields"]
+                .as_array()
+                .is_none_or(|fields| fields.iter().any(|field| field == "settings_schema"))
+            {
+                codex_omd::package_controls::list_fields(
+                    &store,
+                    Some(&status),
+                    Value::Null,
+                    Some(&core.host.repository),
+                    core.terminal_owner.as_deref(),
+                )
+            } else {
+                codex_omd::package_controls::list(&store, Some(&status))
+            }
+            .map_err(|e| e.to_string())?;
+            let listed = runtime
+                .configuration_listing(listed)
+                .map_err(|e| e.to_string())?;
+            codex_omd::package_controls::project_fields(listed, request.arguments)
+                .map_err(|e| e.to_string())
         }
-        "packages.preview" => {
-            let arguments = request.arguments;
-            blocking(Box::new(move || {
-                codex_omd::ModStore::open(host.root.clone())
-                    .and_then(|store| codex_omd::package_controls::preview(&store, arguments))
-                    .map(|preview| preview.public)
-                    .map_err(|error| error.to_string())
-            }))
-            .await
-        }
+        "packages.preview" => core
+            .input_runtime
+            .lock()
+            .map_err(|_| "mod_runtime_poisoned")?
+            .preview_configuration(request.arguments)
+            .map(|preview| preview.public)
+            .map_err(|e| e.to_string()),
         "packages.index" => {
             let arguments = request.arguments;
             blocking(Box::new(move || {
@@ -600,7 +670,64 @@ pub(super) async fn dispatch(
             }))
             .await
         }
-        "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
+        "packages.reload" if matches!(caller.origin, Origin::UserCommand) => {
+            codex_omd::ModStore::open(core.host.root.clone())
+                .and_then(|store| codex_omd::package_controls::reload(&store))
+                .map_err(|e| e.to_string())
+        }
+        "plugins.components" if matches!(caller.origin, Origin::UserCommand) => {
+            blocking(Box::new(move || {
+                let home = codex_omd::host::codex_home().ok_or("codex_home_unavailable")?;
+                codex_omd::ModStore::open(host.root.clone())
+                    .and_then(|store| codex_omd::plugin_component::components(&store, &home))
+                    .map_err(|error| error.to_string())
+            }))
+            .await
+        }
+        "packages.reload" | "plugins.components" => {
+            Err(format!("host_operation_user_only: {}", request.operation))
+        }
+        "settings.write" if matches!(caller.origin, Origin::UserCommand) => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Write {
+                id: Option<String>,
+                scope: Option<String>,
+                values: Value,
+                target: Option<String>,
+                #[serde(default)]
+                reset: Vec<String>,
+            }
+            let arguments: Write =
+                serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
+            let id = arguments.id.unwrap_or_else(|| caller.id.to_owned());
+            let caller = caller.id.to_owned();
+            let thread = lead.thread.to_string();
+            let cancelled = cancelled.clone();
+            Box::pin(run(
+                core,
+                lead,
+                "intercept",
+                Origin::Event,
+                move |runtime, host, active| {
+                    codex_omd::write_settings_shared(
+                        runtime,
+                        &id,
+                        &arguments.values,
+                        arguments.target.as_deref().unwrap_or("shared"),
+                        &arguments.reset,
+                        arguments.scope.as_deref(),
+                        &caller,
+                        Some(&thread),
+                        &|| active() && !cancelled.load(Ordering::Acquire),
+                        host,
+                    )
+                    .map_err(|error| error.to_string())
+                },
+            ))
+            .await
+            .ok_or("mod_runtime_poisoned")?
+        }
         "settings.write" => Err("host_operation_user_only: settings.write".into()),
         _ => surface(core, lead, caller, request, cancelled).await,
     }
@@ -737,7 +864,10 @@ pub(in crate::mods) fn blit_sink(
             result.is_ok().then(std::time::Instant::now);
         result
     };
+    let terminal_owner = core.terminal_owner.clone();
     Some(Arc::new(move |arguments, active| {
+        let _terminal_owner =
+            codex_omd::client_surface::enter_terminal_owner(terminal_owner.clone());
         current()?;
         let verified = verified.clone();
         let active: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
@@ -800,12 +930,17 @@ async fn surface(
         .grants
         .as_ref()
         .map(|grants| grants.surface_authority.clone());
-    let runtime = core.runtime.clone();
+    let runtime = core.input_runtime.clone();
     let generation = caller.generation;
     let source = caller.source.to_owned();
+    let terminal_user =
+        matches!(caller.origin, Origin::UserCommand) && core.terminal_owner.is_some();
+    let terminal_owner = core.terminal_owner.clone();
     let admitted_source = source.clone();
     let admission_cancelled = cancelled.clone();
     tokio::task::spawn_blocking(move || {
+        let _terminal_owner = codex_omd::client_surface::enter_terminal_owner(terminal_owner);
+        let _terminal_user = codex_omd::client_surface::enter_terminal_user(terminal_user);
         let _authority = surface_authority.map(codex_omd::client_surface::Authority::enter);
         let owner = id.clone();
         let admitted_capabilities = capabilities.clone();
@@ -819,10 +954,9 @@ async fn surface(
             if runtime.refresh(&|| true).is_err() {
                 return false;
             }
-            runtime.generation() == generation
-                && runtime.grants(&owner).is_some_and(|grants| {
-                    grants.source_sha256 == source && grants.capabilities == admitted_capabilities
-                })
+            runtime.grants(&owner).is_some_and(|grants| {
+                grants.source_sha256 == source && grants.capabilities == admitted_capabilities
+            })
         });
         codex_omd::client_surface::with_admission(
             &admitted_source,

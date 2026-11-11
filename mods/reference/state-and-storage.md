@@ -1,11 +1,27 @@
 # State and storage
 
 Use it when a mod keeps data: `store.*` records, evidence and binary evidence, `api.state` and where it lives,
-state migration, session UI state and the reactive helpers over `api.state`.
+state migration, session UI state and the reactive helpers over `api.state`. It also defines the session directory
+and repository the other pages refer to.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](stability-and-migration.md#experimental-entries-in-the-registry)). Every operation here needs the
 `store` capability except `api.uiState`, which needs `terminal`.
+
+## Session directory and repository
+
+Mods run in any session directory, including the home directory and `/`. The repository is the Git work tree around
+the session directory; outside one there is no repository.
+
+- Programs and sockets the host runs or passes unsandboxed (`os_access` programs, managed processes, services,
+  `exec.run` sockets) must be outside the repository, or outside the session directory when there is no repository,
+  because the agent can write there.
+- The mod store, `host.json` protected paths and secret references must be outside the session directory only when
+  it is inside a repository. Otherwise the host keeps them out of agent commands through the sandbox's denied paths.
+- `workspace.*` operations on the session directory fail with `workspace_unavailable` when there is no repository
+  and the session directory is `/`, the home directory or a directory above it, so a mod can't read or change files
+  such as `~/.ssh` through them; `root` calls on [`fs_access`](authority-grants.md#fs_access-manifest-field) roots
+  still work. Workspace change tracking is off there too, and checkout state is off wherever there is no repository.
 
 ## Durable data: `store.*` and evidence
 
@@ -79,6 +95,10 @@ evidence.read {reference, cursor?, max_bytes?} → {reference, text, cursor, byt
 `evidence.write` stores content-addressed evidence and returns a `ResourceRef` `{reference, sha256}`. The `base64`
 form is binary evidence (`binary_evidence_v1`).
 
+Evidence is bound to the mod, source digest, configuration generation, repository and current thread, including
+original tool output. Parent and child threads have separate bindings even when they share a host session.
+Each operation rechecks the effective managed, project or user selection and its current grants.
+
 | Media type | Size |
 | --- | --- |
 | `image/png`, `image/jpeg` | At most 8 MiB |
@@ -126,8 +146,8 @@ is one per mod store, per thread or per checkout.
 
 ### `api.state` compare-and-swap
 
-`api.state` is re-read before every callback and written back with a compare-and-swap. If another process wrote it
-meanwhile, the host runs the callback again against the fresh state, within the callback's 5 s budget.
+Before each callback, the host reads `api.state`. It writes the state back with a compare-and-swap: if another process
+changed it meanwhile, the host reruns the callback against the fresh state, within the callback's 5 s budget.
 
 - The rerun's host calls get the results already recorded, so no operation runs twice.
 - The clock stays at the first attempt's start, so `Date.now()` in arguments replays.
@@ -158,10 +178,11 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
   as Codex keeps `.git` read-only. Outside a Git checkout, as in a projectless session, checkout state is unavailable
   (`state_checkout_unavailable`) and nothing is written to the directory.
 
+A committed `api.state` change redraws the mod in every terminal and attached client showing the same store, checkout
+or thread state. Hooks, prompts, timers, channels and `api.uiState` stay with the terminal that caused them.
+
 These rules apply in every scope:
 
-- Mods never run with the home directory or the filesystem root as the session directory. The host stays off with a
-  notice in `/omd`.
 - `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the given THREAD and
   the checkout of their working directory. A `thread` mod run from `omd-mod command` without THREAD fails with
   `state_thread_unavailable`.
@@ -173,9 +194,9 @@ These rules apply in every scope:
 A mod raises the manifest's `state_version` when its saved state changes shape. Thread and checkout state migrate
 inside a session. Mod store state migrates with `omd-mod migrate`.
 
-- Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that thread or
-  checkout: the host runs the mod's `migrate` handler (an experimental event that needs `store`) on it and keeps the
-  previous file beside it as `<file>-backup-<sha256>`; until then registration and render reads see `null`.
+- Before the mod's next callback in a thread or checkout, the host converts state saved at another `state_version` by
+  running the mod's `migrate` handler (an experimental event that needs `store`). It keeps the previous file beside
+  the new one as `<file>-backup-<sha256>`. Until migration runs, registration and render reads see `null`.
 - A package update that changes the `state_version` of a thread- or checkout-scoped mod with `store` is refused
   (`migration_handler_required`) unless the new version registers `migrate`; an adapter-wrapped package is not
   checked.
@@ -199,7 +220,7 @@ requires `terminal`. Saved `api.state` is unchanged by it.
   escapes.
 - Strings and object keys must contain valid Unicode scalars (no lone surrogates).
 - The host checks the original serialized bytes before parsing; number reformatting does not change the limit.
-- Values are shared by host instances in the same process, store, repository, thread and package identity.
+- Values are shared by host instances in the same process, terminal, store, repository, thread and package identity.
 - Commands and component events may write; other callbacks may read.
 - Writes commit only after successful validation and cancellation checks. A revision conflict reruns the callback
   under the same replay rules as [`api.state` compare-and-swap](#apistate-compare-and-swap).

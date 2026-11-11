@@ -29,6 +29,41 @@ fn channel_sink() -> (ChangeSink, mpsc::Receiver<(String, Vec<String>)>) {
     )
 }
 
+#[tokio::test]
+async fn failed_registrations_do_not_consume_watch_slots_or_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let limits = codex_omd::mod_limits::ModLimits {
+        watches_per_mod: 2,
+        ..Default::default()
+    };
+    let watches = WorkspaceWatches::new(
+        Arc::new(FileWatcher::noop()),
+        dir.path().to_path_buf(),
+        Vec::new(),
+        limits,
+    )
+    .unwrap();
+    for attempt in 0..=limits.watches_per_mod {
+        let key = format!("key-{attempt}");
+        let (sink, _rx) = channel_sink();
+        let error = watches
+            .watch(
+                "m",
+                "sha",
+                &[".".to_owned()],
+                false,
+                false,
+                None,
+                Some((&key, "shape")),
+                sink,
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "watch_registration_failed");
+        assert!(!watches.unwatch_key("m", &key));
+    }
+    assert_eq!(watches.unwatch_all("m"), 0);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn external_changes_are_reported_relative_to_the_root() {
     let (dir, watches) = fixture();
@@ -317,11 +352,7 @@ async fn a_worktree_git_watch_reports_its_own_head_and_shared_refs_only() {
     })
     .await
     .unwrap();
-    assert_eq!(
-        seen,
-        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-        "{seen:?}"
-    );
+    assert_linked_git_events(&seen);
 
     std::fs::write(
         tree.join(".git"),
@@ -335,6 +366,19 @@ async fn a_worktree_git_watch_reports_its_own_head_and_shared_refs_only() {
             .unwrap_err()
             .to_string(),
         "watch_git_unavailable"
+    );
+}
+
+/// Late filesystem events from setup may add the root or a ref directory; the linked paths must be reported.
+fn assert_linked_git_events(seen: &std::collections::BTreeSet<String>) {
+    assert!(
+        [".git/HEAD", ".git/refs/heads/x"]
+            .iter()
+            .all(|path| seen.contains(*path))
+            && seen
+                .iter()
+                .all(|path| path.is_empty() || path == ".git" || path.starts_with(".git/")),
+        "{seen:?}"
     );
 }
 
@@ -404,11 +448,7 @@ async fn a_git_watch_follows_a_relative_gitfile_without_commondir() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        seen,
-        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-        "{seen:?}"
-    );
+    assert_linked_git_events(&seen);
 
     std::fs::remove_dir_all(modules.join("objects")).unwrap();
     let (sink, _rx) = channel_sink();
@@ -484,9 +524,5 @@ async fn a_git_watch_resolves_relative_worktree_links_from_the_git_directory() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        seen,
-        [".git/HEAD", ".git/refs/heads/x"].map(str::to_owned).into(),
-        "{seen:?}"
-    );
+    assert_linked_git_events(&seen);
 }

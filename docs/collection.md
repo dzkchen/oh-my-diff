@@ -1,7 +1,7 @@
 # Included mods
 
-Every first-party mod and port, which install profile installs it, and whether it starts on. To turn a mod on or
-off, see [Manage mods](manage-mods.md).
+The tables below list every first-party mod and port, which profile includes it and whether it starts on.
+Install mods and change their settings in `/mods`, or use the shell commands in [Manage mods](manage-mods.md).
 
 The status words on this page:
 
@@ -19,7 +19,6 @@ The status words on this page:
 | [`omd_logo`](../mods/first-party/omd_logo/README.md) | OMD Core, OMD+ | The OMD logo in the session header |
 | [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | Groups adjacent shell commands and shortens other tool calls; open a row for the full output |
 | [`omd_statusline`](../mods/first-party/omd_statusline/README.md) | OMD+ | A configurable status line; `/statusline` edits it |
-| [`omd_auto_continue`](../mods/first-party/omd_auto_continue/README.md) | OMD+ | When an approval or a question gets no answer within the wait you set (two minutes by default), declines the approval or answers the question so the turn continues |
 
 ## Off by default
 
@@ -27,30 +26,31 @@ All of these come with OMD+ only.
 
 | Mod | What it does | What it needs |
 | --- | --- | --- |
-| [`omd_frecency`](../mods/first-party/omd_frecency/README.md) | Ranks `@` file mentions by fuzzy match and how often you use them | |
-| [`omd_privacy`](../mods/first-party/omd_privacy/README.md) | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
-| [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
-| [`omd_tool_absorb`](../mods/first-party/omd_tool_absorb/README.md) | When the model repeats a read in one response, runs it once. In [code mode](../mods/reference/glossary.md#sessions-and-models), also reuses unchanged file reads; `/absorb` | |
-| [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
-| [`omd_theme`](../mods/first-party/omd_theme/README.md) | Living scenes drawn in character tiles behind the conversation, with opaque prompts and menus; `/theme` picks a scene and prints terminal background steps | |
-| [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
-| [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs in automatic batches or on `/continue` after estimated cache expiry; `/continue --compact` forces a batch; paged recall and `/mask` | Can't be on with `omd_programmable_context` |
+| [`omd_auto_continue`](../mods/first-party/omd_auto_continue/README.md) | Declines unanswered approvals and asks the agent to continue authorized work after unanswered questions. Waits two minutes by default (configurable); `omd mods enable omd_auto_continue` | |
+| [`omd_frecency`](../mods/first-party/omd_frecency/README.md) | Ranks `@` file mentions by fuzzy match and how often you use them; keeps that usage per repository ([reset it](../mods/first-party/omd_frecency/README.md#its-data)) | |
+| [`omd_privacy`](../mods/first-party/omd_privacy/README.md) | Redacts text matching its secret and personal-data rules in requests to the model, not web search, transcripts or logs; `/privacy` | |
+| [`omd_usage`](../mods/first-party/omd_usage/README.md) | A usage dialog: context, cache, cost and quota by request (Alt+a or `/usage`) | |
+| [`omd_tool_absorb`](../mods/first-party/omd_tool_absorb/README.md) | When the model repeats a read in one response, runs it once. In [code mode](../mods/reference/glossary.md#sessions-and-models), also reuses unchanged file reads; `/merged_reads` | |
+| [`omd_tool_fix`](../mods/first-party/omd_tool_fix/README.md) | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/tool_fixes` | |
+| [`omd_theme`](../mods/first-party/omd_theme/README.md) | Animates scenes behind the conversation while keeping prompts and menus opaque; `/theme` picks a scene, imports and shares [scene files](../mods/first-party/omd_theme/SCENE_FILES.md), and shows terminal background settings | Scene imports need workspace file-read access |
+| [`omd_monitor`](../mods/first-party/omd_monitor/README.md) | Watches background commands, files and GitHub pull requests, runs or deployments. Notifies the agent once on completion, failure or timeout; `/monitor` lists and cancels watches | The `autonomous` and `os` grants; GitHub monitors need `gh`, logged in |
+| [`omd_observation_mask`](../mods/first-party/omd_observation_mask/README.md) | Hides older large tool outputs and leaves notes the model can use to retrieve them; never hides an output it can't restore. Runs automatically or on `/continue` after estimated cache expiry. `/continue --compact` forces a batch; `/hidden_outputs` lists hidden outputs | Can't be on with `omd_programmable_context`; continue mode needs `omd_continue` |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 
 ## Experimental
 
-These haven't been tested fully yet, so no install profile installs them. Install one with `omd install ID`, then turn it
-on with `omd mods enable ID`. [Support](support.md#versions) lists the Node versions.
+These haven't been tested fully yet, so no install profile installs them. Install one from Available in `/mods`, then
+turn it on there (from a shell: `omd install ID`, then `omd mods enable ID`). [Support](support.md#versions) lists the Node versions.
 
 | Mod | What it does | What it needs |
 | --- | --- | --- |
 | [`omd_inspector`](../mods/first-party/omd_inspector/README.md) | `/inspect`: the session's mode, profile and active mods | |
 | [`omd_model_picker`](../mods/first-party/omd_model_picker/README.md) | A compact `/model` and reasoning-effort picker | |
-| [`omd_idle_compact`](../mods/first-party/omd_idle_compact/README.md) | Replaces a large idle conversation with a shorter summary just before the provider's prompt cache expires | |
+| [`omd_idle_compact`](../mods/first-party/omd_idle_compact/README.md) | Compacts a large idle conversation near the estimated prompt-cache deadline, so the next request uses a shorter summary | |
 | [`omd_preview`](../mods/first-party/omd_preview/README.md) | Previews HTML and files, draws Mermaid diagrams | Node on your `PATH` |
 | [`omd_continue`](../mods/first-party/omd_continue/README.md) | `/continue [note]` resumes interrupted work in the current session | |
-| [`omd_checkpoint`](../mods/first-party/omd_checkpoint/README.md) | Snapshots your files around each turn; `/undo` puts back what the last turn changed and `/redo` brings it back, `/undo show` previews it, never over your later edits without `force` | A Git repository and `git` on your `PATH` |
+| [`omd_checkpoint`](../mods/first-party/omd_checkpoint/README.md) | Saves files before and after each turn. `/undo show` previews a reversal, `/undo` applies it and `/redo` restores it. Overwriting your later edits requires `force` | A Git repository and `git` on your `PATH` |
 | [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) | Pins Codex's current plan above the prompt | |
 | [`omd_btw`](../mods/first-party/omd_btw/README.md) | Replaces `/btw`: side questions answered from the conversation without entering it, remembered across questions and resumes | |
 | [`omd_lsp_sync`](../mods/first-party/omd_lsp_sync/README.md) | Tells the agent about the errors each of its edits introduces; also go to definition, references and rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
@@ -58,34 +58,33 @@ on with `omd mods enable ID`. [Support](support.md#versions) lists the Node vers
 | [`omd_claude_cli`](../mods/first-party/omd_claude_cli/README.md) | Claude models in `/model`, using your Claude plan or API credits | Claude CLI 2.1.307 or later and Node; see [use other providers](use-other-providers.md#use-claude) |
 | [`omd_profiles`](../mods/first-party/omd_profiles/README.md) | Switch between ChatGPT accounts, API keys and compatible providers | Node; see [use other providers](use-other-providers.md#use-an-api-key-or-another-provider) |
 | [`omd_cursor`](../mods/first-party/omd_cursor/README.md) | Cursor models in `/model`, using your Cursor account; `/cursor` | A Cursor account, Node and `pnpm`; see [use other providers](use-other-providers.md#use-cursor) |
-| [`omd_workflow`](../mods/first-party/omd_workflow/README.md) | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
+| [`omd_workflow`](../mods/first-party/omd_workflow/README.md) | Workflow checkpoints and completion checks | A contract and routes: turn the mod on, run `/omd_workflow:routes`, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | [`omd_advisor`](../mods/first-party/omd_advisor/README.md) | A second model reviews plans and claimed completion | Its own model allowance; see its README |
 | [`omd_source_knowledge`](../mods/first-party/omd_source_knowledge/README.md) | Keeps file-backed facts, test evidence and approved lessons for later tasks in this repository | |
-| [`omd_programmable_context`](../mods/first-party/omd_programmable_context/README.md) | A Python workspace that lasts through the session, where the model loads files, keeps results and hands work to child agents, and a session harness of notes, memories, skills and agent specs it can propose changes to; `/refine` | The `omd-code-execution` plugin's Python kernel |
+| [`omd_programmable_context`](../mods/first-party/omd_programmable_context/README.md) | Lets the model load files, keep results and delegate work from a persistent Python workspace. `/refine` reviews its proposed changes to session notes, memories, skills and agent definitions | The `omd-code-execution` plugin's Python kernel |
 | [`omd_mini`](../mods/first-party/omd_mini/README.md) | `omd mini`: a minimal session that prints into your terminal's scrollback, with a bare prompt and one status line; `/omd_mini:switch` | A terminal |
-| [`omd_subagent_router`](../mods/first-party/omd_subagent_router/README.md) | Runs subagents on the model your prompt names ("use sonnet 5.5 as subagents to research") or per-role settings, including another provider's; `delegate_task` runs background workers | The other provider set up, such as `omd_claude_cli` |
-| [`omd_workspace`](../mods/first-party/omd_workspace/README.md) | Arranges the chat with Git changes, a shell, your own terminal panels and other mods' panels: presets such as a tabbed dock or a corner layout, moves, drag, resize and focus keys, arranging with the keyboard alone and F6 to show or hide the panels; `/workspace` | `git` on your `PATH` for the Changes panel |
+| [`omd_subagent_router`](../mods/first-party/omd_subagent_router/README.md) | Runs subagents on the model named in your prompt or role settings, including models from another provider; `delegate_task` starts background workers | The other provider set up, such as `omd_claude_cli` |
+| [`omd_workspace`](../mods/first-party/omd_workspace/README.md) | Arranges Git changes, a shell, terminal programs and mod panels around the chat. Pick a layout with `/workspace`, move and resize with the keyboard or mouse, and show or hide panels with F6 | `git` on your `PATH` for the Changes panel |
 | [`omd_lazygit`](../mods/first-party/omd_lazygit/README.md) | Runs lazygit in the session, full screen or as a workspace panel; its edits open in your editor or become `@path` mentions; `/lazygit` | `lazygit` on your `PATH`, allowed to run outside the sandbox; uses the experimental terminal pane API |
 | [`omd_yazi`](../mods/first-party/omd_yazi/README.md) | Runs the yazi file manager in the session; the files you pick become `@path` mentions; `/yazi` | `yazi` on your `PATH`, allowed to run outside the sandbox; uses the experimental terminal pane API |
 | [`omd_git`](../mods/first-party/omd_git/README.md) | A lazygit-style Git panel in the workspace dock: stage files and hunks, branches, commits, stash, push and pull; `/git` | `omd_workspace` turned on and `git` on your `PATH` |
-| [`omd_files`](../mods/first-party/omd_files/README.md) | A yazi-style file manager in the workspace dock: Miller columns, tabs, find, frecency jump, previews and file operations; `/files` | `omd_workspace` turned on; `omd_frecency` for the jump list |
+| [`omd_files`](../mods/first-party/omd_files/README.md) | A file manager in the workspace dock with parent, current-folder and preview columns, tabs, search, frequently used files and file operations; `/files` | `omd_workspace` turned on; `omd_frecency` for the jump list |
 | [`omd_plan_removal`](../mods/first-party/omd_plan_removal/README.md) | Removes `/plan` and plan mode, also for apps that connect to Codex such as T3 Code | |
-| [`omd_awake`](../mods/first-party/omd_awake/README.md) | `/awake` replaces Codex's Prevent sleep while running: keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
+| [`omd_awake`](../mods/first-party/omd_awake/README.md) | `/awake` keeps the Mac awake during turns and subagent work, including with the lid closed, then releases the hold. Replaces Codex's Prevent sleep while running | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
 | [`omd_verify_stop`](../mods/first-party/omd_verify_stop/README.md) | When the agent stops after editing code without a passing test or check, asks it once to verify, and once more to fix a failed check | The autonomous grant |
 | [`omd_edit_guard`](../mods/first-party/omd_edit_guard/README.md) | Syntax-checks each file an edit or shell command changes and tells the model at once when the edit broke it (Python, JSON, JavaScript, shell, Ruby, PHP, Go) | The checker on the sandbox's `PATH` |
 | [`omd_loop_guard`](../mods/first-party/omd_loop_guard/README.md) | Tells the agent when a tool call keeps returning the same error or output, so it changes approach instead of looping | |
 | [`omd_env_bootstrap`](../mods/first-party/omd_env_bootstrap/README.md) | Snapshots the workspace once per thread (OS, files, languages, toolchains, test commands, git) and keeps it in the cached prompt prefix | |
-| [`omd_plan_anchor`](../mods/first-party/omd_plan_anchor/README.md) | Repeats the open plan steps at the end of a tool result every few calls | `update_plan` turned on: [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) or `[tools.update_plan] enabled = true`, which costs each new thread's first-request prompt cache |
+| [`omd_plan_anchor`](../mods/first-party/omd_plan_anchor/README.md) | Repeats the open plan steps at the end of a tool result every few calls | `update_plan` turned on: [`omd_plan_panel`](../mods/first-party/omd_plan_panel/README.md) or `[tools.update_plan] enabled = true`, which makes each new thread's first request miss the shared prompt cache |
 
 In a [small benchmark](benchmarks/harness-mods.md), `omd_observation_mask`, `omd_verify_stop`, `omd_edit_guard` and
 `omd_env_bootstrap`, with the `omd-output-budget` component, cost an estimated 25% less than stock Codex (95% CI 19%
-to 31%) with no measurable change in pass rate. It was one model on 43 tasks, a pilot rather than a release
-measurement. The other mods in this table weren't measured.
+to 31%) with no measurable change in pass rate. The pilot used one model on 43 tasks; it doesn't measure the current release. The other mods in this table weren't measured.
 
 ## Ports
 
-No install profile installs these. Install one with `omd install ID`, then turn it on with `omd mods enable ID`. Their
-READMEs are in [`mods/ports`](../mods/ports).
+No install profile installs these. Install one from Available in `/mods`, then turn it on there (from a shell:
+`omd install ID`, then `omd mods enable ID`). Their READMEs are in [`mods/ports`](../mods/ports).
 
 | Mod | What it does |
 | --- | --- |

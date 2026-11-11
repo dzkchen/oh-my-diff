@@ -1,10 +1,9 @@
 # Agent mod guide
 
-Use this guide to build an Oh My Diff (OMD) mod for a user, test it offline and install it only with their consent.
-It's for coding agents and gives the rules, the order of work, where to look things up and the mistakes agents make
-most. The steps themselves are in the [mod author guides](#guides-to-follow).
+Build and test Oh My Diff (OMD) mods in a scratch store. Ask the user before installing one in their real store.
+Follow the [work order](#work-in-this-order) below and use the [mod author guides](#guides-to-follow) for examples.
 
-Everything here is for mod API `1.0.0` on Codex `0.166.0`, Apple Silicon macOS. Only that API version loads, so check
+Everything here is for mod API `1.0.0` on Codex `0.167.0`, Apple Silicon macOS. Only that API version loads, so check
 `api` in a mod's `mod.json` before you reuse older code. Tool versions are in [Support](support.md).
 
 ## Rules
@@ -35,8 +34,8 @@ See [Mods, plugins, skills and hooks](how-omd-works.md#mods-plugins-skills-and-h
 ## Work in this order
 
 1. Check the tools: `command -v omd-mod-author omd-mod omd`, `node --version` (24.18 or a later 24.x, needed only by
-   `omd-mod-author`) and `pnpm --version` (11.14 or later). If `omd-mod-author` is missing, OMD isn't installed. Tell
-   the user and link [Install](install.md).
+   `omd-mod-author`) and `pnpm --version` (11.14 or later). If a command is missing, check that OMD is installed and
+   `~/.local/bin` is on `PATH`. If OMD isn't installed, tell the user and link [Install](install.md).
 2. Create the project with `omd-mod-author create ./ID ID`, then `cd ID` and run `pnpm install` (the scaffold includes
    TypeScript). To start from a bigger mod, copy an example: `omd-mod-author example ./release_check release_check`, or
    `omd-mod-author examples ./examples` for the ones that ship with the tools.
@@ -75,6 +74,7 @@ See [Mods, plugins, skills and hooks](how-omd-works.md#mods-plugins-skills-and-h
 | Scratch store, watch, status, reports, cost | [Run and debug a mod](mod-authors/run-and-debug.md) |
 | Author tools without an OMD install | [Run the author tools from a source checkout](mod-authors/run-from-source.md) |
 | Scenario files, TypeScript tests, mocks | [Test a mod](mod-authors/test-a-mod.md) |
+| Component choices, tones, layout and keyboard behavior | [Terminal UI style guide](STYLEGUIDE.md) |
 | Install, Git, npm, update, roll back | [Install, share and update a mod](mod-authors/publish-a-mod.md) |
 | Ship skills and a mod together | [Bundle a mod in a plugin](mod-authors/bundle-in-a-plugin.md) |
 | Change the shape of saved state | [Change a mod's saved state](mod-authors/migrate-state.md) |
@@ -129,6 +129,13 @@ file.
   `enum`, `default`, `title`, `description` and `choices: "routes"`, which only a `string` property without `enum`
   may have. `integer`, `minimum` and similar keys are refused.
 - If `activate` registers the same command, handler, timer or component name twice, it fails with `conflict: NAME`.
+- `console.log` runs but its output goes nowhere. Return the value as `display` and read it in `pnpm run run`, or
+  show it with `terminal.notice`; see
+  [logging from a mod](../mods/reference/authoring.md#logging-from-a-mod).
+- `pnpm test` runs only `mod.test.json` (plus `*.test.ts`/`*.test.mjs`) and refuses other `*.test.json` files, so
+  keep every scenario in `mod.test.json`.
+- `pnpm watch STORE --once` exits non-zero with `activation_failed` when the mod fails to load, so don't read
+  "reloaded" output alone as success.
 - The scaffold's `debug.test.json` calls `/hello`. Delete it once you replace that command, or `pnpm debug` fails.
 - `expect` in `mod.test.json` is deep equality of the whole value. Test interceptors in a `*.test.ts` file, because
   their results include source line numbers.
@@ -143,13 +150,14 @@ file.
   `package_approval_required`. Show the user the permissions in `mod.json` and pass `--yes` only after they agree.
   `omd mods disable` doesn't ask for approval, so it's safe without a terminal.
 - `omd install --scope project` fails with `package_scope_conflict` if the same mod is installed for the user.
-- A folder install stops after any edit, with `untrusted_source`, until `omd mods update ID`.
+- A folder install stops after any edit, with `source_changed`, until `omd mods update ID`.
 - A changed `state_version` keeps the mod off with `state_migration_required` until its `migrate` handler runs.
 - The model finds mod tools through tool search, named `mod_<id>_<tool>`.
 - A denial you don't understand: run `omd-mod-author explain 'DENIAL TEXT'`.
 
-For stateful workflows, opt into experimental `session_activation_v1`: ordinary variables then survive session
-callbacks, while views render from saved state. `api.background<T, R>` schedules typed work directly from commands
-or buttons with status, pending cancellation and reload-safe results; it requires `background_jobs_v1` and
-thread-scoped state. Per-message UI uses `assistant_message` events and render `props.message_id`, not text digests.
+With experimental `session_activation_v1`, ordinary variables survive session callbacks; views still render from
+saved state. Commands and buttons can schedule work with `api.background<T, R>`, inspect its status and cancel it
+while pending. Reload abandons pending work; call `start()` again to retry. This helper requires `background_jobs_v1`
+and thread-scoped state.
+To attach UI to a message, use `assistant_message` events and render `props.message_id` to identify it.
 See [session activations and background jobs](../mods/reference/events-and-lifecycle.md#session-activations-and-background-jobs-experimental).

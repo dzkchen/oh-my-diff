@@ -1,24 +1,25 @@
 # omd_auto_continue
 
-When a turn stops on an approval or a question while you're away, it answers for you after a wait (two minutes by
-default) so the turn keeps going. It never approves anything. Approvals are declined, and questions get an instruction
-to carry on. It's on by default in OMD+. OMD Core doesn't include it.
+Declines unanswered approvals and responds to unanswered questions after a wait (two minutes by default). For
+questions, it tells the agent to continue already-authorized work and use best judgment for optional choices.
+It never approves an action or settles a required decision. It's off by default in OMD+. OMD Core doesn't include it.
 
-## Turn it off
+## Turn it on
 
-Turn it off in `/mods`, or run:
+Turn it on in `/mods`, or run:
 
 ```sh
-omd mods disable omd_auto_continue
+omd mods enable omd_auto_continue
 ```
+
+To turn it off again, run `omd mods disable omd_auto_continue`.
 
 [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
 
-When the agent stops to wait for you, on an approval, a permission request, a question it asks (`request_user_input`) or
-an MCP elicitation (a form a connected tool server asks you to fill in), a toast shows how long you have. If you answer
-first, your answer wins.
+A toast counts down the wait for an approval, permission request, agent question (`request_user_input`) or MCP
+elicitation (a form from a connected tool server). If you answer before the deadline, the mod uses your answer.
 
 When the time runs out:
 
@@ -28,8 +29,12 @@ When the time runs out:
 - Questions get an instruction to continue already-authorized work, use best judgment for optional choices, and state
   the assumption. A timeout does not grant permission, authorize spending or settle a required decision.
 
-A transcript note tells you that the request timed out. The model receives the tool's answer or denial. The note
-doesn't change any earlier message, so the provider can still reuse its cache of the conversation.
+A transcript note tells you that the request timed out. The first time it ever fires, on any thread, the note also
+says to open `/mods` to turn it off; that one-time flag is kept in the mod's user-scope store. The model receives the
+tool's answer or denial. For each
+declined approval it also gets one short notice with its next request, saying the decline was a timeout, not a refusal,
+and not to retry actions that need approval. Neither note changes any earlier message, so the provider can still reuse
+its cache of the conversation.
 
 The deadline starts when the request appears. Delayed delivery or a repeated notification does not extend it.
 Requests explicitly addressed to another thread are ignored. That includes a sub-agent's approval blocking its lead:
@@ -42,8 +47,9 @@ on the timeout.
 | --- | --- | --- |
 | `timeout_seconds` | `120` | Wait before answering (1 to 86,400). `0` turns the timer off, including for requests already waiting. |
 
-Change settings in `/mods`, or from a shell with `omd-mod`, the low-level tool that works on a mod store directly. The
-shell form replaces the mod's saved settings:
+Change settings in `/mods`, which changes one setting at a time, or from a shell with `omd-mod`, the low-level tool
+that works on a mod store directly. The shell form replaces all of the mod's saved settings, so any setting you leave
+out goes back to its default:
 
 ```sh
 STORE=~/.local/share/oh-my-diff/stores/full

@@ -10,6 +10,7 @@ import tempfile
 
 from scripts import release_lock as release
 from scripts import install_support as support
+from scripts import build_provenance, release_artifacts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +47,7 @@ def archive_payload(artifact_dir, destination):
         copy_sources(payload)
         binaries = payload / "artifacts"
         binaries.mkdir()
-        for name in release.BINARIES + (release.AUTHOR_ARCHIVE, release.build_provenance.RECORD):
+        for name in release_artifacts.BINARIES + (release.AUTHOR_ARCHIVE, build_provenance.RECORD):
             shutil.copy2(artifact_dir / name, binaries / name)
         files = {path.relative_to(payload).as_posix():
                  {"sha256": support.digest(path), "bytes": path.stat().st_size}

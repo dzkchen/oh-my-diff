@@ -17,16 +17,16 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts import release_artifacts
+
 TMP = Path(os.environ.get("OMD_WORK_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
-BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
-         "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bin", "codex-code-mode-host", "--bin", "omd",
-         "--bin", "omd-contract", "--bin", "omd-broker", "--bin", "omd-mod", "--bin", "omd-runner"]
 CHECK = ["check", "--locked", "-p", "codex-cli", "-p", "codex-exec", "-p", "codex-omd", "-p", "codex-omd-runner",
          "-p", "codex-omd-extension", "-p", "codex-tui", "-p", "codex-core", "-p", "codex-core-plugins", "-p", "codex-git-utils",
          "--tests"]
-SUMMARY = re.compile(r"^test result|^\s+Summary \[|^\s+(FAIL|TIMEOUT) \[|^error|FAILED|panicked|^warning: unused")
+SUMMARY = re.compile(r"^test result|^\s+(Summary \[|Finished |Timing report|(?:FAIL|TIMEOUT) \[)|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
 GENERATORS = ("plugin_lock", "mods_lock")
@@ -70,6 +70,13 @@ def scratch_repo():
     lock = pin()
     if not SCRATCH.exists():
         run("git", "clone", "--quiet", "--depth", "1", "--branch", lock["tag"], "--no-checkout", lock["repository"], SCRATCH)
+    if not (SCRATCH / ".git/config").exists():
+        git(SCRATCH, "init", "--quiet")
+        git(SCRATCH, "remote", "add", "origin", lock["repository"])
+        git(SCRATCH, "config", "core.ignorecase", "true")
+        git(SCRATCH, "config", "core.precomposeunicode", "true")
+    if not (SCRATCH / ".git/HEAD").exists():
+        (SCRATCH / ".git/HEAD").write_text(lock["commit"] + "\n")
     if not git(SCRATCH, "tag", "-l", lock["tag"]).strip():
         git(SCRATCH, "fetch", "--quiet", "origin", "tag", lock["tag"])
     return lock["commit"]
@@ -134,7 +141,7 @@ def cargo_env(work, cargo_args=()):
     if cached and env.get("CARGO_INCREMENTAL", "0") != "0":
         raise SystemExit("sccache requires CARGO_INCREMENTAL=0; unset CARGO_INCREMENTAL or disable sccache")
     env.setdefault("CARGO_INCREMENTAL", "0" if cached else "1")
-    target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]
+    target = run("rustc", "-vV", cwd=work / "codex/codex-rs").decode().split("host: ", 1)[1].splitlines()[0]
     env.setdefault("RUSTY_V8_ARCHIVE", str(V8 / f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz"))
     env.setdefault("RUSTY_V8_SRC_BINDING_PATH", str(V8 / f"src_binding_ptrcomp_sandbox_release_{target}.rs"))
     return env
@@ -161,6 +168,7 @@ def test_runner(work, cargo_args, env, output):
 
 
 def cargo_run(work, log, cargo_args, *, skip_runner=False):
+    started = time.monotonic()
     log = Path(log).resolve()
     print(f"log={log}", flush=True)
     env = cargo_env(work, cargo_args)
@@ -168,13 +176,13 @@ def cargo_run(work, log, cargo_args, *, skip_runner=False):
     with log.open("w") as output:
         status = (0 if skip_runner else test_runner(work, cargo_args, env, output)) or subprocess.run(
             ["cargo", *cargo_args], cwd=work / "codex/codex-rs", env=env, stdout=output, stderr=subprocess.STDOUT).returncode
-        output.write(f"exit={status}\n")
+        elapsed = time.monotonic() - started
+        output.write(f"exit={status} elapsed_s={elapsed:.2f}\n")
     text = log.read_text(errors="replace").splitlines()
-    # A panic's assertion message follows on the next lines.
     lines = [line for index, line in enumerate(text)
              if SUMMARY.search(line) or any("panicked" in previous for previous in text[max(0, index - 3):index])]
     print("\n".join(lines[:40]))
-    print(f"exit={status} log={log}")
+    print(f"exit={status} elapsed_s={elapsed:.2f} log={log}")
     return status
 
 
@@ -220,19 +228,34 @@ def cargo(args):
     raise SystemExit(cargo_run(work_dir(args.name), args.log, args.cargo_args, skip_runner=args.skip_runner))
 
 
+def dev_setup(args):
+    setup(args)
+    v8(args)
+
+
 def dev_check(args):
     work = work_dir(args.name)
     selected = [flag for package in args.packages for flag in ("-p", package)]
-    raise SystemExit(cargo_run(work, work / "logs/dev-check.log", ["check", "--locked", *selected]))
+    raise SystemExit(cargo_run(work, work / "logs/dev-check.log", ["check", "--locked", "--timings", *selected]))
 
 
 def dev_build(args):
     work = work_dir(args.name)
     status = cargo_run(work, work / "logs/dev-build.log", [
-        "build", "--locked", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd-runner", "--bin", "omd-runner",
+        "build", "--locked", "--timings", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd-runner", "--bin", "omd-runner",
         "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host"])
     if status == 0:
         print(work / "target/debug/codex")
+    raise SystemExit(status)
+
+
+def dev_mods(args):
+    work = work_dir(args.name)
+    status = cargo_run(work, work / "logs/dev-mods.log", [
+        "build", "--locked", "--timings", "-p", "codex-omd-extension", "--bin", "omd-mod",
+        "-p", "codex-omd-runner", "--bin", "omd-runner"])
+    if status == 0:
+        print(work / "target/debug/omd-mod")
     raise SystemExit(status)
 
 
@@ -346,26 +369,26 @@ def pack_sdk(output):
 
 def artifacts(args):
     work = work_dir(args.name)
-    sys.path.insert(0, str(ROOT))
     from scripts import build_provenance, release_lock
     built = work / "target/release"
     output = work / "artifacts"
     log = work / "logs/build-artifacts.log"
     tree, environment = work / "codex", cargo_env(work)
-    before = build_provenance.inputs(tree, BUILD, environment)
+    before = build_provenance.inputs(tree, release_artifacts.BUILD, environment)
     (built / build_provenance.RECORD).unlink(missing_ok=True)
-    if cargo_run(work, log, BUILD):
+    if cargo_run(work, log, release_artifacts.BUILD):
         raise SystemExit(1)
-    build_provenance.record_build(built, before, build_provenance.inputs(tree, BUILD, environment))
+    build_provenance.record_build(built, before, build_provenance.inputs(tree, release_artifacts.BUILD, environment))
     unsigned = build_provenance.verify(built, signed=False, expected_inputs=before)
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir()
-    for name in build_provenance.BINARIES:
-        shutil.copy2(built / name, output / name)
+    for artifact in release_artifacts.ARTIFACTS:
+        shutil.copy2(built / artifact.name, output / artifact.name)
     if build_provenance.hashes(output) != unsigned["unsigned"]:
         raise SystemExit("release artifacts changed during copying")
-    for name in release_lock.HARDENED:
-        release_lock.sign(output / name)
+    for artifact in release_artifacts.ARTIFACTS:
+        if artifact.hardened:
+            release_lock.sign(output / artifact.name)
     build_provenance.record_signing(output, unsigned)
     pack_sdk(output)
     print(output)
@@ -396,6 +419,9 @@ def main():
     command.add_argument("log", help="log file path")
     command.add_argument("cargo_args", nargs=argparse.REMAINDER)
     command.set_defaults(handler=cargo)
+    command = commands.add_parser("dev-setup", help="prepare a scratch tree and fetch its verified V8 prebuilt")
+    command.add_argument("name")
+    command.set_defaults(handler=dev_setup)
     command = commands.add_parser("dev-check", help="check only the selected crate(s), without compiling tests")
     command.add_argument("name")
     command.add_argument("packages", nargs="+", help="Cargo package names")
@@ -403,6 +429,9 @@ def main():
     command = commands.add_parser("dev-build", help="build debug codex, omd-runner and codex-code-mode-host")
     command.add_argument("name")
     command.set_defaults(handler=dev_build)
+    command = commands.add_parser("dev-mods", help="build debug omd-mod and omd-runner without the terminal app")
+    command.add_argument("name")
+    command.set_defaults(handler=dev_mods)
     command = commands.add_parser("storage", help="show each scratch tree's target disk usage in MiB")
     command.set_defaults(handler=storage)
     command = commands.add_parser("clean", help="delete only selected trees' targets; stop their builds first")

@@ -60,7 +60,7 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 ## `tool_call` props
 
 Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
-`interrupted`), `duration_ms` (null without a recorded start and completion, such as a patch row drawn live) and
+`interrupted`), `duration_ms` (null without a recorded start and completion) and
 `expanded`, and per kind:
 
 | `kind` | Props |
@@ -70,9 +70,14 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 | `patch` | `files` (`path`, `change`, `added`, `removed`), `error` |
 | `web_search` | `action`, `query` |
 | `agent` | `tool`, `agents`, `prompt` |
-| `mcp` | `server`, `tool`, `arguments`, `output_lines` |
-| `dynamic` | `tool`, `arguments`, `output_lines` |
+| `mcp` | `server`, `tool`, `arguments`, `output_lines`, `error` |
+| `dynamic` | `tool`, `arguments`, `output_lines`, `error` |
 | `image` | `tool`, `path`, `prompt` |
+
+Patch rows are inserted on completion. Declined patches show an informational notice, matching restored
+history; they do not produce a `tool_call` render target. MCP and dynamic `error` is the first non-empty line of a
+failed call's error or output (null otherwise), cut like other render text. Patch `duration_ms` is a number when timing is recorded,
+otherwise null.
 
 Group and file limits:
 

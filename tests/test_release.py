@@ -1,4 +1,6 @@
+import copy
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -167,6 +169,105 @@ class ReleaseTests(unittest.TestCase):
         edits = [call.args for call in run.call_args_list[2:]]
         self.assertEqual(edits, [("gh", "release", "edit", "v1.1.0", "--repo", release.REPOSITORY, "--draft=true"),
                                  ("gh", "release", "edit", "v1.0.0", "--repo", release.REPOSITORY, "--latest")])
+
+
+class ReleaseValidationReuseTests(unittest.TestCase):
+    def setUp(self):
+        self.commit = "a" * 40
+        self.run_id, self.artifact_id = 42, 73
+        self.candidate = {"id": self.run_id, "run_attempt": 1, "path": ".github/workflows/release.yml",
+                          "event": "workflow_dispatch", "head_sha": self.commit, "head_branch": "main",
+                          "status": "completed", "conclusion": "success",
+                          "repository": {"full_name": release.REPOSITORY}, "head_repository": {"full_name": release.REPOSITORY}}
+        self.jobs = {"jobs": [{"name": name, "status": "completed", "conclusion": "success", "head_sha": self.commit,
+                               "run_id": self.run_id, "run_attempt": 1} for name in sorted(release.REUSE_JOBS)],
+                     "total_count": len(release.REUSE_JOBS)}
+        self.artifacts = {"total_count": 1, "artifacts": [{"id": self.artifact_id, "name": "package", "expired": False,
+                           "size_in_bytes": 100, "workflow_run": {"id": self.run_id, "head_sha": self.commit}}]}
+        self.empty = {"reuse_run_id": "", "reuse_artifact_id": ""}
+        self.environment = {"GITHUB_SHA": self.commit, "GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_RUN_ID": "99"}
+        self.enterContext(mock.patch.dict(os.environ, self.environment, clear=True))
+        self.enterContext(mock.patch.object(release, "lock_version", return_value="1.0.0"))
+        self.enterContext(mock.patch("builtins.print"))
+
+    def responses(self, candidate=None, jobs=None, artifacts=None):
+        return [{"workflow_runs": [self.candidate if candidate is None else candidate]},
+                self.jobs if jobs is None else jobs, self.artifacts if artifacts is None else artifacts]
+
+    def test_reuses_only_the_successful_attempt_and_pins_its_package_artifact(self):
+        with mock.patch.object(release, "github_json", side_effect=self.responses()) as api:
+            self.assertEqual(release.reusable_validation("1.0.0"), {"reuse_run_id": "42", "reuse_artifact_id": "73"})
+        self.assertIn(f"head_sha={self.commit}", api.call_args_list[0].args[0])
+        self.assertIn("/runs/42/attempts/1/jobs?", api.call_args_list[1].args[0])
+        self.assertIn("/runs/42/artifacts?name=package", api.call_args_list[2].args[0])
+
+    def test_other_commits_branches_events_repositories_and_unfinished_runs_do_not_qualify(self):
+        variants = [{"head_sha": "b" * 40}, {"head_branch": "release/v1.0.0"}, {"event": "push"},
+                    {"path": ".github/workflows/nightly.yml"}, {"status": "in_progress"}, {"conclusion": "failure"},
+                    {"repository": {"full_name": "someone/fork"}}, {"head_repository": {"full_name": "someone/fork"}},
+                    {"id": 99}, {"id": "42"}, {"run_attempt": 0}]
+        for changed in variants:
+            with self.subTest(changed=changed), mock.patch.object(
+                    release, "github_json", side_effect=self.responses(candidate=self.candidate | changed)) as api:
+                self.assertEqual(release.reusable_validation("1.0.0"), self.empty)
+                self.assertEqual(api.call_count, 1)
+
+    def test_every_validation_job_must_pass_for_the_same_commit_and_attempt(self):
+        variants = []
+        for job_name in release.REUSE_JOBS:
+            for fields in ({"conclusion": "failure"}, {"conclusion": "skipped"}, {"status": "in_progress"},
+                           {"head_sha": "b" * 40}, {"run_attempt": 2}, {"run_id": 41}):
+                jobs = copy.deepcopy(self.jobs)
+                next(job for job in jobs["jobs"] if job["name"] == job_name).update(fields)
+                variants.append(jobs)
+        missing = copy.deepcopy(self.jobs)
+        missing["jobs"].pop()
+        missing["total_count"] -= 1
+        duplicate = copy.deepcopy(self.jobs)
+        duplicate["jobs"][0] = duplicate["jobs"][1].copy()
+        variants += [missing, duplicate, self.jobs | {"total_count": 101}]
+        for jobs in variants:
+            with self.subTest(jobs=jobs), mock.patch.object(release, "github_json", side_effect=self.responses(jobs=jobs)) as api:
+                self.assertEqual(release.reusable_validation("1.0.0"), self.empty)
+                self.assertEqual(api.call_count, 2)
+
+    def test_missing_expired_ambiguous_or_wrong_commit_packages_do_not_qualify(self):
+        variants = [{"total_count": 0, "artifacts": []},
+                    {"total_count": 2, "artifacts": self.artifacts["artifacts"] * 2},
+                    self.artifacts | {"total_count": 101}]
+        for fields in ({"expired": True}, {"expired": None}, {"name": "host-binaries"}, {"size_in_bytes": 0},
+                       {"id": "73"}, {"workflow_run": {"id": 41, "head_sha": self.commit}},
+                       {"workflow_run": {"id": 42, "head_sha": "b" * 40}}):
+            variants.append({"total_count": 1, "artifacts": [self.artifacts["artifacts"][0] | fields]})
+        for artifacts in variants:
+            with self.subTest(artifacts=artifacts), mock.patch.object(
+                    release, "github_json", side_effect=self.responses(artifacts=artifacts)):
+                self.assertEqual(release.reusable_validation("1.0.0"), self.empty)
+
+    def test_api_failures_and_incomplete_responses_fall_back_to_full_validation(self):
+        for response in (SystemExit("API unavailable"), OSError("gh is absent"), ValueError("invalid JSON"), {},
+                         {"workflow_runs": [{"id": 42}]}, {"workflow_runs": None}):
+            with self.subTest(response=response), mock.patch.object(release, "github_json", side_effect=[response]):
+                self.assertEqual(release.reusable_validation("1.0.0"), self.empty)
+
+    def test_version_or_missing_github_context_never_queries_earlier_runs(self):
+        with mock.patch.object(release, "github_json") as api:
+            for version in ("1.0.1", "v1.0.0"):
+                with self.assertRaisesRegex(SystemExit, "committed release version"):
+                    release.reusable_validation(version)
+            for environment in ({"GITHUB_REPOSITORY": "someone/fork"}, {"GITHUB_SHA": "not-a-commit"}):
+                with mock.patch.dict(os.environ, environment):
+                    self.assertEqual(release.reusable_validation("1.0.0"), self.empty)
+            api.assert_not_called()
+
+    def test_cli_appends_reuse_ids_to_the_workflow_output_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "outputs"
+            output.write_text("version=1.0.0\n")
+            with mock.patch("sys.argv", ["release.py", "reuse", "1.0.0", "--github-output", str(output)]), \
+                    mock.patch.object(release, "github_json", side_effect=self.responses()):
+                release.main()
+            self.assertEqual(output.read_text(), "version=1.0.0\nreuse_run_id=42\nreuse_artifact_id=73\n")
 
 
 if __name__ == "__main__":

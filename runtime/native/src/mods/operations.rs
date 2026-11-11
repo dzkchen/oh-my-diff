@@ -1,43 +1,39 @@
 use super::*;
 use crate::workspace_operations::WorkspaceAuthority;
+use codex_omd::ModInvokeOptions;
 use codex_omd::data_store::Origin;
 
-#[derive(Clone, Default)]
-pub(crate) struct DataScope(pub(super) Arc<Mutex<Option<codex_omd::scoped_data::ScopedDataHosts>>>);
+pub(super) fn data_hosts(
+    lead: &Lead,
+    authority: WorkspaceAuthority,
+) -> codex_omd::scoped_data::ScopedDataHosts {
+    codex_omd::scoped_data::ScopedDataHosts::new(
+        lead.host.root.clone(),
+        authority.repository,
+        authority.session_root,
+        authority.session_database,
+        lead.thread.to_string(),
+    )
+}
 
-impl DataScope {
-    async fn call(
-        &self,
-        lead: &Lead,
-        authority: WorkspaceAuthority,
-        caller: &Caller<'_>,
-        request: ModHostCall,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<Value, String> {
-        let root = lead.host.root.clone();
-        let scope = self.0.clone();
-        let thread = lead.thread.to_string();
-        let (id, source) = (caller.id.to_owned(), caller.source.to_owned());
-        tokio::task::spawn_blocking(move || {
-            let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
-            scope
-                .get_or_insert_with(|| {
-                    codex_omd::scoped_data::ScopedDataHosts::new(
-                        root,
-                        authority.repository.clone(),
-                        authority.session_root.clone(),
-                        authority.session_database.clone(),
-                        thread,
-                    )
-                })
-                .call(&id, &source, &request.operation, request.arguments, || {
-                    !cancelled.load(Ordering::Acquire)
-                })
-                .map_err(|error| error.to_string())
-        })
-        .await
-        .map_err(|error| error.to_string())?
-    }
+pub(super) async fn data_call(
+    lead: &Lead,
+    authority: WorkspaceAuthority,
+    caller: &Caller<'_>,
+    request: ModHostCall,
+    cancelled: Arc<AtomicBool>,
+) -> Result<Value, String> {
+    let mut hosts = data_hosts(lead, authority);
+    let (id, source) = (caller.id.to_owned(), caller.source.to_owned());
+    tokio::task::spawn_blocking(move || {
+        hosts
+            .call(&id, &source, &request.operation, request.arguments, || {
+                !cancelled.load(Ordering::Acquire)
+            })
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 pub(super) struct Caller<'a> {
@@ -52,7 +48,11 @@ pub(super) struct Caller<'a> {
 pub(super) fn event_allows(event: &str, operation: &str) -> bool {
     crate::generic_host::event_allows(event, operation)
         || super::expansion::event_allows(event)
-        || event == "command" && matches!(operation, "process.status" | "process.exchange")
+        || event == "command"
+            && matches!(
+                operation,
+                "process.status" | "process.exchange" | "settings.write" | "packages.reload"
+            )
         || event == "context"
             && (codex_omd::scoped_data::operation(operation)
                 || matches!(
@@ -74,6 +74,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                     "app.routes"
                         | "model.complete"
                         | "model.fork"
+                        | "routes.list"
                         | "session.info"
                         | "tools.list"
                         | "turns.activity"
@@ -141,7 +142,7 @@ fn notify_contract(core: &Core, lead: &Lead, payload: Value) {
     tokio::task::spawn_blocking(move || {
         let _thread = codex_omd::StateThread::enter(Some(thread));
         if let Ok(mut runtime) = runtime.lock() {
-            let _ = runtime.event("contract", payload);
+            let _ = runtime.event("contract", payload, ModInvokeOptions::default());
         }
     });
 }
@@ -355,6 +356,9 @@ async fn run(
     if operation != "contract.status" {
         lead.restricted(&operation, &request.arguments)?;
     }
+    if codex_omd::workspace_refused(&operation, &request.arguments, &host.repository) {
+        return Err("workspace_unavailable".into());
+    }
     if super::expansion::served(&operation) {
         return super::expansion::dispatch(core, lead, &caller, request, cancelled).await;
     }
@@ -445,11 +449,7 @@ async fn run(
     }
     if codex_omd::scoped_data::operation(&operation) {
         let authority = authority(lead, call).await?;
-        return lead
-            .session
-            .data
-            .call(lead, authority, &caller, request, cancelled.clone())
-            .await;
+        return data_call(lead, authority, &caller, request, cancelled.clone()).await;
     }
     if operation == "workspace.request_rename" {
         if call.is_none() {
@@ -809,6 +809,22 @@ mod tests {
         }
         for operation in ["process.start", "process.which", "process.stop"] {
             assert!(!event_allows("command", operation), "{operation}");
+        }
+    }
+
+    #[test]
+    fn terminal_configuration_mutations_are_admitted_only_during_commands() {
+        for operation in ["settings.write", "packages.reload"] {
+            assert!(event_allows("command", operation));
+            for event in [
+                "component_event",
+                "component_post",
+                "context",
+                "tool",
+                "terminal",
+            ] {
+                assert!(!event_allows(event, operation), "{event}: {operation}");
+            }
         }
     }
 

@@ -2,6 +2,8 @@ use super::*;
 use codex_extension_api::ToolBatchContributor;
 use codex_extension_api::ToolBatchInput;
 use codex_extension_api::ToolBatchMerge;
+use codex_omd::ModHostCallback;
+use codex_omd::ModInvokeOptions;
 
 const MERGES: usize = 32;
 
@@ -83,8 +85,10 @@ pub(super) fn parse(
 }
 
 impl ToolBatchContributor for Mods {
-    fn batching(&self, thread_store: &ExtensionData) -> bool {
-        self.expansion.tool_batch.load(Ordering::Acquire) && lead_thread(thread_store)
+    fn batching(&self, thread_store: &ExtensionData, turn_store: &ExtensionData) -> bool {
+        let selected = clients::for_store(turn_store);
+        let this = selected.as_deref().unwrap_or(self);
+        this.expansion.tool_batch.load(Ordering::Acquire) && lead_thread(thread_store)
     }
 
     fn merge_tool_batch<'a>(
@@ -92,6 +96,8 @@ impl ToolBatchContributor for Mods {
         input: ToolBatchInput<'a>,
     ) -> ExtensionFuture<'a, Vec<ToolBatchMerge>> {
         Box::pin(async move {
+            let selected = clients::for_store(input.turn_store);
+            let this = selected.as_deref().unwrap_or(self);
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return Vec::new();
             };
@@ -111,41 +117,41 @@ impl ToolBatchContributor for Mods {
                 })
                 .collect::<Vec<_>>();
             let payload = json!({"batch_id": input.batch_id, "thread_id": lead.thread.to_string(), "calls": calls});
-            let runtime = self.runtime.clone();
+            let runtime = this.runtime.clone();
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let result = tokio::task::spawn_blocking(move || {
-                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned".to_owned())?;
+                let mut runtime = runtime
+                    .lock()
+                    .map_err(|_| "mod_runtime_poisoned".to_owned())?;
                 let owner = runtime
                     .replacement_owner("tool_batch")
                     .ok_or("tool_batch_owner_unavailable")?;
                 let generation = runtime.generation();
+                let mut host = |_| {
+                    Err(std::io::Error::other(
+                        "host_operation_unavailable: tool_batch runs without host operations",
+                    ))
+                };
+                let options = ModInvokeOptions {
+                    active: &|| !cancelled.load(Ordering::Acquire),
+                    host: ModHostCallback::Own(&mut host),
+                    ..ModInvokeOptions::default()
+                };
                 let value = runtime
-                    .invoke_with(
-                        &owner,
-                        generation,
-                        "tool_batch",
-                        "",
-                        payload,
-                        || !cancelled.load(Ordering::Acquire),
-                        |_| {
-                            Err(std::io::Error::other(
-                                "host_operation_unavailable: tool_batch runs without host operations",
-                            ))
-                        },
-                    )
+                    .invoke(&owner, generation, "tool_batch", "", payload, options)
                     .map_err(|error| error.to_string())?;
                 parse(&owner, value, &known).map_err(|error| format!("{owner}: {error}"))
             })
             .await
             .map_err(|error| error.to_string())
             .and_then(|result| result);
-            self.cleanup_failed(Some(&lead)).await;
+            this.cleanup_failed(Some(&lead)).await;
             match result {
                 Ok(merges) => merges,
                 Err(error) => {
-                    self.views.diagnostic(
-                        &self.host,
+                    this.views.diagnostic(
+                        &this.host,
                         "tool_batch",
                         Some(format!("{error}; calls dispatched individually")),
                     );

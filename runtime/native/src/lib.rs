@@ -92,7 +92,6 @@ pub(crate) struct Session {
     contract_state: PathBuf,
     processes: Arc<managed_process::ManagedProcesses>,
     power: Arc<codex_omd::power::Leases>,
-    data: mods::DataScope,
     access: mods::AccessState,
 }
 
@@ -160,6 +159,24 @@ pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
 ) -> Result<(), String> {
+    let result = install_active(registry, manager);
+    if let Err(error) = &result
+        && let Some(root) = std::env::var_os(codex_omd::MOD_STORE_ENV)
+        && let root = PathBuf::from(root)
+        && root.is_absolute()
+        && let Ok(root) = root.canonicalize()
+        && let Ok(repository) = std::env::current_dir().and_then(|path| path.canonicalize())
+        && !codex_omd::inside_repository(&root, &repository)
+    {
+        let _ = inactive(&root, error.clone());
+    }
+    result
+}
+
+fn install_active(
+    registry: &mut ExtensionRegistryBuilder<Config>,
+    manager: Weak<ThreadManager>,
+) -> Result<(), String> {
     if !codex_omd::effective_mode()?.mod_host_enabled() {
         return Ok(());
     }
@@ -170,19 +187,8 @@ pub fn install(
     let repository = std::env::current_dir()
         .and_then(|path| path.canonicalize())
         .map_err(|error| error.to_string())?;
-    if !root.is_absolute() || root.canonicalize().map_err(|error| error.to_string())? != root {
-        return Err("the mod store must be canonical and outside the repository".into());
-    }
-    if codex_omd::app_routes::unscoped_directory(&repository) {
-        return inactive(
-            &root,
-            format!(
-                "{} is the home or filesystem root; start Oh My Diff in a project directory",
-                repository.display()
-            ),
-        );
-    }
-    if root.starts_with(&repository) {
+    let root = canonical_store_root(&root)?;
+    if codex_omd::inside_repository(&root, &repository) {
         return Err("the mod store must be canonical and outside the repository".into());
     }
     let stamp = host_config_stamp(&root);
@@ -210,11 +216,18 @@ pub fn install(
     });
     let root = host.root.clone();
     model_windows::load(&root);
-    codex_omd::package_controls::set_connected_models(|provider, model| {
-        codex_models_manager::runtime_models::find(model)
+    codex_omd::package_controls::set_connected_models(|terminal_owner, provider, model| {
+        codex_models_manager::runtime_models::find_for(terminal_owner, model)
             .is_some_and(|(owner, _)| owner == provider)
     });
     mods::install(registry, host).or_else(|error| inactive(&root, error))
+}
+
+fn canonical_store_root(root: &std::path::Path) -> Result<PathBuf, String> {
+    if !root.is_absolute() {
+        return Err("the mod store must be absolute and outside the repository".into());
+    }
+    root.canonicalize().map_err(|error| error.to_string())
 }
 
 fn inactive(root: &std::path::Path, error: String) -> Result<(), String> {
@@ -498,10 +511,6 @@ impl Host {
             codex_omd::data_store::prune_thread_directories(&sessions, |name| {
                 name == current || name.starts_with("ledger-")
             });
-            codex_omd::data_store::prune_thread_directories(
-                &self.root.join("data").join("threads"),
-                |name| name == current,
-            );
         }
         let task = Arc::new(ledger::open(
             &sessions,
@@ -535,7 +544,6 @@ impl Host {
             )),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
             power: Arc::default(),
-            data: mods::DataScope::default(),
             access: mods::AccessState::default(),
             evidence,
         }))
@@ -589,6 +597,7 @@ impl Host {
                 .flatten()
         });
         let account = Account {
+            mod_runtime: None,
             task: session.task.clone(),
             owner: owner.into(),
             model,
@@ -755,6 +764,98 @@ fn thread_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_store_root_normalizes_aliases_and_refuses_relative_paths() {
+        let store = tempfile::tempdir().unwrap();
+        let canonical = store.path().canonicalize().unwrap();
+        assert_eq!(
+            canonical_store_root(&canonical.join(".")).unwrap(),
+            canonical
+        );
+        assert!(canonical_store_root(std::path::Path::new("relative-store")).is_err());
+        let alternate_case = canonical.with_file_name(
+            canonical
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_uppercase(),
+        );
+        if alternate_case.exists() {
+            assert_eq!(canonical_store_root(&alternate_case).unwrap(), canonical);
+        }
+    }
+
+    #[test]
+    fn activation_failure_writes_status_before_returning() {
+        const CHILD: &str = "OMD_ACTIVATION_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let mut registry = ExtensionRegistryBuilder::default();
+            let error = install(&mut registry, Weak::new()).unwrap_err();
+            let root = PathBuf::from(std::env::var_os(codex_omd::MOD_STORE_ENV).unwrap());
+            let status: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("mod-status.json")).unwrap())
+                    .unwrap();
+            assert_eq!(status["activation_error"], error);
+            assert_eq!(status["mods"], serde_json::json!([]));
+            assert_eq!(status["rejected"], serde_json::json!([]));
+            return;
+        }
+        let store = tempfile::tempdir().unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::activation_failure_writes_status_before_returning",
+            ])
+            .env(CHILD, "1")
+            .env(codex_omd::MODE_ENV, "invalid-mode")
+            .env(codex_omd::MOD_STORE_ENV, store.path())
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+    }
+
+    #[test]
+    fn mod_store_under_a_launch_folder_is_refused_only_inside_a_git_work_tree() {
+        const CHILD: &str = "OMD_STORE_SCOPE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let refused = install(&mut ExtensionRegistryBuilder::default(), Weak::new())
+                .err()
+                .is_some_and(|error| error.contains("outside the repository"));
+            let launch = std::env::current_dir().unwrap();
+            assert_eq!(refused, codex_omd::git_work_tree(&launch).is_some());
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let store = home.path().join(".omd/store");
+        std::fs::create_dir_all(&store).unwrap();
+        for repository in [false, true] {
+            if repository {
+                std::fs::create_dir(home.path().join(".git")).unwrap();
+            }
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::mod_store_under_a_launch_folder_is_refused_only_inside_a_git_work_tree",
+                ])
+                .current_dir(home.path())
+                .env(CHILD, "1")
+                .env("HOME", home.path())
+                .env(codex_omd::MODE_ENV, "omd")
+                .env(codex_omd::MOD_STORE_ENV, &store)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+        }
+    }
 
     #[test]
     fn workspace_operation_guard_excludes_other_sessions_in_same_repository() {

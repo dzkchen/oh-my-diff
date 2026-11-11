@@ -62,3 +62,33 @@ test('an install without update info shows only the unmanaged notice', () => {
   const dialog = run('terminal', {}, { ...state, open: true }).value.sites.dialog.components[1];
   assert.deepEqual(dialog.children.map(item => item.id), ['omd_update_header', 'omd_update_unmanaged', 'omd_update_close']);
 });
+
+test('a blocked release is not reported as the newest one', () => {
+  const ids = info => run('terminal', {}, { ...run('start', {}, null, { info }).state, open: true }).value.sites.dialog.components[1].children.map(item => item.id);
+  const blocked = ids({ installed: '1.0.0', checked_at: 1, blocked: { version: '1.1.0', reasons: ['built for x86_64-apple-darwin'] } });
+  assert.ok(blocked.includes('omd_update_blocked'));
+  assert.ok(!blocked.includes('omd_update_current'));
+  assert.ok(ids({ installed: '1.0.0', checked_at: 1 }).includes('omd_update_current'));
+});
+
+test('an update names retired mods, new default mods left off and new permissions', () => {
+  const last = { from: '1.0.0', to: '1.1.0', at: 5, retired: ['omd_old'], left_off: ['omd_new'], capabilities: { omd_git: ['exec'] } };
+  const info = { installed: '1.1.0', checked_at: 1, last, last_mods: { serial: 2, changed: ['omd_logo'], at: 6, capabilities: { omd_logo: ['network'] } } };
+  const state = run('start', {}, null, { info }).state;
+  assert.deepEqual(state.banner, [
+    'Oh My Diff was updated from 1.0.0 to 1.1.0. Retired and turned off: omd_old. New default mods, left off (turn them on in /mods): omd_new. New permissions: omd_git (exec).',
+    'First-party mods were updated: omd_logo. New permissions: omd_logo (network).',
+  ]);
+  const children = run('terminal', {}, { ...state, open: true }).value.sites.dialog.components[1].children;
+  assert.match(children.find(item => item.id === 'omd_update_last').text.replace(/\n/g, ' '), /^From 1\.0\.0: Retired and turned off: omd_old\. .*omd_git \(exec\)\.$/);
+  assert.match(children.find(item => item.id === 'omd_update_last_mods').text, /omd_logo \(network\)/);
+});
+
+test('a waiting first-party mod update opens a dialog whose ids are all unique', () => {
+  const mods = { omd: '1.4.2', serial: 1, changed: ['omd_theme', 'omd_privacy'] };
+  const info = { installed: '1.4.2', checked_at: 1, mods, pending_mods: mods, blocked: { version: '1.5.0', reasons: ['upstream Codex 0.167.x is required'] } };
+  const children = run('terminal', {}, { ...run('start', {}, null, { info }).state, open: true }).value.sites.dialog.components[1].children;
+  const ids = children.map(item => item.id);
+  assert.equal(new Set(ids).size, ids.length, ids.join(' '));
+  assert.ok(ids.includes('omd_update_mods_out') && ids.includes('omd_update_mods'));
+});

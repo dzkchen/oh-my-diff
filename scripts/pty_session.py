@@ -16,7 +16,7 @@ import termios
 import threading
 import time
 
-from scripts.profile_acceptance import PROVIDER_ENV_PREFIXES
+from scripts import acceptance_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -106,8 +106,8 @@ def environment(base, binaries, repo, store, url, name="main", profile="full"):
         'wire_api = "responses"', "requires_openai_auth = false", "request_max_retries = 0", "stream_max_retries = 0",
         f"[projects.{json.dumps(str(repo))}]", 'trust_level = "trusted"']) + "\n")
     node = Path(call(["mise", "which", "node"], ROOT).stdout.strip())
-    env = {key: value for key, value in os.environ.items()
-           if not key.startswith(("OMD_", "CODEX_", "TERM_PROGRAM", "LC_TERMINAL", "TMUX", "COLORTERM", *PROVIDER_ENV_PREFIXES))}
+    env = {key: value for key, value in acceptance_environment.clean_environment().items()
+           if not key.startswith(("TERM_PROGRAM", "LC_TERMINAL", "TMUX", "COLORTERM"))}
     env.update(HOME=str(base / f"home-{name}"), CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(base / f"sqlite-{name}"),
                OMD_MODE="omd", OMD_INSTALL_PROFILE=profile, OMD_MOD_STORE=str(store), TERM="xterm-256color",
                LANG="en_CA.UTF-8", PATH=f"{binaries}:{node.parent}:/usr/bin:/bin:/usr/sbin:/sbin")

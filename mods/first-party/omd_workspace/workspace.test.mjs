@@ -33,6 +33,12 @@ function run(event, payload, { state = null, settings = {}, name, world = {} } =
       return args.action === 'read' ? { text: '', running: !world.exited, exit_code: null } : { session: args.session, running: true };
     }
     if (operation === 'terminal.notice') return {};
+    if (operation === 'terminal.prompt') {
+      if (!('picked' in world)) throw new Error(world.promptError ?? 'client_surface_operation_unavailable: no attached client serves terminal.prompt');
+      return world.picked ? { status: 'accepted', values: [world.picked] } : { status: 'declined' };
+    }
+    if (operation === 'packages.list') return { packages: [{ id: 'omd_workspace', scope: world.managed ? 'managed' : 'user', enabled: true }], generation: 7, reload_error: null };
+    if (operation === 'packages.apply') return world.keep ? { status: 'declined' } : { status: 'applied', generation: 8 };
     throw new Error(`unexpected host operation ${operation}`);
   };
   const request = { source, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', assets, api: manifest.api, capabilities: manifest.capabilities, state, settings: { ...defaults, ...settings }, settings_file: { path: '/store/settings/omd_workspace.json', status: 'missing', error: null }, event, name, payload, hook_budget_ms: 10000 };
@@ -306,6 +312,25 @@ test('tab commands show panels in tabs and cycle a tabbed panel', () => {
   const groups = register(register(null, 'vcs'), 'files');
   const focused = draw({ ...groups, recent: ['files'] }, { settings: two }).key_contexts.find(context => context.when?.focus?.includes(CHANGES));
   assert.deepEqual([focused.keys['['].action, focused.keys[']'].action], [{ command: 'workspace', args: 'tab 2' }, { command: 'workspace', args: 'tab 2' }]);
+});
+
+test('/workspace off asks where, and turns the mod off for this terminal or every terminal through package controls', () => {
+  const asked = command('off', null, { world: { picked: 'conversation' } });
+  assert.deepEqual([asked.value.display, asked.state.off], ['Workspace off', true]);
+  const kept = command('off', null, { world: { picked: null } });
+  assert.deepEqual([kept.value.display, kept.state, kept.calls.length], ['Nothing changed', null, 1]);
+  const failing = command('off', null, { world: { promptError: 'callback_cancelled' } });
+  assert.deepEqual([failing.value.display, failing.state], ['Workspace stays on: callback_cancelled', null]);
+  const here = command('off', null, { world: { picked: 'terminal' } });
+  assert.deepEqual([here.value.display, here.state], ['Workspace is off in this terminal until you close it; /mods turns it back on', null]);
+  assert.deepEqual(here.calls.at(-1).arguments, { action: 'disable', id: 'omd_workspace', scope: 'user', target: 'terminal', expected_generation: 7 });
+  const everywhere = command('off Everywhere', null);
+  assert.deepEqual(everywhere.calls.map(call => call.operation), ['packages.list', 'packages.apply']);
+  assert.deepEqual(everywhere.calls.at(-1).arguments, { action: 'disable', id: 'omd_workspace', scope: 'user', expected_generation: 7 });
+  assert.equal(command('off everywhere', null, { world: { keep: true } }).value.display, 'Nothing changed');
+  const managed = command('off terminal', null, { world: { managed: true } });
+  assert.deepEqual([managed.value.display, managed.calls.map(call => call.operation)], ['Workspace stays on: your administrator manages this mod', ['packages.list']]);
+  assert.match(command('off later', null).value.display, /^Usage: \/workspace off/);
 });
 
 test('turning the workspace off draws nothing and on brings it back', () => {

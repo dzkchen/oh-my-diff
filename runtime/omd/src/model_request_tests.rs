@@ -178,7 +178,7 @@ fn stream_results_keep_identity_and_validate_tool_arguments() {
     let reasoning = json!({"kind": "reasoning", "index": 0, "protected": true});
     assert!(!valid_stream_result(&json!({"chunks": []}), &reasoning));
     assert!(valid_stream_result(
-        &json!({"chunks": [reasoning.clone()]}),
+        &json!({"chunks": [reasoning]}),
         &reasoning
     ));
 }

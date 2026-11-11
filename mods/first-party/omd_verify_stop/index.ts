@@ -1,14 +1,16 @@
 import type { Json, ModAPI } from '../../api.d.ts';
 
-type State = { seq: number; edited: number; passed: number; failed: number; failure: string; blocked: boolean; probed: boolean; files: string[]; added: string[]; continued: number; pending: Record<string, boolean> };
+type State = { seq: number; edited: number; passed: number; failed: number; failure: string; blocked: boolean; probed: boolean; files: string[]; added: string[]; continued: number; pending: Record<string, { check: boolean; proves: boolean }> };
 
 const fresh = (): State => ({ seq: 0, edited: 0, passed: 0, failed: 0, failure: '', blocked: false, probed: false, files: [], added: [], continued: 0, pending: {} });
 const LIST = 16;
 const FAILURE_CHARS = 1500;
 const NOT_CODE = /\.(md|mdx|rst|txt|adoc|log|out)$/i;
-const CHECK = /^(pytest|py\.test|tox|nox|python3?\s+-m\s+(pytest|unittest)|(python3?\s+)?\S*(runtests\.py|manage\.py\s+test)|cargo\s+(test|check|clippy|build|nextest)|go\s+(test|vet|build)|(pnpm|npm|yarn|bun)\s+(run\s+)?(test|check|typecheck|build)\b|npx\s+(jest|vitest|mocha|tsc)|jest|vitest|mocha|tsc|make\s+(test|check)|ctest|mvn\s+\S*(test|verify)|\S*gradlew?\s+\S*(test|check)|rspec|rake\s+test|phpunit|dotnet\s+test|swift\s+(test|build)|sbt\s+\S*test|mix\s+test)(?![\w-])/;
+const CHECK = /^(pytest|py\.test|tox|nox|python3?\s+-m\s+(pytest|unittest)|(python3?\s+)?\S*(runtests\.py|manage\.py\s+test)|cargo\s+(test|check|clippy|build|nextest)|go\s+(test|vet|build)|(pnpm|npm|yarn|bun)\s+(run\s+)?(test|check|typecheck|build)\b|(?:npx|(?:pnpm|yarn|bun)(?:\s+(?:exec|dlx))?)\s+(jest|vitest|mocha|tsc)|node\s+(?:--?\S+\s+)*--test|mise\s+(?:run\s+)?(?:\S+:)?(?:test|check)|jest|vitest|mocha|tsc|make\s+(test|check)|ctest|mvn\s+\S*(test|verify)|\S*gradlew?\s+\S*(test|check)|rspec|rake\s+test|(?:vendor\/bin\/)?phpunit|dotnet\s+test|swift\s+(test|build)|sbt\s+\S*test|mix\s+test)(?![\w-])/;
 const PREFIX = /^(?:\(|(?:ba|z)?sh\s+-l?c\s+|['"]|\w+=\S*\s+|(?:timeout\s+\S+|time|nice|env|uv\s+run|poetry\s+run|pipenv\s+run|pdm\s+run|hatch\s+run|bundle\s+exec)\s+)+/;
-const FAILED = /\b[1-9]\d* (?:failed|errors?)\b|^(?:FAILED|FAIL|ERROR)\b|Traceback \(most recent call last\)|panicked at|^error(?:\[E\d+\])?:|npm ERR!/m;
+const FAILED = /\b[1-9]\d* (?:failed|failing|failures?|errors?)\b|^(?:FAILED|FAIL|ERROR)\b|^FAILURES!|Traceback \(most recent call last\)|panicked at|^error(?:\[E\d+\])?:|npm ERR!/m;
+const PIPEFAIL = /^set\s+(?:-\S+\s+)*-\S*o\s+pipefail\s*(?:;|&&|\n)/;
+const WRAPPED = /^(?:ba|z)?sh\s+-l?c\s+(['\"])([\s\S]*)\1$/;
 const BLOCKED = /No module named|ModuleNotFoundError|command not found|: not found$|Could not find a version that satisfies|Temporary failure in name resolution|Could not resolve host|ENOTFOUND|Network is unreachable/m;
 const SCRIPT_WRITE = /(?<!std(?:out|err))\.write\(|write_text\(|writeFile|open\([^)]*,\s*['"][wa]/;
 const SCRATCH = /['"](?:\/tmp|\/private\/tmp|\/var\/folders)\//;
@@ -102,13 +104,17 @@ export default function activate(api: ModAPI) {
       const session = String(field(event.arguments, 'session_id'));
       const code = EXIT.exec(event.text)?.[1];
       if (!(session in state.pending) || code === undefined) return null;
-      if (state.pending[session]) checked(state, Number(code), text);
+      const { check, proves } = state.pending[session];
+      if (check && (Number(code) !== 0 || proves)) checked(state, Number(code), text);
       delete state.pending[session];
     } else {
       const cmd = command(event.tool, event.arguments);
       if (!cmd) return null;
       const parts = segments(cmd);
       const check = parts.some(part => CHECK.test(part));
+      const plain = cmd.trim().replace(WRAPPED, '$2').replace(HEREDOC, '<<$2$3').replace(QUOTED, "''");
+      const piped = segments(plain).some(part => CHECK.test(part) && part.includes('|')) && !PIPEFAIL.test(plain);
+      const proves = !piped && !/\|\||;|\n/.test(plain.replace(PIPEFAIL, ''));
       if (!state.edited && (check || parts.some(part => RUN.test(part)))) state.probed = true;
       const code = EXIT.exec(event.text)?.[1];
       if (parts.length > 1 || (code === undefined ? event.success : Number(code) === 0)) {
@@ -119,8 +125,11 @@ export default function activate(api: ModAPI) {
         for (const part of parts) if (/^rm\s/.test(part)) part.split(/\s+/).slice(1).filter(word => !word.startsWith('-')).forEach(path => forget(state, path.replace(/^\.\//, '')));
       }
       const session = RUNNING.exec(event.text)?.[1];
-      if (session) state.pending[session] = check;
-      else if (check) checked(state, (code === undefined ? !event.success : Number(code) !== 0) || (cmd.includes('|') && FAILED.test(text)) ? 1 : 0, text);
+      if (session) state.pending[session] = { check, proves };
+      else if (check) {
+        const failed = (code === undefined ? !event.success : Number(code) !== 0) || (cmd.includes('|') && FAILED.test(text));
+        if (failed || proves) checked(state, failed ? 1 : 0, text);
+      }
     }
     save(state);
     return null;

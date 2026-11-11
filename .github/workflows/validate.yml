@@ -13,6 +13,7 @@ permissions:
 
 env:
   CARGO_INCREMENTAL: '0'
+  CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
   CARGO_BUILD_JOBS: '3'
   CARGO_PROFILE_TEST_DEBUG: '0'
   OMD_RELEASE_VERSION: ${{ inputs.version }}
@@ -33,6 +34,7 @@ jobs:
     steps: &rust-job
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d
         with:
@@ -64,10 +66,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}-${{ github.sha }}
+          key: sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}
           restore-keys: |
             sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json', 'mise.toml', '.github/scripts/build.py') }}-
-            sccache-${{ github.job }}-${{ runner.os }}-
+            sccache-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Validate
         id: validation
         run: python3 .github/scripts/ci.py validate --job "$GITHUB_JOB" ${OMD_RELEASE_VERSION:+--release}

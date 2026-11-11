@@ -107,10 +107,11 @@ export default function activate(api: ModAPI) {
     }
     if (!how) {
       const queued = api.host.tryCall('turns.queue', { prompt: text, key: fires.map(m => m.id).join('.').slice(0, 64) });
-      how = queued.ok ? QUEUED[queued.value.status] : `not delivered (${queued.error.split(':')[0]})`;
+      how = queued.ok ? QUEUED[queued.value.status] ?? `not delivered (${queued.value.status})` : `not delivered (${queued.error.split(':')[0]})`;
     }
+    const lost = how.startsWith('not delivered');
     for (const m of fires) m.delivered = how;
-    api.host.tryCall('terminal.notice', { text: clip(`omd_monitor: ${fires.map(m => `${m.id} ${m.outcome}`).join(', ')}`, 200), kind: 'info', placement: 'toast', ttl_ms: 10_000, id: 'monitor' });
+    api.host.tryCall('terminal.notice', { text: clip(`omd_monitor: ${fires.map(m => `${m.id} ${m.outcome}`).join(', ')}${lost ? `; ${how} to the model` : ''}`, 200), kind: lost ? 'warning' : 'info', placement: 'toast', ttl_ms: 10_000, id: 'monitor' });
   };
 
   const commit = (s: State, fires: Mon[]) => {
@@ -385,9 +386,15 @@ export default function activate(api: ModAPI) {
 
   const rearm = (restarted: boolean) => {
     const s = load();
-    if (!active(s).length) return;
+    if (!s.mons.length) return;
     const thread = api.session().thread_id;
-    for (const m of active(s)) m.thread = thread;
+    const owned = s.mons.filter(m => m.thread === thread);
+    if (owned.length !== s.mons.length) {
+      s.mons = owned;
+      delete s.due;
+      persist(s);
+    }
+    if (!active(s).length) return;
     const fires: Mon[] = [];
     for (const m of active(s)) if (m.deadline <= Date.now()) finish(m, 'timeout', 'the deadline passed while OMD was not running', fires);
     reconcile(s.mons, restarted, fires);

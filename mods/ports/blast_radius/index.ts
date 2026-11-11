@@ -1,13 +1,15 @@
 import type { ExecResult, ModAPI } from '@oh-my-diff/mod-api';
 
 type Kind = 'rm' | 'reset' | 'clean' | 'push' | 'checkout' | 'migrate';
-type Risk = { kind: Kind; label: string; args: string[]; dir: string | null; tool?: string; via?: string[] };
-type Report = { summary: string; lines: string[]; more: number; note: string };
+type Risk = { kind: Kind; label: string; args: string[]; dir: string | null; tool?: string; via?: string[]; forward?: boolean };
+type Report = { summary: string; lines: string[]; more: number; note: string; idle?: boolean };
 
 const LIST_MAX = 10;
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const PREFIXES = new Set(['command', 'exec', 'env', 'nohup', 'time', 'then', 'do', 'else', '!']);
 const SUDO_VALUE = new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-T', '-U']);
+const PLAIN_DISCARD = new Set(['.', '--', '--hard', '-f', '--force', '--worktree', '-W', '-q', '--quiet']);
+const COMPOUND = /[&;|\n`]|\$\(/;
 const READ_ONLY = new Set(['ls', 'cat', 'echo', 'printf', 'grep', 'rg', 'find', 'less', 'head', 'tail', 'cd', 'git']);
 
 const RM_SCRIPT = [
@@ -34,6 +36,12 @@ const RUNNERS = new Set(['', 'npx', 'pnpm', 'pnpm exec', 'yarn', 'bunx']);
 const MIGRATE_LABELS: Record<string, string> = { alembic: 'alembic upgrade', rails: 'db:migrate', prisma: 'prisma migrate', django: 'manage.py migrate', unknown: 'migrate' };
 
 const tokenize = (text: string) => Array.from(text.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g), m => m[1] ?? m[2] ?? m[3]);
+
+const operands = (args: string[]) => {
+  const end = args.indexOf('--');
+  const options = end < 0 ? args : args.slice(0, end);
+  return [...options.filter(a => !a.startsWith('-') || a === '-'), ...(end < 0 ? [] : args.slice(end + 1))];
+};
 
 const joinDir = (dir: string | null, arg: string | undefined) =>
   arg === undefined || arg === '~' || arg.startsWith('/') || arg.startsWith('~/') ? arg ?? '~' : dir ? `${dir}/${arg}` : arg;
@@ -71,10 +79,12 @@ function segment(text: string, dir: string | null, pushed: (string | null)[]): R
   }
   if (cmd === 'popd') return { cd: pushed.length ? pushed.pop() as string | null : '-' };
   if (cmd === 'rm' || cmd.endsWith('/rm')) {
-    const flags = args.filter(a => a.startsWith('-'));
+    const end = args.indexOf('--');
+    const options = end < 0 ? args : args.slice(0, end);
+    const flags = options.filter(a => a.startsWith('-') && a !== '-');
     const short = (letter: string) => flags.some(f => /^-[^-]/.test(f) && f.includes(letter));
     if (flags.includes('--recursive') || short('r') || short('R') || flags.includes('--force') || short('f')) {
-      return { kind: 'rm', label: `rm ${flags.join(' ')}`.trim(), args: args.filter(a => !a.startsWith('-') || a === '-'), dir };
+      return { kind: 'rm', label: `rm ${flags.join(' ')}`.trim(), args: operands(args), dir };
     }
   }
   if (cmd === 'git') {
@@ -103,7 +113,9 @@ function segment(text: string, dir: string | null, pushed: (string | null)[]): R
     : /\bmanage\.py\s+migrate\b/.test(joined) ? 'django'
     : !READ_ONLY.has(cmd) && args.includes('migrate') ? 'unknown' : null;
   const at = words.indexOf('prisma');
-  return tool ? { kind: 'migrate', label: MIGRATE_LABELS[tool], args: [], dir, tool, via: tool === 'prisma' && at >= 0 ? words.slice(0, at) : [] } : null;
+  const forward = tool === 'alembic' || (tool === 'rails' && !/db:migrate:|VERSION=/.test(joined)) || (tool === 'prisma' && /\bmigrate\s+deploy\b/.test(joined))
+    || (tool === 'django' && words.slice(words.indexOf('migrate') + 1).every(a => a.startsWith('-')));
+  return tool ? { kind: 'migrate', label: MIGRATE_LABELS[tool], args: [], dir, tool, via: tool === 'prisma' && at >= 0 ? words.slice(0, at) : [], forward } : null;
 }
 
 function classify(command: string): Risk | null {
@@ -145,8 +157,8 @@ export default function activate(api: ModAPI) {
   };
   const gitRun = (cwd: string | undefined, argv: string[]) => run(cwd, 'env', ['LC_ALL=C', 'git', '--no-optional-locks', ...argv]);
   const git = (cwd: string | undefined, ...argv: string[]) => out(gitRun(cwd, argv), 'git');
-  const listed = (items: string[], summary: string, note: string): Report =>
-    ({ summary, lines: items.slice(0, LIST_MAX), more: Math.max(0, items.length - LIST_MAX), note });
+  const listed = (items: string[], summary: string, note: string, idle = false): Report =>
+    ({ summary, lines: items.slice(0, LIST_MAX), more: Math.max(0, items.length - LIST_MAX), note, idle: idle && !items.length });
 
   const folder = (workdir: string | undefined, dir: string | null) => {
     if (dir === '-' || dir?.startsWith('~')) throw new Error(`cannot follow cd ${dir}`);
@@ -158,12 +170,12 @@ export default function activate(api: ModAPI) {
   };
 
   const measureRm = (targets: string[], cwd: string | undefined): Report => {
-    if (!targets.length) return { summary: 'rm with no paths', lines: [], more: 0, note: 'No paths to expand.' };
+    if (!targets.length) return { summary: 'rm with no paths', lines: [], more: 0, note: 'No paths to expand.', idle: true };
     if (targets.some(t => /^~|[$`]/.test(t))) throw new Error('a path uses ~ or a shell expansion');
     const [head, ...rest] = out(run(cwd, 'bash', ['-c', RM_SCRIPT, 'blast-radius', ...targets]), 'bash').split('\n').filter(Boolean);
     const [files, kb, found] = head.trim().split(/\s+/).map(Number);
     const note = `Paths: ${targets.join(' ')}`;
-    if (!found) return { summary: `delete nothing: no file matches ${targets.join(' ')}`, lines: [], more: 0, note: "The paths don't exist, so rm has nothing to remove." };
+    if (!found) return { summary: `delete nothing: no file matches ${targets.join(' ')}`, lines: [], more: 0, note: "The paths don't exist, so rm has nothing to remove.", idle: true };
     if (!files) return { summary: `delete ${plural(found, 'path')} with no files in ${found === 1 ? 'it' : 'them'}`, lines: [], more: 0, note };
     return { summary: `delete ${plural(files, 'file')} (about ${size((kb || 0) * 1024)})`, lines: rest.map(l => l.replace(/^\.\//, '')), more: Math.max(0, files - rest.length), note };
   };
@@ -177,12 +189,14 @@ export default function activate(api: ModAPI) {
       lost.map(l => `${l.slice(0, 2)} ${l.slice(3)}`),
       lost.length ? `discard uncommitted changes in ${plural(lost.length, 'file')}` : 'discard nothing: no uncommitted changes',
       stat ? `${stat}. Uncommitted changes can't be recovered.` : 'From git status --porcelain.',
+      risk.args.every(a => PLAIN_DISCARD.has(a) || (risk.kind === 'reset' && a === 'HEAD')),
     );
   };
 
   const measureClean = (args: string[], cwd: string | undefined): Report => {
     const flags: string[] = [];
     const paths: string[] = [];
+    let forced = 0;
     for (let i = 0; i < args.length; i += 1) {
       const a = args[i];
       if (a === '--') {
@@ -193,7 +207,9 @@ export default function activate(api: ModAPI) {
         flags.push(a, args[i + 1] ?? '');
         i += 1;
       } else if (a.startsWith('--exclude=') || /^-e./.test(a)) flags.push(a);
+      else if (a === '--force') forced += 1;
       else if (/^-[a-zA-Z]+$/.test(a)) {
+        forced += a.split('f').length - 1;
         const kept = a.replace(/[finq]/g, '');
         if (kept !== '-') flags.push(kept);
       } else if (!a.startsWith('-')) paths.push(a);
@@ -203,12 +219,14 @@ export default function activate(api: ModAPI) {
       gone,
       gone.length ? `remove ${plural(gone.length, 'untracked path')}` : 'remove nothing: no untracked files match',
       "From git clean -n. Untracked files are not in git, so they can't be recovered.",
+      forced < 2,
     );
   };
 
   const measurePush = (args: string[], cwd: string | undefined): Report => {
-    const positional = args.filter(a => !a.startsWith('-'));
+    const positional = operands(args);
     const remote = positional[0] ?? 'origin';
+    if (remote.startsWith('-')) throw new Error(`${remote} cannot be inspected as a remote`);
     const spec = (positional[1] ?? '').replace(/^\+/, '');
     let [source, branch = spec] = spec.includes(':') ? spec.split(':') : [spec, spec];
     branch = branch.replace(/^refs\/heads\//, '');
@@ -239,6 +257,7 @@ export default function activate(api: ModAPI) {
       pending,
       pending.length ? `apply ${plural(pending.length, 'pending migration')}` : `run ${risk.label}: nothing pending`,
       `From ${[program, ...argv].join(' ')}.`,
+      !!risk.forward,
     );
   };
 
@@ -261,6 +280,7 @@ export default function activate(api: ModAPI) {
     const risk = classify(command);
     if (!risk) return next(e);
     const report = measure(risk, args.workdir);
+    if (report.idle && !COMPOUND.test(command)) return next(e);
     const message = [
       `Command: ${command.replace(/\s+/g, ' ').slice(0, 200)}`,
       `Would ${report.summary}`,

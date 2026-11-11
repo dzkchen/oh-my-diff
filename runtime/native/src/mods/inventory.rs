@@ -1,4 +1,5 @@
 use super::*;
+use codex_omd::ModInvokeOptions;
 use codex_omd::peers::now_ms;
 use std::collections::BTreeSet;
 
@@ -21,7 +22,14 @@ pub(super) struct Inventory {
     /// Root, call id and reservation time (`None` while guarded).
     reserved: Mutex<Vec<(String, String, Option<u64>)>>,
     directory: std::sync::OnceLock<std::path::PathBuf>,
+    pub(super) persisting: Mutex<()>,
 }
+
+#[cfg(test)]
+type InventoryReplaceHook = (std::path::PathBuf, Box<dyn FnOnce() + Send>);
+
+#[cfg(test)]
+pub(super) static BEFORE_INVENTORY_REPLACE: Mutex<Option<InventoryReplaceHook>> = Mutex::new(None);
 
 fn root_of<'a>(records: &'a BTreeMap<String, Value>, thread: &'a str) -> &'a str {
     let mut root = thread;
@@ -60,6 +68,7 @@ impl Inventory {
     }
 
     pub(super) fn forget_session(&self, thread: &str) {
+        let _persisting = self.persisting.lock();
         if let Ok(mut records) = self.records.lock() {
             let session = records
                 .keys()
@@ -111,10 +120,21 @@ impl Inventory {
         if let Ok(bytes) = serde_json::to_vec(&agents)
             && std::fs::create_dir_all(directory).is_ok()
         {
-            let _ = codex_omd::fsio::write_bytes(
+            let _ = codex_omd::fsio::write_bytes_before(
                 &directory.join(format!("{root}.json")),
                 &bytes,
                 codex_omd::fsio::Durability::Volatile,
+                || {
+                    #[cfg(test)]
+                    if let Some((_, hook)) = BEFORE_INVENTORY_REPLACE
+                        .lock()
+                        .ok()
+                        .and_then(|mut hook| hook.take_if(|(path, _)| path == directory))
+                    {
+                        hook();
+                    }
+                    Ok(())
+                },
             );
         }
     }
@@ -129,6 +149,7 @@ impl Inventory {
         if let (Some(record), Some(fields)) = (record.as_object_mut(), fields.as_object()) {
             record.extend(fields.clone());
         }
+        let _persisting = self.persisting.lock();
         if let Ok(mut records) = self.records.lock() {
             let parents = records
                 .values()
@@ -156,6 +177,7 @@ impl Inventory {
     }
 
     fn update(&self, thread: &str, change: impl FnOnce(&mut Value)) -> Option<Value> {
+        let _persisting = self.persisting.lock();
         let mut records = self.records.lock().ok()?;
         let record = records.get_mut(thread)?;
         change(record);
@@ -365,7 +387,7 @@ pub(super) fn notify(
             for (runtime, thread, payload) in receiver {
                 let _thread = codex_omd::StateThread::enter(thread);
                 if let Ok(mut runtime) = runtime.lock() {
-                    let _ = runtime.event("agent", payload);
+                    let _ = runtime.event("agent", payload, ModInvokeOptions::default());
                 }
             }
         });

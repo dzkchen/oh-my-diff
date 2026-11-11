@@ -1,7 +1,7 @@
 # Run and debug a mod
 
-How to run a mod you're writing in a scratch store, reload it as you edit, find out why it fails, and measure what
-it costs. For the full command list, see the [authoring reference](../../mods/reference/authoring.md).
+Use `pnpm watch` to reload a mod as you edit it in a scratch store. The commands below also report failures and
+measure startup time and memory use. For all author commands, see the [authoring reference](../../mods/reference/authoring.md).
 
 ## Before you begin
 
@@ -74,8 +74,8 @@ omd-mod test /tmp/my-store mod.test.json
 The first prints `{"display": "Hello you"}`: the last argument is the command's input as JSON.
 
 Against a store, `omd-mod test` uses the store's settings and saved state instead of the scenario's `settings`. Set
-the mod's settings in the store first, with the mod's folder and a JSON object. This example uses the
-[notes mod](notes-mod.md), which has a `max_notes` setting:
+the mod's settings in the store first, with the mod's folder and a JSON object that replaces all of them. This
+example uses the [notes mod](notes-mod.md), which has a `max_notes` setting:
 
 ```sh
 omd-mod settings /tmp/my-store "$PWD" '{"max_notes":2}'

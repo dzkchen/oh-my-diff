@@ -15,7 +15,7 @@ omd mods enable omd_cursor
 
 Turning it on asks permission to run `node` outside the sandbox (the `os` grant), because setup installs the SDK,
 reaches the network and writes the mod store. Then run `/cursor setup` in a session.
-[Use Claude or another provider](../../../docs/use-other-providers.md) walks through enrollment, the API key and several
+[Use Claude or another provider](../../../docs/use-other-providers.md) walks through sign-in, API keys and adding
 accounts. [Manage mods](../../../docs/manage-mods.md) covers the other ways to turn a mod on or off.
 
 ## Use it
@@ -59,10 +59,13 @@ It has no settings.
   rules and MCP servers are off, so the agent reaches your repository only through OMD tools, under OMD's sandbox,
   approvals and mods. Hosted web search isn't offered.
 - Cursor keeps its own system prompt and context. Codex's base instructions aren't sent. Pending tool calls expire
-  after ten minutes. Interrupting Codex, or sending a new message while tools are pending, cancels the Cursor run.
+  after ten minutes. Interrupting Codex, or starting a new turn in the same thread, cancels the earlier Cursor run,
+  including one still starting.
 - At most 16 models are listed across accounts, each account's default first. The catalog assumes a 200K-token
   context window. `/profile window` (in `omd_profiles`) can lower it, so Codex compacts sooner; Cursor serves no more.
-- Cursor settles billed cost minutes after a run ends. The charge then appears in `/status`. A zero charge can mean
+- Cursor settles billed cost minutes after a run ends. Each run's cost is matched to the request that ended it by the
+  token counts of its turns; a run that can't be matched unambiguously within five minutes stays unsettled in
+  `/cursor usage`. The charge then appears in `/status`. A zero charge can mean
   plan-included usage, your own API key (BYOK) or credit-grant usage. The SDK doesn't say which.
 - Plan usage, shown beside the account in `omd_profiles`, is read at most once a minute after a run, so it can be a
   run behind. It comes from an undocumented Cursor dashboard call that may break with any SDK update.

@@ -8,7 +8,7 @@
   "description": "Tells the model when it repeats a tool call that keeps returning the same error or output, so it changes approach instead of looping",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_loop_guard"},
-  "capabilities": ["interception", "store"],
-  "compatibility": {"required_features": ["continuation_middleware_v1", "state_scopes_v1", "store_thread_v1", "store_v1"]},
+  "capabilities": ["interception", "store", "lifecycle"],
+  "compatibility": {"required_features": ["continuation_middleware_v1", "lifecycle_events_v1", "state_scopes_v1", "store_thread_v1", "store_v1"]},
   "settings_schema": {"type": "object", "properties": {}, "additionalProperties": false}
 }

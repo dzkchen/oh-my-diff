@@ -1,40 +1,35 @@
-import type { ModAPI, ModelResponse } from '../../api.d.ts';
+import type { ModAPI } from '../../api.d.ts';
+import { cacheLifetime, flatBilling } from './cache_ttl.ts';
 
 type Waiting = 'approval' | 'question';
 type State = { at: number; ttl: number; expires: number; reported: boolean; identity: string; tokens: number; running: boolean; pending: Record<string, Waiting>; compacted: number;
-  requested: 'idle' | Waiting | null };
+  requested: 'idle' | Waiting | null; limited: boolean; flat: boolean };
 
-const OPENAI_TTL_MS = 30 * 60_000;
-const OPENAI_LONG_TTL_MS = 12 * 3_600_000;
-const LOCAL_PROVIDERS = new Set(['ollama', 'lmstudio', 'oss']);
 const FIRE_AT = 0.9;
 const MAX_DELAY_MS = 24 * 3_600_000;
 const RETRY_MS = 15_000;
 const RETRYABLE = /^client(_surface)?_context_changed/;
 const NOTICE = 'Compacted after the estimated prompt-cache idle interval';
+const LIMITED = 'Idle compaction is off for this thread: other threads hold all of this mod\'s timers';
+const FLAT = {
+  included_subscription: 'Idle compaction is inactive here: ChatGPT plans keep their own prompt cache. To compact anyway, set Estimated cache lifetime in /mods',
+  unpriced: 'Idle compaction is inactive here: no price is known for this model or provider, so its cache can\'t be told apart from a ChatGPT plan\'s. To compact anyway, set Estimated cache lifetime in /mods',
+};
 const CANCELLED = { approval: 'The pending approval was cancelled.', question: 'The unanswered question was cancelled.' };
 
 export default function activate(api: ModAPI) {
   const minutes = Number(api.settings.cache_ttl_minutes) || 0;
   const minTokens = Number(api.settings.min_tokens ?? 100_000);
-  const load = (): State => ({ at: 0, ttl: 0, expires: 0, reported: false, identity: '', tokens: 0, running: false, pending: {}, compacted: 0, requested: null,
+  const load = (): State => ({ at: 0, ttl: 0, expires: 0, reported: false, identity: '', tokens: 0, running: false, pending: {}, compacted: 0, requested: null, limited: false, flat: false,
     ...(api.state.get() as Partial<State> | null) });
   const save = (patch: Partial<State>) => api.state.set({ ...load(), ...patch });
   const live = (state: State) => state.ttl > 0 && state.tokens > 0 && state.tokens >= minTokens && Date.now() < state.expires;
-  const arm = (state: State) =>
-    api.host.tryCall('events.schedule', { key: 'idle', delay_ms: Math.min(MAX_DELAY_MS, Math.max(1000, Math.round(state.at + (state.expires - state.at) * FIRE_AT - Date.now()))) });
-
-  const identity = (response: ModelResponse) => JSON.stringify([response.provider, response.route, response.credential, response.requested_model, response.served_model]);
-  const ttlFor = (response: ModelResponse, state: State): [number, boolean] => {
-    if (LOCAL_PROVIDERS.has(response.provider)) return [0, false];
-    if (minutes > 0) return [minutes * 60_000, false];
-    if (response.provider === 'openai' && (response.cost.basis === 'included_subscription' || response.cost.basis === 'unpriced')) return [0, false];
-    const reported = (response.usage as { omd_cache_ttl_seconds?: unknown } | null)?.omd_cache_ttl_seconds;
-    if (typeof reported === 'number' && Number.isFinite(reported) && reported > 0) return [reported * 1000, true];
-    const read = (response.cache.read_tokens ?? 0) > 0;
-    if (read && state.reported && state.identity === identity(response)) return [state.ttl, true];
-    if (response.provider === 'openai' && (read || (response.cache.write_tokens ?? 0) > 0)) return [OPENAI_TTL_MS, false];
-    return [0, false];
+  const arm = (state: State) => {
+    const armed = api.host.tryCall('events.schedule', { key: 'idle', delay_ms: Math.min(MAX_DELAY_MS, Math.max(1000, Math.round(state.at + (state.expires - state.at) * FIRE_AT - Date.now()))) });
+    const limited = !armed.ok && armed.error.startsWith('timer_limit');
+    if (limited === state.limited) return;
+    save({ limited });
+    if (limited) api.host.tryCall('terminal.notice', { text: LIMITED, kind: 'warning', placement: 'toast', ttl_ms: 8000 });
   };
 
   api.on('model_response', response => {
@@ -43,12 +38,11 @@ export default function activate(api: ModAPI) {
     const previous = load();
     if (response.timing.started_at_ms <= previous.compacted) return;
     const { context, tokens } = api.usage.summarize(response);
-    const [ttl, reported] = ttlFor(response, previous);
-    const at = response.timing.started_at_ms, key = identity(response);
-    const expires = response.provider === 'openai' && response.cost.basis !== 'included_subscription' && ttl === OPENAI_LONG_TTL_MS
-      && (response.cache.read_tokens ?? 0) > 0
-      ? Math.max(previous.ttl === ttl && previous.identity === key ? previous.expires : 0, at + OPENAI_TTL_MS) : at + ttl;
-    const state = { ...previous, at, ttl, expires, reported, identity: key,
+    const at = response.timing.started_at_ms;
+    const memo = cacheLifetime(response, minutes, at, previous);
+    const told = minutes <= 0 && flatBilling(response);
+    if (told && !previous.flat) api.host.tryCall('terminal.notice', { text: FLAT[response.cost.basis as keyof typeof FLAT], kind: 'info', placement: 'transcript' });
+    const state = { ...previous, at, ttl: memo.ttl, expires: memo.expires, reported: memo.reported, identity: memo.identity, flat: previous.flat || told,
       tokens: context?.used ?? (tokens.input ?? 0) + (tokens.output ?? 0) };
     save(state);
     if (live(state)) arm(state);
@@ -62,9 +56,7 @@ export default function activate(api: ModAPI) {
     const waiting = Object.values(state.pending);
     if (state.running && !waiting.length) return;
     const started = api.host.tryCall('app.request', { method: 'thread/compact/start', params: { threadId: api.session().thread_id } });
-    // Fails while another thread is displayed; retry until the cache expires. Other failures are final.
     if (!started.ok) return void (RETRYABLE.test(started.error) && api.host.tryCall('events.schedule', { key: 'idle', delay_ms: RETRY_MS }));
-    // A declined request was never made: recording it as requested would owe a cancellation notice for a compaction that never started. The next model response or turn end re-arms.
     if ((started.value as { status?: unknown } | null)?.status === 'declined') return;
     save({ requested: waiting.includes('question') ? 'question' : waiting[0] ?? 'idle' });
   });

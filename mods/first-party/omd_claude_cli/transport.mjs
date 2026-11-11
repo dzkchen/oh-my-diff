@@ -9,10 +9,9 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, handoff } from './handoff.mjs';
-import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, loginCommand, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, PLANS, cliSupported, loginCommand, signedIn, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
-const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
 const CLI_DEADLINE_MS = 30 * 60_000;
 const DECODERS = { gzip: promisify(gunzip), deflate: promisify(inflate), br: promisify(brotliDecompress) };
@@ -46,14 +45,8 @@ function checkAuth(claude, billing, home, username, account) {
     env: cliEnv({ HOME: home, USER: username, LOGNAME: username, ...accountEnv(account) }) });
   let status;
   try { status = JSON.parse(probe.stdout); } catch { status = {}; }
-  const signedIn = probe.status === 0 && status.loggedIn === true && status.apiProvider === 'firstParty';
-  if (billing === 'api') {
-    if (!signedIn || status.authMethod !== 'api_key' || status.apiKeySource !== '/login managed key') {
-      throw new Error(`claude_console_api_key_login_required: run ${loginHint(billing, account)}`);
-    }
-  } else if (!signedIn || status.authMethod !== 'claude.ai' || !PLANS[status.subscriptionType]) {
-    throw new Error(`claude_ai_subscription_login_required: run ${loginHint(billing, account)}`);
-  }
+  const accepted = probe.status === 0 && signedIn(status, billing);
+  if (!accepted) throw new Error(`${billing === 'api' ? 'claude_console_api_key_login_required' : 'claude_ai_subscription_login_required'}: run ${loginHint(billing, account)}`);
   return status;
 }
 
@@ -98,6 +91,38 @@ export function withoutCliContext(body) {
   body.messages.forEach(strip);
   body.messages = body.messages.filter(message => message.content?.length !== 0 && !(message.role === 'system' && (typeof message.content === 'string'
     ? cliEnvironment.test(message.content) : message.content?.some?.(block => cliEnvironment.test(block.text ?? '')))));
+  return body;
+}
+
+// Each request is a fresh CLI that marks no history or only a trailing date message, which the next request never repeats; cache through the last two user turns instead.
+export function withCachedHistory(body) {
+  if (!Array.isArray(body.messages)) return body;
+  const blocks = message => Array.isArray(message.content) ? message.content : [];
+  const fixed = (body.tools ?? []).concat(Array.isArray(body.system) ? body.system : []).filter(block => block?.cache_control);
+  let marker = null;
+  const unmark = block => {
+    if (!block || typeof block !== 'object') return;
+    if (block.cache_control) {
+      marker ??= block.cache_control;
+      delete block.cache_control;
+    }
+    if (Array.isArray(block.content)) block.content.forEach(unmark);
+  };
+  for (const message of body.messages) blocks(message).forEach(unmark);
+  marker ??= fixed.at(-1)?.cache_control;
+  if (!marker) return body;
+  let used = fixed.length + (body.cache_control ? 1 : 0);
+  for (const message of body.messages) if (typeof message.content === 'string') message.content = [{ type: 'text', text: message.content }];
+  const users = body.messages.flatMap((message, index) => message.role === 'user' ? [index] : []);
+  const last = users.at(-1);
+  const previous = users.findLast(index => index < last && body.messages.slice(index + 1, last).some(message => message.role === 'assistant'));
+  for (const index of [last, previous]) {
+    if (index === undefined || used >= 4) continue;
+    const block = blocks(body.messages[index]).at(-1);
+    if (!block) continue;
+    block.cache_control = { ...marker };
+    used++;
+  }
   return body;
 }
 
@@ -354,7 +379,7 @@ export class Relay {
         this.sockets.add(upstream);
         upstream.on('timeout', () => upstream.destroy(new Error('upstream_timeout')));
         upstream.on('error', reject);
-        upstream.end(JSON.stringify(withoutCliContext(body)));
+        upstream.end(JSON.stringify(withCachedHistory(withoutCliContext(body))));
       });
     } catch (error) {
       if (error instanceof BodyError) {
@@ -431,7 +456,7 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
       '--settings', join(root, 'settings.json'), '--mcp-config', JSON.stringify(mcp)];
     const env = cliEnv({ HOME: home, USER: username, LOGNAME: username, TMPDIR: root, ...accountEnv(account),
       ANTHROPIC_BASE_URL: relay.url,
-      ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      CLAUDE_CODE_ENTRYPOINT: 'oh-my-diff', ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_MAX_RETRIES: '0', DISABLE_AUTO_COMPACT: '1', DISABLE_COMPACT: '1',
       CLAUDE_CODE_TOTAL_TOKENS_REMINDER: 'off' });
     delete env.OMD_CLAUDE_LOCAL_TOKEN;
@@ -516,10 +541,13 @@ async function inert(path) {
 
 // Like the host, one valid settings file overrides mods.json; undefined means it doesn't, and YAML this can't read stops.
 async function fileSetting(store) {
+  const extensions = ['json', 'yaml', 'yml'];
+  const results = await Promise.allSettled(extensions.map(extension =>
+    readFile(join(store, 'settings', `omd_claude_cli.${extension}`), 'utf8')));
   const found = [];
-  for (const extension of ['json', 'yaml', 'yml']) {
-    try { found.push([extension, await readFile(join(store, 'settings', `omd_claude_cli.${extension}`), 'utf8')]); }
-    catch (error) { if (error.code !== 'ENOENT') return false; }
+  for (const [index, result] of results.entries()) {
+    if (result.status === 'fulfilled') found.push([extensions[index], result.value]);
+    else if (result.reason.code !== 'ENOENT') return false;
   }
   if (found.length !== 1) return undefined;
   const [[extension, text]] = found;

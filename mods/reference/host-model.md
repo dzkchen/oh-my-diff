@@ -22,7 +22,7 @@ Any other `OMD_MODE` value is rejected.
 
 ## What mods can't replace or bypass
 
-A mod runs inside the host, asks for only the capabilities it needs, and composes with other mods by the
+A mod runs under the host, asks for only the capabilities it needs, and combines with other mods by the
 [composition rules](#composition-order). A mod can never replace or bypass:
 
 | Area | Reserved to the host |
@@ -138,13 +138,16 @@ user contexts. A user context can call only:
 - the user-action operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
   `packages.*`, `routes.add`, `routes.models`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
+- `routes.list`, when the terminal shows a session
 - `turns.activity`
 - `events.publish`, `events.schedule` and `events.cancel`
 
 Slash command callbacks can also call `process.status` and `process.exchange` on their own existing managed
 processes. Starting, finding or stopping a process still requires a session callback.
 
-A service call from a user context works only when its provider needs no other host operation.
+A service call from a user context runs the provider in that same context with the provider's own grants, so it works
+when every host operation the provider makes is also allowed there (for example a provider that uses `store.*`,
+`exec.run` and `workspace.stat` answers from a key or command callback).
 
 Component input callbacks also run in the terminal, but not as user actions. They can't call `terminal.selection`,
 `terminal.copy`, `terminal.panel`, `credentials.request`, `terminal.import_file`, `builtins.invoke`,
@@ -183,9 +186,9 @@ host-operation provenance.
 
 ## Composition order
 
-Dependencies run before consumers, and remaining mods use lexical id order. Managed scope shadows project scope, which
-shadows user scope. A selection doesn't inherit state or grants from the selection it shadows. Observers compose in
-that order. Interceptors follow the [interceptor order](interceptors.md#interceptor-order).
+Dependencies run before the mods that use them; remaining mods run in lexical id order. For copies with the same mod ID,
+the host uses a managed copy instead of a project copy, and a project copy instead of a user copy. The selected copy inherits no state or
+grants from the copy it overrides. Observers run in the same order. Interceptors follow the [interceptor order](interceptors.md#interceptor-order).
 
 Exclusive replacements, contract ids, service providers and namespaced tools fail closed when contested. Native
 permissions, credentials, accounting, cancellation, evidence, workflow enforcement and provider authorization stay
@@ -212,7 +215,8 @@ These failures don't count:
 
 - errors starting `state_conflict`, `state_thread_unavailable`, `state_checkout_unavailable`, `callback_cancelled`,
   `host_receipt_limit`, `host_result_limit`, `host_call_limit` or `callback_execution_budget`;
-- failures of `service` and `component` events.
+- failures of `service` and `component` events;
+- an interceptor that throws the error its `next` rejected with, such as a tool result the host could not hand back.
 
 The count is kept in process memory and is not persisted, so each `omd-mod command` starts at 0 and `omd-mod status`
 shows `faults: 0` afterwards.

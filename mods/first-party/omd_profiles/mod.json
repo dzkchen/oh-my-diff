@@ -1,11 +1,15 @@
 {
   "schema": 1,
   "id": "omd_profiles",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
   "description": "Manage ChatGPT, Claude, Cursor and API accounts; select an account for /new, with usage limits and Alt+s",
+  "contributes": {
+    "commands": [{ "name": "profile", "description": "Manage ChatGPT, Claude, Cursor and API accounts and pick one for /new" }],
+    "keys": [{ "key": "Alt+s", "description": "Switch to the next account" }]
+  },
   "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
