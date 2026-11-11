@@ -1,6 +1,7 @@
 # omd_lazygit
 
-Runs [lazygit](https://github.com/jesseduffield/lazygit), a terminal Git interface, inside the session. It's experimental, and no install profile includes it.
+Runs [lazygit](https://github.com/jesseduffield/lazygit), a terminal Git interface, inside the session. It's
+experimental, and no install profile includes it.
 
 ## Turn it on
 

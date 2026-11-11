@@ -58,7 +58,7 @@ It has no settings.
 ## Needs and limits
 
 - It needs a host with `terminal_box_model_v1`.
-- It demonstrates layout and styling only. It isn't a tool you'd keep on.
+- It only demonstrates layout and styling and isn't meant to stay enabled.
 
 ## More
 

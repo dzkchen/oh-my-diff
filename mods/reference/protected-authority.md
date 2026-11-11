@@ -1,6 +1,6 @@
 # Protected authority (macOS)
 
-Use it when you deploy or reason about the macOS authority broker: what it protects, how changes are
+Use this page when you deploy or reason about the macOS authority broker: what it protects, how changes are
 authenticated, where its trust boundary ends, and how it is pinned, reset and removed. For what a user sees, see
 [Trust and permissions](https://github.com/dzkchen/oh-my-diff/blob/main/docs/trust-and-permissions.md).
 
@@ -58,7 +58,7 @@ a runner grant.
   verification. A missing runner fails with `runner_unavailable`, with no fallback to another program.
 - The compiled-module cache in `<store>/cache/code` contains only V8 bytecode. While the broker or an administrator
   policy pins trust, the runner ignores the cache and compiles the trusted package source. Otherwise the runner uses
-  the cache. That adds no authority, because a process that can write the store can already change trust through
+  the cache, which adds no authority because a process that can write the store can already change trust through
   `mods.json`.
 
 ### Selection grants

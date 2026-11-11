@@ -9,8 +9,8 @@ version. The host loads only mods for this API version. [`api.d.ts`](api.d.ts) i
 
 ## Glossary
 
-Use it when a reference page uses a term you don't know, or uses a word such as "grant", "store" or "managed" that
-means more than one thing. Each entry gives the meaning used in this reference and links to the page that describes
+Use this page when a reference page uses a term you don't know, or uses a word such as "grant", "store" or "managed"
+that means more than one thing. Each entry gives the meaning used in this reference and links to the page that describes
 it.
 
 ### Mods and the host
@@ -131,7 +131,7 @@ it.
 
 ## Host model
 
-Use it when you need the rules every host operation and callback follows: one host per process, callback
+Use this page when you need the rules every host operation and callback follows: one host per process, callback
 admission, budgets and contexts, composition order, registration limits, the fault limit and the runner
 environment. For when to write a mod instead of a skill, hook or plugin, see
 [How OMD works](https://github.com/dzkchen/oh-my-diff/blob/main/docs/how-omd-works.md).
@@ -400,7 +400,7 @@ Each runner process has a 64 MiB V8 old-space limit, and the host kills a runner
 
 ## Limits
 
-Use it when you check whether a design fits the host. Each row gives one limit and links its owner page, which
+Use this page when you check whether a design fits the host. Each row gives one limit and links its owner page, which
 states the exact rule and the error a call gets. The `host.json` limits an operator can change are under
 [Host limits](#host-limits).
 
@@ -617,9 +617,9 @@ service process, such as the `omd_claude_cli` relay, needs a free slot to start 
 
 ## Stability and migration
 
-Use it when you need to know which API entries keep their shape, which may change in any release, and what changed
-after `1.0.0`. The conformance registry, `mods/conformance/contract.json`, is the source of truth for every status
-on this page.
+Use this page when you need to know which API entries keep their shape, which may change in any release, and what
+changed after `1.0.0`. The conformance registry, `mods/conformance/contract.json`, is the source of truth for every
+status on this page.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](#experimental-entries-in-the-registry)). Runs on Apple Silicon macOS.
@@ -774,7 +774,7 @@ credentials owned by that ID. A project copy takes precedence over a user copy. 
 
 ## Authoring
 
-Use it when you look up an author command, the TypeScript test helpers, the `mod.test.json` format, JSX
+Use this page when you look up an author command, the TypeScript test helpers, the `mod.test.json` format, JSX
 compilation, multi-file packages, diagnostics or the cost report. For the step-by-step author loop, see
 [Write your first mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/first-mod.md). For
 packaging and publishing, see [Packaging](reference/packaging.md).
@@ -963,7 +963,7 @@ Interceptor assertions over an `intercept` step's value:
 | `assertShortCircuit` | The mod answered, so the core never ran |
 | `assertFailure(chain, mod, /reason/)` | The mod's link in the chain failed with that reason (skipped, kept, caught or rejected) |
 
-#### What tests don't prove
+#### Limits of scenario tests
 
 Mounting and interacting run the mod's `terminal` event and callbacks on fixture data. They show what a mod returns
 and how it reacts, not how a terminal or an attached client draws or delivers it. A supported-client claim needs the
@@ -1260,7 +1260,7 @@ package that requires another fails activation.
 
 ## Packaging
 
-Use it when you plan, install, update, roll back, protect or inspect packages, from the shell with `omd-mod` or
+Use this page when you plan, install, update, roll back, protect or inspect packages, from the shell with `omd-mod` or
 from a mod with `packages.*`. For the author-side commands, see [Authoring](reference/authoring.md). To publish a mod to npm
 or Git step by step, see
 [Install, share and update a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/publish-a-mod.md).
@@ -1692,8 +1692,8 @@ local snapshots evicted from that history when no installed package, retained hi
 deployment references them.
 
 - Cleanup leaves editable sources and remote package caches alone; uninstall retains its cache.
-- This is best-effort cleanup of history evictions, not a store-wide size limit: abandoned previews, older orphaned
-  snapshots, interrupted cleanup and deletion failures can retain extra files.
+- Cleanup is best-effort and covers only history evictions. It sets no store-wide size limit, so abandoned
+  previews, older orphaned snapshots, interrupted cleanup and deletion failures can retain extra files.
 
 ### Protection, recovery and the security log
 
@@ -1716,7 +1716,7 @@ acts with its own authority for any caller.
 
 ## Settings
 
-Use it when a mod declares, reads or writes settings, when a user sets them in a settings file, or when you check
+Use this page when a mod declares, reads or writes settings, when a user sets them in a settings file, or when you check
 what the manifest `environment` field allows. `packages.list` reports each mod's settings; see
 [Packaging](reference/packaging.md#packageslist).
 
@@ -1767,7 +1767,7 @@ the directory that contains `mods.json`.
 
 - Only one of the three files may exist. More than one is invalid.
 - The file is at most 64 KiB, and its top level must be an object whose keys are the mod's setting names.
-- Its keys override the saved settings (and the schema `default` values) in every callback, render and chain
+- The file's keys override the saved settings (and the schema `default` values) in every callback, render and chain
   digest, before terminal overrides. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
   a wrongly typed value and a missing `required` setting are invalid.
 - Administrator-managed selections ignore the file (status `ignored`).
@@ -1785,7 +1785,7 @@ the directory that contains `mods.json`.
 ### Manifest `environment`
 
 `"environment": ["crypto"]` in `mod.json` allows the
-[`crypto` global](reference/host-model.md#text-encoding-and-crypto). It is the only environment a mod can
+[`crypto` global](reference/host-model.md#text-encoding-and-crypto). `crypto` is the only environment a mod can
 declare (another or repeated name fails with `unsupported_or_duplicate_environment_access`).
 
 Without that declaration, the host refuses at load any source that uses `crypto.` or `crypto[` outside string
@@ -1799,7 +1799,7 @@ reports these environments, which no manifest can declare:
 
 ## SDK helpers (`sdk_helpers_v1`)
 
-Use it when a mod wants the small helpers the runner adds to `api`, such as `api.session()`, `api.fs`,
+Use this page when a mod wants the small helpers the runner adds to `api`, such as `api.session()`, `api.fs`,
 `api.classify` and `api.usage`, or looks up another `api` member. The timer helpers `api.time.*` are in
 [Events and lifecycle](reference/events-and-lifecycle.md#apitime-helpers).
 
@@ -1864,7 +1864,7 @@ The registration limits for tools and commands are in [Host model](reference/hos
 
 ## Capabilities
 
-Use it when you choose a mod's `capabilities` or review what a trusted mod can do. The tables list what each
+Use this page when you choose a mod's `capabilities` or review what a trusted mod can do. The tables list what each
 manifest capability allows, and [Capability by operation](#capability-by-operation) lists the capability each host
 operation needs. How the authority grants are scoped and ended is in [Authority grants](reference/authority-grants.md).
 
@@ -2118,7 +2118,7 @@ it needs and its registry status. An operation marked experimental may change in
 
 ## Authority grants
 
-Use it when a mod needs authority beyond its sandbox: unsandboxed programs, delegated approvals, HTTP origins,
+Use this page when a mod needs authority beyond its sandbox: unsandboxed programs, delegated approvals, HTTP origins,
 folders outside the workspace, MCP servers or environment variables. It covers the manifest fields that scope each
 grant, the operations they allow and how a grant ends. The capability names are listed in
 [Capabilities](reference/capabilities.md#authority-grant-capabilities), with
@@ -2363,7 +2363,7 @@ host refuses these names:
 
 ## Admission and interception
 
-Use it when a policy mod controls which other packages load, withholds host namespaces from them, or watches and
+Use this page when a policy mod controls which other packages load, withholds host namespaces from them, or watches and
 intercepts other mods' host operations. The interceptor chain itself (order, `required`, `next`) is described in
 [Interceptors](reference/interceptors.md#apiintercept).
 
@@ -2444,7 +2444,7 @@ Because a `host_operation` interceptor sees unmasked arguments and answers, trus
 
 ## Interceptors
 
-Use it when a mod wraps an operation with `api.intercept`: the surfaces it can select, what a handler may change,
+Use this page when a mod wraps an operation with `api.intercept`: the surfaces it can select, what a handler may change,
 how `next`, retries, ordering and failures work, and what the host records. The input of each surface is described
 on the page of the operation it wraps; [Every interceptor surface](#every-interceptor-surface) links to it.
 
@@ -2660,7 +2660,7 @@ export default function activate(api: ModAPI): void {
 
 ## Tools
 
-Use it when a mod runs or checks a model-visible tool, keeps a tool's complete output, adds feedback to tool
+Use this page when a mod runs or checks a model-visible tool, keeps a tool's complete output, adds feedback to tool
 output, merges a batch of calls, shapes the model's tool list or defines tools at run time. How a `tool`
 interceptor chain runs is in [Interceptors](reference/interceptors.md); the tool-specific inputs and answers are below.
 
@@ -2850,7 +2850,7 @@ The input is:
 - `server` names an MCP tool's server.
 
 Lists are bounded like `tool_specs`: 512 tools, 4096-character descriptions, and a `parameters` schema over 16 KiB
-is `null`. It fails with `tools_unavailable` before the thread's first turn builds its tools.
+is `null`. `tools.list` fails with `tools_unavailable` before the thread's first turn builds its tools.
 
 The host keeps the latest lead-thread snapshot in the store as `tool-inventory.json`, rewritten only when it
 changes, and `omd-mod declarations STORE` renders it as `tool-types.d.ts`.
@@ -2893,7 +2893,7 @@ expose optional tools per task.
 
 ## App bridge and approvals
 
-Use it when a mod sends app-server methods with `app.request`, answers a pending server request with
+Use this page when a mod sends app-server methods with `app.request`, answers a pending server request with
 `app.respond`, or takes part in approvals through `approval` middleware. The capability each method class needs is
 in [Capabilities](reference/capabilities.md); interceptors in general are in [Interceptors](reference/interceptors.md).
 
@@ -3083,10 +3083,10 @@ An approve outside the grant, an expired grant, an error, a timeout or an invali
 
 ## Commands, configuration and composer
 
-Use it when a mod adds or wraps slash commands, reads or writes configuration, removes built-in controls, or takes
-part in the composer: `@` completion, drafts, suggestions, key interception and file mentions. `api.command`
-itself is listed in [SDK helpers](reference/sdk-helpers.md#other-api-members) and its registration limits in
-[Host model](reference/host-model.md#registration-limits).
+Use this page when a mod adds or wraps slash commands, reads or writes configuration, removes built-in controls, or
+takes part in the composer: `@` completion, drafts, suggestions, key interception and file mentions. `api.command`
+itself is listed in [SDK helpers](reference/sdk-helpers.md#other-api-members) and its registration limits in [Host
+model](reference/host-model.md#registration-limits).
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](reference/stability-and-migration.md#experimental-entries-in-the-registry)). Composer and command operations
@@ -3501,7 +3501,7 @@ the read, and interrupting the turn cancels the chain.
 
 ## Running commands
 
-Use it when a mod runs one program with `exec.run`: its arguments, sandbox and environment, limits, result,
+Use this page when a mod runs one program with `exec.run`: its arguments, sandbox and environment, limits, result,
 complete-output artifacts, guards and access checks, and runs against a frozen snapshot. Long-lived helper
 processes use [Managed processes](reference/managed-processes.md) instead.
 
@@ -3728,7 +3728,7 @@ result.
 
 ## Workspace files
 
-Use it when a mod reads, lists or changes workspace files, guards a change with expected fingerprints, reacts to
+Use this page when a mod reads, lists or changes workspace files, guards a change with expected fingerprints, reacts to
 file changes, watches for external edits or freezes the workspace in a snapshot. Running a command against the
 workspace is in [Running commands](reference/running-commands.md).
 
@@ -3914,7 +3914,7 @@ freshness; it is also available in the `context` event, where `workspace.snapsho
 
 ## State and storage
 
-Use it when a mod keeps data: `store.*` records, evidence and binary evidence, `api.state` and where it lives,
+Use this page when a mod keeps data: `store.*` records, evidence and binary evidence, `api.state` and where it lives,
 state migration, session UI state and the reactive helpers over `api.state`. It also defines the session directory
 and repository the other pages refer to.
 
@@ -3952,7 +3952,7 @@ store.export {scope?, cursor?} → {schema, owner, scope, generation, entries, c
 store.reset {expected_generation, scope?} → {generation}
 ```
 
-They operate on a per-mod namespace. `store.list`, `store.export` and `store.reset` are experimental.
+These operations act on a per-mod namespace. `store.list`, `store.export` and `store.reset` are experimental.
 
 | Argument | Meaning |
 | --- | --- |
@@ -4171,7 +4171,7 @@ Reactive state gives a mod typed handles on `api.state` keys and a way to react 
 
 ## Managed processes
 
-Use it when a mod runs a long-lived helper process, such as a language server, and exchanges framed messages with
+Use this page when a mod runs a long-lived helper process, such as a language server, and exchanges framed messages with
 it, or when a package declares an adapter or the session configures code-mode kernels. A process that feeds a
 terminal raster is described in [Graphics](reference/graphics.md#raster-processes-process_raster_v1).
 
@@ -4338,8 +4338,8 @@ before activation and may import its aliases. The adapted package keeps only its
 
 ### Code-mode kernels
 
-A kernel is a persistent interpreter that the `kernel` code-mode tool runs cells in. Kernels are Codex configuration,
-not a Mod API: `[[features.code_mode.kernels]]` entries with `name`, `command`, absolute `driver` and
+A kernel is a persistent interpreter that the `kernel` code-mode tool runs cells in. You configure kernels in Codex,
+not through the Mod API: `[[features.code_mode.kernels]]` entries with `name`, `command`, absolute `driver` and
 `driver_sha256` register kernels for the `kernel` code-mode tool. The driver hash is checked before each worker
 starts; with no entries the tool reports that no kernel is configured.
 
@@ -4352,8 +4352,8 @@ permission checks.
 
 ## Events and lifecycle
 
-Use it when a mod reacts to host events: which events exist and what they contain, channels between mods, timers and
-the `api.time` helpers, how background callbacks are delivered, lifecycle events and the classic hook names.
+Use this page when a mod reacts to host events: which events exist and what they contain, channels between mods, timers
+and the `api.time` helpers, how background callbacks are delivered, lifecycle events and the classic hook names.
 
 Mod API `1.0.0`: frozen, except the events and fields marked experimental. Platform: every OMD host (Apple Silicon
 macOS).
@@ -4881,7 +4881,7 @@ still match; invalid state fails closed.
 
 ## Agents
 
-Use it when a mod spawns and manages worker agents, registers agent definitions, watches the agents of a session,
+Use this page when a mod spawns and manages worker agents, registers agent definitions, watches the agents of a session,
 intercepts spawns or integrates a worker's changes. Receipts that agents produce for a contract are in
 [Contracts and receipts](reference/contracts.md).
 
@@ -5023,8 +5023,6 @@ These rules apply to children the model spawns with Codex's multi-agent V2 tools
 
 #### Completion wake
 
-These rules set when a parent runs again after its children report.
-
 - With `agents.completion_wake` on (off by default; a package turns it on through `codex_config`), a child's result
   that reaches an idle parent (the root or another child) starts one turn about 500 ms after the last result. That
   turn reads every queued result. With it off, results wait for the parent's next turn.
@@ -5033,8 +5031,6 @@ These rules set when a parent runs again after its children report.
 - A `wait_agent` that times out tells the model to end its turn.
 
 #### Forwarding
-
-These rules set where a child's questions and requests go.
 
 - A child's approval, permission or MCP elicitation request goes to the parent's mailbox. Only the user can answer it.
 - A child's `request_user_input` question is queued in the parent's mailbox and read at the parent's next turn. It
@@ -5140,8 +5136,8 @@ The `agent` middleware event delivers `{phase: 'start' | 'turn' | 'end', agent}`
 `provider`, `model` and `billing` fields are experimental). Events arrive in order. Each one is delivered under the
 state of the root thread, the session thread at the top of the agent's parent chain.
 
-Observation grants nothing: `agents.message`, `agents.wait`, `agents.result` and `agents.cancel` still address only
-the caller's own handles.
+The `agent` event gives no control over other agents: `agents.message`, `agents.wait`, `agents.result` and
+`agents.cancel` still address only the caller's own handles.
 
 ### Worker workspaces, tool lists and integration
 
@@ -5180,9 +5176,10 @@ missing}`.
 
 ## Peers, power holds and mod-started turns
 
-Use it when a mod messages other live sessions, keeps the Mac awake, queues or continues turns on its own, or submits
-prompts the user captured. Session on this page means a live session: one running `codex` process. Reading recorded
-sessions, thread-scoped data and `turns.abort` are in [Thread data and recorded sessions](reference/threads-and-sessions-store.md).
+Use this page when a mod messages other live sessions, keeps the Mac awake, queues or continues turns on its own, or
+submits prompts the user captured. Session on this page means a live session: one running `codex` process. Reading
+recorded sessions, thread-scoped data and `turns.abort` are in [Thread data and recorded
+sessions](reference/threads-and-sessions-store.md).
 
 Mod API `1.0.0`: every entry on this page is experimental. Platform: Apple Silicon macOS; `lid_closed` power holds
 need the [authority broker](reference/protected-authority.md).
@@ -5404,14 +5401,14 @@ The `reason` values are:
 - `delivered`: the message with that `client_id` was committed to the thread, also when replayed on resume;
 - `unconfirmed`: spent, but no commit seen.
 
-A caller can use it to reconcile an uncertain submission instead of sending twice. `prompts.revoke {consent}` drops
+Use `prompts.status` to reconcile an uncertain submission instead of sending twice. `prompts.revoke {consent}` drops
 one.
 
 A consent never grants autonomous authority: anything not captured by the user still needs `autonomous`.
 
 ## Credentials
 
-Use it when a mod needs a token or a secret: enrolling credential profiles and secrets, the origin each one is
+Use this page when a mod needs a token or a secret: enrolling credential profiles and secrets, the origin each one is
 bound to, how sidecars reach credentials through the gateway, and the `omd-mod credentials` command. Host features:
 `credentials_v1`, `secrets_v1`. How `http.request` attaches a credential is in
 [Authority grants](reference/authority-grants.md#httprequest-redirects-and-credentials).
@@ -5492,7 +5489,7 @@ to enroll a key without writing it to disk.
 
 ## Thread data and recorded sessions
 
-Use it when a mod cancels a turn, keeps data per thread, reads what happened in recent turns, reads recorded
+Use this page when a mod cancels a turn, keeps data per thread, reads what happened in recent turns, reads recorded
 sessions (a thread's saved history, not a live `codex` process) or keeps the current conversation as evidence.
 Messaging live sessions and starting turns are in [Peers, power holds and mod-started turns](reference/sessions-and-turns.md).
 
@@ -5638,8 +5635,8 @@ commands, mod CLI commands run with `omd COMMAND --repo PATH`, resolve the selec
 
 ## Routes
 
-Use it when a mod chooses, adds or writes model routes, settles provider-billed requests, reads the ledger, or runs
-a provider service. Route credentials and origins are in [Credentials](reference/credentials.md); intercepting a single
+Use this page when a mod chooses, adds or writes model routes, settles provider-billed requests, reads the ledger, or
+runs a provider service. Route credentials and origins are in [Credentials](reference/credentials.md); intercepting a single
 request is in [Model requests and streams](reference/model-requests.md).
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
@@ -5959,15 +5956,15 @@ this mod didn't start in its current generation.
 
 #### Streaming providers
 
-Mod-owned model providers need no additional primitive: a `services` grant with a `route` runs a loopback server
-that Codex uses as a Responses provider, which streams normally. `max_request_bytes` in `host.json` bounds request
+A `services` grant with a `route` runs a loopback server that Codex uses as a Responses provider, which streams
+normally, so mod-owned model providers need no additional primitive. `max_request_bytes` in `host.json` bounds request
 size and has no host maximum, so a provider's context window is configuration.
 
 ## Model requests and streams (`model_turn_interception_v1`)
 
-Use it when a mod rewrites, reroutes, answers or watches model requests and their response streams. The policy
-stage that runs on the exact bytes sent is [Final-request policy](reference/final-request-policy.md). A mod that calls a
-model itself uses [One-shot model calls and forks](reference/model-calls.md).
+Use `model_turn_interception_v1` when a mod rewrites, reroutes, answers or watches model requests and their response
+streams. The policy stage that runs on the exact bytes sent is [Final-request policy](reference/final-request-policy.md). A mod
+that calls a model itself uses [One-shot model calls and forks](reference/model-calls.md).
 
 Mod API `1.0.0`: the `model_request` and `response_stream` interceptors and the `model_response` event are frozen.
 Platform: Apple Silicon macOS. OMD's tests cover only the configured fixture providers, not live routes.
@@ -6021,7 +6018,7 @@ replaced whole.
 - Protected sections (permissions, approved prefixes and network rules, managed developer instructions,
   collaboration mode, guardian policy, user answers) and tool outputs cannot be changed, dropped or moved, and no
   section crosses a protected one.
-- Native policy is enforced independently of this text.
+- The host enforces native policy independently of section text.
 
 ### `model_request` `next` and synthetic responses
 
@@ -6100,10 +6097,10 @@ The payload contains:
 
 ## One-shot model calls and forks (`model_complete_v2`)
 
-Use it when a mod calls a model itself: a one-shot `model.complete` on a route, a `model.fork` of the current
-conversation, and prompt cache marks. `api.classify` wraps `model.complete`; see [SDK helpers](reference/sdk-helpers.md).
-To change the model requests that a lead turn or another caller sends, use
-[Model requests and streams](reference/model-requests.md) instead.
+Use `model_complete_v2` when a mod calls a model itself: a one-shot `model.complete` on a route, a `model.fork` of the
+current conversation, and prompt cache marks. `api.classify` wraps `model.complete`; see [SDK helpers](reference/sdk-helpers.md).
+To change the model requests that a lead turn or another caller sends, use [Model requests and
+streams](reference/model-requests.md) instead.
 
 Mod API `1.0.0`: `model.complete` is frozen; `model.fork` is experimental. Platform: Apple Silicon macOS.
 
@@ -6174,7 +6171,7 @@ under `worker_limits`; no task or turn is started for the caller.
 `model.complete` and `model.fork` run in event, tool, timer and channel callbacks and in terminal slash commands,
 which reach the session in the same process. Elsewhere they fail with `no session in this process`.
 
-`cache.read_tokens` reports prompt cache reuse, but reuse isn't guaranteed. A fork is a separate internal session
+`cache.read_tokens` reports prompt cache reuse, which isn't guaranteed. A fork is a separate internal session
 whose cache key and instructions differ from the lead's.
 
 ### Prompt cache marks (`model_cache_v1`)
@@ -6355,7 +6352,7 @@ replaced bytes) or `final_request_refused` with its reason.
 
 ## History and compaction
 
-Use it when a mod edits what the model sees, what is stored, or how and when the thread compacts. It covers the
+Use this page when a mod edits what the model sees, what is stored, or how and when the thread compacts. It covers the
 bounded view of each model request, store-time redaction, durable transcript rewriting and compaction interception.
 
 | Mechanism | Capability | What it changes |
@@ -6632,7 +6629,7 @@ receive no evidence for that in-progress turn.
 
 ## Terminal UI
 
-Use it when a mod draws in the terminal. This page defines the terms the terminal pages share, lists every view
+Use this page when a mod draws in the terminal. This page defines the terms the terminal pages share, lists every view
 field, and describes the two screen modes and how the patches of several mods compose.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental; the
@@ -6771,8 +6768,8 @@ Session UI state is described under [`api.uiState`](reference/state-and-storage.
 
 ## Render hooks (`render_hooks_v1`)
 
-Use it when a mod restyles, wraps, replaces or hides a native terminal component such as a tool call, a message or
-a built-in list. How interceptor chains run in general is in [Interceptors](reference/interceptors.md).
+Use this page when a mod restyles, wraps, replaces or hides a native terminal component such as a tool call, a message
+or a built-in list. How interceptor chains run in general is in [Interceptors](reference/interceptors.md).
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](reference/stability-and-migration.md#experimental-entries-in-the-registry)). Render hooks need the `terminal`
@@ -6805,8 +6802,8 @@ props the hook before it passed on.
 
 ### Render components
 
-Each native component a hook can match, with its `id` and props. The Rewritable column names the props a hook can
-change in the `e` it passes to `next`. Rewrites to other props have no effect.
+These are the native components a hook can match, with each `id` and its props. The Rewritable column names the props a
+hook can change in the `e` it passes to `next`. Rewrites to other props have no effect.
 
 | `component` | `id` | Props (`RenderProps`) | Rewritable |
 | --- | --- | --- | --- |
@@ -6912,7 +6909,7 @@ The same feature lets a component's `action` be `{insert: TEXT}`, which inserts 
 
 ## Layout and styling
 
-Use it when a mod places and styles what it draws: the startup presentation, layout trees, the component types,
+Use this page when a mod places and styles what it draws: the startup presentation, layout trees, the component types,
 region sizing, overlays, the box model, text styles, surface paint and the view limits. Keys, focus and pointer
 input are in [Terminal input](reference/terminal-input.md); images and rasters are in [Graphics](reference/graphics.md).
 
@@ -7177,8 +7174,7 @@ keeps comments and strings that open above it.
 The feature also adds optional `min_width` and `max_width` (1–500 columns) on `box` and `pane`.
 
 The host draws a box with width bounds only when the site's inner width fits it, and header height counts only drawn
-boxes. Header
-rows are never spaced by the comfortable density.
+boxes. The comfortable density never spaces header rows.
 
 ### Surface paint
 
@@ -7250,7 +7246,7 @@ reports the composed view's diagnostics under `terminal`.
 
 ## Terminal input
 
-Use it when a mod takes keys, pastes or pointer events, binds keys, moves focus between regions and controls,
+Use this page when a mod takes keys, pastes or pointer events, binds keys, moves focus between regions and controls,
 reacts to `component_event`, guards focus changes with `component_change`, or draws with component modules.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
@@ -7306,12 +7302,12 @@ Leaving the component:
 - [Key contexts](#focus-regions-key-contexts-and-help-terminal_focus_v1) of the component's site owner that name
   its site get each key before the component does.
 
-Input callbacks run in the terminal process with read-only workspace access. The view redraws as soon as one
-changes the mod's state. To write, the input callback publishes an event with
-[`events.publish`](reference/events-and-lifecycle.md#eventspublish) to the mod's `channel` handler, which runs with the
-session's access. Terminal-side callbacks, such as slash commands and input, run beside the session. That event can
-reach the `channel` handler before the input callback's own `api.state` write is saved.
-[Handle keys in a terminal view](../docs/mod-authors/handle-keys.md) shows the save pattern.
+Input callbacks run in the terminal process with read-only workspace access. The view redraws as soon as one changes the
+mod's state. To write, the input callback publishes an event with
+[`events.publish`](reference/events-and-lifecycle.md#eventspublish) to the mod's `channel` handler, which runs with the session's
+access. Terminal-side callbacks, such as slash commands and input, run beside the session. The published event can reach
+the `channel` handler before the input callback's own `api.state` write is saved. [Handle keys in a terminal
+view](../docs/mod-authors/handle-keys.md) shows the save pattern.
 
 The mod stores the buffer, cursor and selection and draws them as spans. A `document` with `keys` set keeps its scroll
 across content changes and scrolls to `selected`. A paste into a focused `terminal` component goes to the PTY, bracketed
@@ -7410,11 +7406,10 @@ Focus, keys, paste or mouse resume full-rate drawing. Resize and returning from 
 focused; an approval, question or finished turn ends display idle in a focused terminal. Background detection needs
 a terminal that reports focus events. The conversation stays loaded and the session process keeps running.
 
-With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
-`view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.
-It fires once per thread change, not on each redraw. Delivery is asynchronous and queued events for an obsolete
-thread context are dropped. Use it to initialize thread-scoped UI state; `start` and `resume` still describe the lead
-thread's lifecycle.
+With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends `view {phase: 'opened', view:
+'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent. It fires once per thread
+change, not on each redraw. Delivery is asynchronous and queued events for an obsolete thread context are dropped. Use
+the event to initialize thread-scoped UI state; `start` and `resume` still describe the lead thread's lifecycle.
 
 Each `component_event` names its `component` and `kind`:
 
@@ -7481,7 +7476,7 @@ Handlers answer:
 - `{scroll: n}` to clamp the offset.
 
 They run while the terminal handles the gesture, so they get no host operations and run under the
-[terminal chain budget](reference/interceptors.md#terminal-chain-budget). When it runs out the change applies unchanged.
+[terminal chain budget](reference/interceptors.md#terminal-chain-budget). When the budget runs out, the change applies unchanged.
 
 ### Component modules (`component_modules_v1`)
 
@@ -7542,20 +7537,21 @@ post in the same frame replaces it; 64 KiB).
 #### Component modules for external clients
 
 External clients read a node's tree with [`omd/render`](reference/omd-client-protocol.md#omdrender)
-`{slot: 'module', props: {component, columns?, rows?}}`. Each client gets its own instance of the node. It is sized
+`{slot: 'module', props: {component, columns?, rows?}}`. Each client gets its own instance of the node, sized
 by `columns` and `rows`, or as last rendered. The default is 80 columns and 0 rows. `effective.next_ms` in the result
 says when the next tick is due. The client sends key and pointer events through `omd/client/event`.
 
-Their posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
+Client posts reach `component_post` as `{component, module, client, data}`. `component_post` hooks can call the same
 host operations as `component_event` hooks, for terminal and client posts alike. A post is delivered only while the
 thread it was posted in is still current and its instance is still mounted. Detaching unmounts the client's instances
 and drops their undelivered posts.
 
 ## Graphics
 
-Use it when a mod shows pictures or draws pixels and cells: the `image` component and its renderers, image sampling,
-rasters and `terminal.blit`, the underlay, and processes that feed a raster frames or raw pixel buffers. Which renderer
-a terminal or client offers is in the [`terminal` event `client`](reference/terminal-operations.md#terminal-event-client).
+Use this page when a mod shows pictures or draws pixels and cells: the `image` component and its renderers, image
+sampling, rasters and `terminal.blit`, the underlay, and processes that feed a raster frames or raw pixel buffers. Which
+renderer a terminal or client offers is in the [`terminal` event
+`client`](reference/terminal-operations.md#terminal-event-client).
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](reference/stability-and-migration.md#experimental-entries-in-the-registry)); rasters and `terminal.blit` are
@@ -7796,7 +7792,7 @@ written to the process's stdin instead of [`component_event`](reference/terminal
 
 ## Terminal operations
 
-Use it when a mod calls an operation the terminal serves (notifications, threads and imports, selection and
+Use this page when a mod calls an operation the terminal serves (notifications, threads and imports, selection and
 clipboard, opening files, prompts, panes, panels, notices and PTY sessions) or reads what the `terminal` event
 reports about the terminal itself. Raster updates (`terminal.blit`) are in [Graphics](reference/graphics.md).
 
@@ -7882,7 +7878,7 @@ change them through `config.write`.
 terminal.open {url} | {path} | {path, line?, editor: true} → {opened: true} | {status: 'declined'}
 ```
 
-It opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file after a
+`terminal.open` opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file after a
 native confirmation.
 
 `{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file using the `editor` argument list in
@@ -7902,7 +7898,7 @@ terminal.prompt {kind: 'text', title, message, masked?} → {status: 'accepted',
 terminal.prompt {kind: 'choice', title, message, options, multiple?, other?} → {status: 'accepted', values, other?} | {status: 'declined'}
 ```
 
-It asks the user; mods never answer prompts. `masked` hides typed text.
+`terminal.prompt` asks the user; mods never answer prompts. `masked` hides typed text.
 
 `choice` (`ui_composition_v1`) shows a native picker of up to 32 `options` `{value, label}`: one value, several with
 `multiple`, or a typed answer through an `Other…` row with `other`. Cancelling returns `declined`.
@@ -8117,11 +8113,12 @@ decline lasts for the pane.
 `start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory. Every
 `{dir}` in `argv` is its path. Errors are `pty_files_invalid`.
 
-- The exit event and a `read` after the exit return its top-level regular files (64 KiB in all; symlinks and hard
-  links are skipped), including files the program wrote.
-- It is removed when the session stops or is replaced. One left behind when OMD quits is removed by the next start.
-- Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach. Sandboxed panes keep it
-  in the scratch `HOME` they share, so other sandboxed panes can read it.
+- The exit event and a `read` after the exit return its top-level regular files (64 KiB in all; symlinks and hard links
+  are skipped), including files the program wrote.
+- The directory is removed when the session stops or is replaced. One left behind when OMD quits is removed by the next
+  start.
+- Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach. Sandboxed panes keep it in
+  the scratch `HOME` they share, so other sandboxed panes can read it.
 
 ##### Pane focus
 
@@ -8172,16 +8169,16 @@ rows, sites?}` and, with external clients attached, `clients` (see
   to the conversation with it.
 - A change in `welcome` or `chat` renders the view again.
 
-`client` is null without a terminal client. Behind a remote app-server it is the facts the terminal frontend
-reports with [`omd/client/update`](reference/omd-client-protocol.md#omdclientupdate) `client`. When any of these change (the window or font is resized, animations are
-turned off) the view renders again with the new `client`. If several changes arrive while a render is in progress,
-the host renders once more after it. A change in a drawn site's area also renders the view again. The exception is
-when the area returns within a second to the size it had before the last change. A view that sizes its own layout
-from `sites` can cause that loop, so the host skips the render.
+`client` is null without a terminal client. Behind a remote app-server it is the facts the terminal frontend reports
+with [`omd/client/update`](reference/omd-client-protocol.md#omdclientupdate) `client`. When any of these change (the window or
+font is resized, animations are turned off) the view renders again with the new `client`. If several changes arrive
+while a render is in progress, the host renders once more after it. A change in a drawn site's area also renders the
+view again, except when the area returns within a second to the size it had before the last change: a view that sizes
+its own layout from `sites` can cause that loop, so the host skips the render.
 
 ## Protected authority (macOS)
 
-Use it when you deploy or reason about the macOS authority broker: what it protects, how changes are
+Use this page when you deploy or reason about the macOS authority broker: what it protects, how changes are
 authenticated, where its trust boundary ends, and how it is pinned, reset and removed. For what a user sees, see
 [Trust and permissions](https://github.com/dzkchen/oh-my-diff/blob/main/docs/trust-and-permissions.md).
 
@@ -8239,7 +8236,7 @@ a runner grant.
   verification. A missing runner fails with `runner_unavailable`, with no fallback to another program.
 - The compiled-module cache in `<store>/cache/code` contains only V8 bytecode. While the broker or an administrator
   policy pins trust, the runner ignores the cache and compiles the trusted package source. Otherwise the runner uses
-  the cache. That adds no authority, because a process that can write the store can already change trust through
+  the cache, which adds no authority because a process that can write the store can already change trust through
   `mods.json`.
 
 #### Selection grants
@@ -8303,7 +8300,7 @@ user can and can't do the following:
 
 ## Administrator policy and managed deployment
 
-Use it when an organization restricts which mods run, pins and deploys packages with `package-sync`, or recovers
+Use this page when an organization restricts which mods run, pins and deploys packages with `package-sync`, or recovers
 from a managed failure. Storing the policy in the broker needs [protected authority](reference/protected-authority.md).
 
 Policy `schema` 1, read by the host on Apple Silicon macOS; it isn't part of the mod API.
@@ -8322,8 +8319,8 @@ Support/OhMyDiff/policy.json`.
 - A policy file or folder that isn't owned by root or is writable by anyone else fails with
   `managed_policy_untrusted` and no mod loads until it is fixed.
 
-OMD never contacts a vendor for policy and there is no remote disable: restrictions are an organization's own
-decision, made on the machine.
+OMD never contacts a vendor for policy and has no remote disable. The organization sets restrictions on the
+machine.
 
 ### Policy fields
 
@@ -8519,7 +8516,7 @@ unreadable deployment record, and until that sync the policy's targets fail clos
 
 ## Plugin components and shell commands
 
-Use it when a plugin contains a mod component or when you run a mod's exported shell command with `omd COMMAND`.
+Use this page when a plugin contains a mod component or when you run a mod's exported shell command with `omd COMMAND`.
 To bundle a mod in a plugin step by step, see
 [Bundle a mod in a plugin](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/bundle-in-a-plugin.md).
 
@@ -8579,12 +8576,12 @@ exports it, or `--repo` is missing, `omd` fails with `unknown command: COMMAND`.
 
 ## External clients
 
-Use it when you build or review a renderer other than the terminal, such as a desktop window, an editor webview or a
-text console. A client attaches to a running session over JSON-RPC to Codex's app server (see
-[Transports and auth](#transports-and-auth)) and draws the same composed mod view. Oh My Diff ships no desktop or editor
-client of its own; a mod ships its adapter (see [Client adapters](#client-adapters)). The exact messages are in the
-[`omd-client/1` protocol](reference/omd-client-protocol.md), and the steps to build one are in
-[Build an external client](../docs/mod-authors/build-a-client.md).
+Use this page when you build or review a renderer other than the terminal, such as a desktop window, an editor webview
+or a text console. A client attaches to a running session over JSON-RPC to Codex's app server (see [Transports and
+auth](#transports-and-auth)) and draws the same composed mod view. Oh My Diff ships no desktop or editor client of its
+own; a mod ships its adapter (see [Client adapters](#client-adapters)). The exact messages are in the [`omd-client/1`
+protocol](reference/omd-client-protocol.md), and the steps to build one are in [Build an external
+client](../docs/mod-authors/build-a-client.md).
 
 In Mod API `1.0.0` the `omd/*` methods are experimental and need the `experimentalApi` opt-in
 ([Initialize and errors](reference/omd-client-protocol.md#initialize-and-errors)). The host runs on Apple Silicon macOS, and
@@ -8618,9 +8615,9 @@ the client SDK runs in browsers and Node.
 
 ### Client adapters
 
-A client adapter is the part of a mod that starts the client's UI process. The mod ships the adapter. It starts the
-UI process with `process.start` from a native callback, such as a `channel` handler that a command publishes to. The
-adapter starts it in one of two ways:
+A client adapter is the part of a mod that starts the client's UI process, with `process.start` from a native
+callback such as a `channel` handler that a command publishes to. The mod ships the adapter, which starts the process
+in one of two ways:
 
 - Unsandboxed, with `{sandbox: 'none'}`, which needs the `os` capability with the program in `os_access.programs`
   (for example `node`).
@@ -8676,7 +8673,7 @@ Only the confined renderer process uses its own UI runtime.
 
 ## `omd-client/1` protocol
 
-Use it when you implement or debug a client's messages: initialization and errors, every `omd/*` request, the
+Use this page when you implement or debug a client's messages: initialization and errors, every `omd/*` request, the
 host's notifications and server requests, action tokens, epochs and reconnecting, renderer fallbacks and
 delegation. Transports, adapters and the SDK are in [External clients](reference/external-clients.md); the steps to build a
 client are in [Build an external client](../docs/mod-authors/build-a-client.md).

@@ -1,6 +1,6 @@
 # History and compaction
 
-Use it when a mod edits what the model sees, what is stored, or how and when the thread compacts. It covers the
+Use this page when a mod edits what the model sees, what is stored, or how and when the thread compacts. It covers the
 bounded view of each model request, store-time redaction, durable transcript rewriting and compaction interception.
 
 | Mechanism | Capability | What it changes |

@@ -1,6 +1,6 @@
 # Settings
 
-Use it when a mod declares, reads or writes settings, when a user sets them in a settings file, or when you check
+Use this page when a mod declares, reads or writes settings, when a user sets them in a settings file, or when you check
 what the manifest `environment` field allows. `packages.list` reports each mod's settings; see
 [Packaging](packaging.md#packageslist).
 
@@ -51,7 +51,7 @@ the directory that contains `mods.json`.
 
 - Only one of the three files may exist. More than one is invalid.
 - The file is at most 64 KiB, and its top level must be an object whose keys are the mod's setting names.
-- Its keys override the saved settings (and the schema `default` values) in every callback, render and chain
+- The file's keys override the saved settings (and the schema `default` values) in every callback, render and chain
   digest, before terminal overrides. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
   a wrongly typed value and a missing `required` setting are invalid.
 - Administrator-managed selections ignore the file (status `ignored`).
@@ -69,7 +69,7 @@ the directory that contains `mods.json`.
 ## Manifest `environment`
 
 `"environment": ["crypto"]` in `mod.json` allows the
-[`crypto` global](host-model.md#text-encoding-and-crypto). It is the only environment a mod can
+[`crypto` global](host-model.md#text-encoding-and-crypto). `crypto` is the only environment a mod can
 declare (another or repeated name fails with `unsupported_or_duplicate_environment_access`).
 
 Without that declaration, the host refuses at load any source that uses `crypto.` or `crypto[` outside string

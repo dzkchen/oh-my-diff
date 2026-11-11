@@ -53,6 +53,8 @@ Open the Files tab in the dock, and these keys apply while it has focus. `?` lis
 
 With only one tab open, `[`, `]` and `q` act on the workspace dock instead.
 
+Arrow keys also navigate: Up/Down select an entry, Right opens it, and Left returns to the parent directory.
+
 | Command | What it does |
 | --- | --- |
 | `/files go PATH` | Jump to a path, for example `/files go src/lib` |
@@ -100,5 +102,3 @@ It has no settings.
 - [`omd_git`](../omd_git/README.md), the Git panel in the same dock
 - [Terminal UI](../../reference/terminal-ui.md) and
   [workspace watches](../../reference/workspace-files.md#workspacewatch) in the mod API reference
-
-Arrow keys also navigate: Up/Down select an entry, Right opens it, and Left returns to the parent directory.

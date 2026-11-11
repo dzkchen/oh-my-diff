@@ -67,14 +67,14 @@ package before publishing, dry-run after the squash merge so the tag can reuse t
    gh release view vVERSION
    ```
 
-## Validation time
+## Reuse a dry run and cache compiles
 
 A tag reuses a release dry run only when GitHub reports success for `check`, all six validation jobs and `publish`
 in one completed attempt on `main` at the exact tagged commit. The dry run must still have one unexpired `package`
 artifact. The tag pins that artifact's ID, checks the downloaded package's commit, version and checksums, then
 signs and publishes it. The `release` environment supplies the signing key only during publication.
 
-This removes the second full build and test run after a qualifying dry run. Without one, the tag runs all checks.
+Reusing a qualifying dry run skips the second full build and test run. Without one, the tag runs all checks.
 An unavailable GitHub API, a missing or expired artifact, a different commit, or an incomplete dry run falls back
 to full validation. If an artifact disappears after selection, the download fails; rerun the tag workflow so it
 can select a retained artifact or validate again. Successful nightlies do not qualify: release binaries require

@@ -1,6 +1,6 @@
 # Credentials
 
-Use it when a mod needs a token or a secret: enrolling credential profiles and secrets, the origin each one is
+Use this page when a mod needs a token or a secret: enrolling credential profiles and secrets, the origin each one is
 bound to, how sidecars reach credentials through the gateway, and the `omd-mod credentials` command. Host features:
 `credentials_v1`, `secrets_v1`. How `http.request` attaches a credential is in
 [Authority grants](authority-grants.md#httprequest-redirects-and-credentials).

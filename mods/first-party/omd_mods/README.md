@@ -76,13 +76,14 @@ It has no settings.
 - Every install is reviewed and starts off.
 - A mod's commands work at once. Its other behavior starts with your next message.
 
+Trust previews warn when an ID is already installed in another scope: same-ID copies share storage and owned credential
+authority.
+
 ## More
 
 - [Manage mods](../../../docs/manage-mods.md)
 - [Included mods](../../../docs/collection.md)
 - [Packaging](../../reference/packaging.md) in the mod API reference
-
-Trust previews warn when an ID is already installed in another scope: same-ID copies share storage and owned credential authority.
 
 ## Terminal choices and saved settings
 

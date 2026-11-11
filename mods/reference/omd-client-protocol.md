@@ -1,6 +1,6 @@
 # `omd-client/1` protocol
 
-Use it when you implement or debug a client's messages: initialization and errors, every `omd/*` request, the
+Use this page when you implement or debug a client's messages: initialization and errors, every `omd/*` request, the
 host's notifications and server requests, action tokens, epochs and reconnecting, renderer fallbacks and
 delegation. Transports, adapters and the SDK are in [External clients](external-clients.md); the steps to build a
 client are in [Build an external client](../../docs/mod-authors/build-a-client.md).

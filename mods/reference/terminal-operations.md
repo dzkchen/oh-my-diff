@@ -1,6 +1,6 @@
 # Terminal operations
 
-Use it when a mod calls an operation the terminal serves (notifications, threads and imports, selection and
+Use this page when a mod calls an operation the terminal serves (notifications, threads and imports, selection and
 clipboard, opening files, prompts, panes, panels, notices and PTY sessions) or reads what the `terminal` event
 reports about the terminal itself. Raster updates (`terminal.blit`) are in [Graphics](graphics.md).
 
@@ -86,7 +86,7 @@ change them through `config.write`.
 terminal.open {url} | {path} | {path, line?, editor: true} → {opened: true} | {status: 'declined'}
 ```
 
-It opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file after a
+`terminal.open` opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file after a
 native confirmation.
 
 `{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file using the `editor` argument list in
@@ -106,7 +106,7 @@ terminal.prompt {kind: 'text', title, message, masked?} → {status: 'accepted',
 terminal.prompt {kind: 'choice', title, message, options, multiple?, other?} → {status: 'accepted', values, other?} | {status: 'declined'}
 ```
 
-It asks the user; mods never answer prompts. `masked` hides typed text.
+`terminal.prompt` asks the user; mods never answer prompts. `masked` hides typed text.
 
 `choice` (`ui_composition_v1`) shows a native picker of up to 32 `options` `{value, label}`: one value, several with
 `multiple`, or a typed answer through an `Other…` row with `other`. Cancelling returns `declined`.
@@ -321,11 +321,12 @@ decline lasts for the pane.
 `start {files: {NAME: text}}` (four files, 16 KiB each, names `[A-Za-z0-9._-]`) writes a private directory. Every
 `{dir}` in `argv` is its path. Errors are `pty_files_invalid`.
 
-- The exit event and a `read` after the exit return its top-level regular files (64 KiB in all; symlinks and hard
-  links are skipped), including files the program wrote.
-- It is removed when the session stops or is replaced. One left behind when OMD quits is removed by the next start.
-- Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach. Sandboxed panes keep it
-  in the scratch `HOME` they share, so other sandboxed panes can read it.
+- The exit event and a `read` after the exit return its top-level regular files (64 KiB in all; symlinks and hard links
+  are skipped), including files the program wrote.
+- The directory is removed when the session stops or is replaced. One left behind when OMD quits is removed by the next
+  start.
+- Unsandboxed panes keep it in `pty-sessions` in the mod store, out of every sandbox's reach. Sandboxed panes keep it in
+  the scratch `HOME` they share, so other sandboxed panes can read it.
 
 #### Pane focus
 
@@ -376,9 +377,9 @@ rows, sites?}` and, with external clients attached, `clients` (see
   to the conversation with it.
 - A change in `welcome` or `chat` renders the view again.
 
-`client` is null without a terminal client. Behind a remote app-server it is the facts the terminal frontend
-reports with [`omd/client/update`](omd-client-protocol.md#omdclientupdate) `client`. When any of these change (the window or font is resized, animations are
-turned off) the view renders again with the new `client`. If several changes arrive while a render is in progress,
-the host renders once more after it. A change in a drawn site's area also renders the view again. The exception is
-when the area returns within a second to the size it had before the last change. A view that sizes its own layout
-from `sites` can cause that loop, so the host skips the render.
+`client` is null without a terminal client. Behind a remote app-server it is the facts the terminal frontend reports
+with [`omd/client/update`](omd-client-protocol.md#omdclientupdate) `client`. When any of these change (the window or
+font is resized, animations are turned off) the view renders again with the new `client`. If several changes arrive
+while a render is in progress, the host renders once more after it. A change in a drawn site's area also renders the
+view again, except when the area returns within a second to the size it had before the last change: a view that sizes
+its own layout from `sites` can cause that loop, so the host skips the render.

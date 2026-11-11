@@ -1,6 +1,6 @@
 # Authority grants
 
-Use it when a mod needs authority beyond its sandbox: unsandboxed programs, delegated approvals, HTTP origins,
+Use this page when a mod needs authority beyond its sandbox: unsandboxed programs, delegated approvals, HTTP origins,
 folders outside the workspace, MCP servers or environment variables. It covers the manifest fields that scope each
 grant, the operations they allow and how a grant ends. The capability names are listed in
 [Capabilities](capabilities.md#authority-grant-capabilities), with

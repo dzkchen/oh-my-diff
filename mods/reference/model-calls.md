@@ -1,9 +1,9 @@
 # One-shot model calls and forks (`model_complete_v2`)
 
-Use it when a mod calls a model itself: a one-shot `model.complete` on a route, a `model.fork` of the current
-conversation, and prompt cache marks. `api.classify` wraps `model.complete`; see [SDK helpers](sdk-helpers.md).
-To change the model requests that a lead turn or another caller sends, use
-[Model requests and streams](model-requests.md) instead.
+Use `model_complete_v2` when a mod calls a model itself: a one-shot `model.complete` on a route, a `model.fork` of the
+current conversation, and prompt cache marks. `api.classify` wraps `model.complete`; see [SDK helpers](sdk-helpers.md).
+To change the model requests that a lead turn or another caller sends, use [Model requests and
+streams](model-requests.md) instead.
 
 Mod API `1.0.0`: `model.complete` is frozen; `model.fork` is experimental. Platform: Apple Silicon macOS.
 
@@ -74,7 +74,7 @@ under `worker_limits`; no task or turn is started for the caller.
 `model.complete` and `model.fork` run in event, tool, timer and channel callbacks and in terminal slash commands,
 which reach the session in the same process. Elsewhere they fail with `no session in this process`.
 
-`cache.read_tokens` reports prompt cache reuse, but reuse isn't guaranteed. A fork is a separate internal session
+`cache.read_tokens` reports prompt cache reuse, which isn't guaranteed. A fork is a separate internal session
 whose cache key and instructions differ from the lead's.
 
 ## Prompt cache marks (`model_cache_v1`)

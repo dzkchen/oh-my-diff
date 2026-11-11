@@ -62,7 +62,7 @@ Change settings in `/mods`.
 ## Needs and limits
 
 - It needs a host with `terminal_raster_packed_v1`.
-- It's a rendering demonstration, not a tool you'd keep on.
+- It only demonstrates rendering and isn't meant to stay enabled.
 
 ## More
 

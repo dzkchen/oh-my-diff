@@ -49,7 +49,7 @@ The agent's tool row shows the model it runs on, and `/status` lists each subage
 
 ### Delegate tasks
 
-The model, not you, gets a `delegate_task` tool (found through `tool_search`). Native `spawn_agent` already runs
+The model, not you, calls the `delegate_task` tool (found through `tool_search`). Native `spawn_agent` already runs
 other providers' models and work that outlives the turn, so its description tells the model to use `delegate_task`
 only for what it alone gives: worker-only routes, a read-only sandbox, an isolated worktree whose result the lead
 applies with `integrate` (`workspace.integrate`), and `retry_after_limit`.

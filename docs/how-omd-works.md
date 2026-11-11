@@ -36,7 +36,7 @@ Each OMD release supports one Codex version line, because the patch fits one tag
 patch is rebuilt against it and a new OMD release follows. [Support](support.md) explains what that means for updating
 Codex.
 
-## The host has no features
+## Features live in mods
 
 Every feature in OMD+ is a TypeScript mod in `mods/first-party`, written against the same public API as any other mod.
 The mod host provides APIs that several unrelated mods can use, such as tool interception, terminal panels and model

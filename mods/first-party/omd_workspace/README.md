@@ -234,6 +234,10 @@ Change settings in `/mods` (open the workspace's settings there). The same names
   panel.
 - Tab titles that don't fit are cut off. Those tabs are still reachable by number or `[` / `]`.
 
+Shell and terminal start approvals are remembered across restarts for the workspace, mod, command, executable and
+requested access. Changing the command, executable or access asks again. Failed starts and declined requests are not
+remembered.
+
 ## For mod authors
 
 Other mods place their panels through the `omd.workspace` 1.2.0 service, called with
@@ -281,5 +285,3 @@ api.services.call('omd.workspace', 'register', { id: 'git', title: 'Git', site: 
 - [Included mods](../../../docs/collection.md)
 - [`omd_git`](../omd_git/README.md) and [`omd_files`](../omd_files/README.md), which draw panels inside the workspace
 - [Terminal UI reference](../../reference/terminal-ui.md)
-
-Shell and terminal start approvals are remembered across restarts for the workspace, mod, command, executable and requested access. Changing the command, executable or access asks again. Failed starts and declined requests are not remembered.

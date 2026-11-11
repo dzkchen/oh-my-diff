@@ -1,6 +1,6 @@
 # Interceptors
 
-Use it when a mod wraps an operation with `api.intercept`: the surfaces it can select, what a handler may change,
+Use this page when a mod wraps an operation with `api.intercept`: the surfaces it can select, what a handler may change,
 how `next`, retries, ordering and failures work, and what the host records. The input of each surface is described
 on the page of the operation it wraps; [Every interceptor surface](#every-interceptor-surface) links to it.
 

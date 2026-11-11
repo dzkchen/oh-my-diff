@@ -1,7 +1,8 @@
 # omd_btw
 
 Replaces Codex's `/btw` with a saved side conversation. Ask about the work in progress; each answer uses your
-earlier side questions as context and appears below the main conversation without entering it. It's experimental, and no install profile includes it.
+earlier side questions as context and appears below the main conversation without entering it. It's experimental, and
+no install profile includes it.
 
 ## Turn it on
 

@@ -30,7 +30,7 @@ The first turn after that asks once whether the mod may run `git`.
 Run `/undo` again to step further back, one turn at a time. `/redo` brings back the most recently undone turn, even
 after later turns, as long as the files it touches haven't changed since.
 
-### What protects your work
+### Safeguards
 
 - `/undo` only touches files the turn changed. If you've edited any of them since, it changes nothing, names those
   files and waits for `/undo force`.

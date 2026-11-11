@@ -49,7 +49,7 @@ Change settings in `/mods`.
 - It turns on Codex's `update_plan` tool for sessions where the panel is active. Nothing is written to `config.toml`.
   That changes the tool list Codex sends, so the first request of each new thread can't reuse the provider's prompt
   cache that stock Codex requests share (about 12K tokens), which is why it's off by default.
-- It shows only your session's own plan. Subagents (helper agents the main agent starts for part of a task) don't
+- It shows only your session's plan. Subagents (helper agents the main agent starts for part of a task) don't
   show or overwrite it.
 - Plans survive compaction (when Codex replaces the earlier conversation with a shorter summary), `/resume` and
   restarts. OMD stores plans for the 16 most recent threads, up to 40 steps of up to 120 characters and 160 KiB in

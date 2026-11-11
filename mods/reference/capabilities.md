@@ -1,6 +1,6 @@
 # Capabilities
 
-Use it when you choose a mod's `capabilities` or review what a trusted mod can do. The tables list what each
+Use this page when you choose a mod's `capabilities` or review what a trusted mod can do. The tables list what each
 manifest capability allows, and [Capability by operation](#capability-by-operation) lists the capability each host
 operation needs. How the authority grants are scoped and ended is in [Authority grants](authority-grants.md).
 

@@ -66,7 +66,7 @@ It has no settings.
 ## Needs and limits
 
 - The client needs Node and a project that depends on `@oh-my-diff/mod-api`.
-- It's a demonstration of the client protocol, not a production approval tool.
+- It demonstrates the client protocol and isn't a production approval tool.
 
 ## More
 

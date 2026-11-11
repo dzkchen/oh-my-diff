@@ -1,6 +1,6 @@
 # Thread data and recorded sessions
 
-Use it when a mod cancels a turn, keeps data per thread, reads what happened in recent turns, reads recorded
+Use this page when a mod cancels a turn, keeps data per thread, reads what happened in recent turns, reads recorded
 sessions (a thread's saved history, not a live `codex` process) or keeps the current conversation as evidence.
 Messaging live sessions and starting turns are in [Peers, power holds and mod-started turns](sessions-and-turns.md).
 

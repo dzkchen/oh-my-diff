@@ -48,18 +48,19 @@ and other segments go first. Colors follow your theme and `NO_COLOR`.
 ### Segments
 
 - `model`, `effort`, `provider`: the model (`requested→served` if they differ), reasoning effort, provider.
-- `tier`: the processing tier name (such as Fast), from the model catalog, or Flex. With no tier configured it shows
-  the model's catalog default; hidden when no tier applies, as in Codex's own model label.
+- `tier`: the processing tier name (such as Fast), from the model catalog, or Flex. With no tier configured it shows the
+  model's catalog default; hidden when no tier applies, as in Codex's own model label.
 - `profile`: `profile: <name>` when the active user config layer is a `--profile` one. Not in a preset; add it to a
   custom layout.
 - `workspace`: `workspace: <name>` for the selected ChatGPT workspace. Not in a preset; add it to a custom layout.
 - `context`: tokens and percent left, such as `258k left (99%)`, with a bar of what's left. The percent matches Codex's
-  own `% context left`; without a known window it shows tokens used. `~` and muted after a compaction (a shorter summary replacing the earlier
-  conversation), rewind or model switch. `⟳N` counts compactions.
+  own `% context left`; without a known window it shows tokens used. `~` and muted after a compaction (a shorter summary
+  replacing the earlier conversation), rewind or model switch. `⟳N` counts compactions.
 - `tokens`, `cache`: token use and cache state.
-- `cost`: session cost, never an invoice. `~` or `est.` marks an estimate, `included` marks subscription use, and `+?`
-  means some cost is still unsettled or unknown. `omd_usage` (`Alt+a`) breaks it down by request.
-- `limits`: account rate-limit windows with reset countdowns. Refreshes every minute and on `/statusline refresh`, so an account usage reset is picked up even while idle.
+- `cost`: session cost, which is not an invoice. `~` or `est.` marks an estimate, `included` marks subscription use, and
+  `+?` means some cost is still unsettled or unknown. `omd_usage` (`Alt+a`) breaks it down by request.
+- `limits`: account rate-limit windows with reset countdowns. Refreshes every minute and on `/statusline refresh`, so an
+  account usage reset is picked up even while idle.
 - `git`, `changes`: branch and diff summary. Git runs only when a shown segment (`git`, `changes`, `pr`, `ci`) or a
   script needs it, and only the commands those segments need.
 - `pr`, `ci`: GitHub pull request and checks.

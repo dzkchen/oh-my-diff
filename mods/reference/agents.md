@@ -1,6 +1,6 @@
 # Agents
 
-Use it when a mod spawns and manages worker agents, registers agent definitions, watches the agents of a session,
+Use this page when a mod spawns and manages worker agents, registers agent definitions, watches the agents of a session,
 intercepts spawns or integrates a worker's changes. Receipts that agents produce for a contract are in
 [Contracts and receipts](contracts.md).
 
@@ -142,8 +142,6 @@ These rules apply to children the model spawns with Codex's multi-agent V2 tools
 
 ### Completion wake
 
-These rules set when a parent runs again after its children report.
-
 - With `agents.completion_wake` on (off by default; a package turns it on through `codex_config`), a child's result
   that reaches an idle parent (the root or another child) starts one turn about 500 ms after the last result. That
   turn reads every queued result. With it off, results wait for the parent's next turn.
@@ -152,8 +150,6 @@ These rules set when a parent runs again after its children report.
 - A `wait_agent` that times out tells the model to end its turn.
 
 ### Forwarding
-
-These rules set where a child's questions and requests go.
 
 - A child's approval, permission or MCP elicitation request goes to the parent's mailbox. Only the user can answer it.
 - A child's `request_user_input` question is queued in the parent's mailbox and read at the parent's next turn. It
@@ -259,8 +255,8 @@ The `agent` middleware event delivers `{phase: 'start' | 'turn' | 'end', agent}`
 `provider`, `model` and `billing` fields are experimental). Events arrive in order. Each one is delivered under the
 state of the root thread, the session thread at the top of the agent's parent chain.
 
-Observation grants nothing: `agents.message`, `agents.wait`, `agents.result` and `agents.cancel` still address only
-the caller's own handles.
+The `agent` event gives no control over other agents: `agents.message`, `agents.wait`, `agents.result` and
+`agents.cancel` still address only the caller's own handles.
 
 ## Worker workspaces, tool lists and integration
 

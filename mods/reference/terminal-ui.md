@@ -1,6 +1,6 @@
 # Terminal UI
 
-Use it when a mod draws in the terminal. This page defines the terms the terminal pages share, lists every view
+Use this page when a mod draws in the terminal. This page defines the terms the terminal pages share, lists every view
 field, and describes the two screen modes and how the patches of several mods compose.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental; the

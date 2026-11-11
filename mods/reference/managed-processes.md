@@ -1,6 +1,6 @@
 # Managed processes
 
-Use it when a mod runs a long-lived helper process, such as a language server, and exchanges framed messages with
+Use this page when a mod runs a long-lived helper process, such as a language server, and exchanges framed messages with
 it, or when a package declares an adapter or the session configures code-mode kernels. A process that feeds a
 terminal raster is described in [Graphics](graphics.md#raster-processes-process_raster_v1).
 
@@ -167,8 +167,8 @@ before activation and may import its aliases. The adapted package keeps only its
 
 ## Code-mode kernels
 
-A kernel is a persistent interpreter that the `kernel` code-mode tool runs cells in. Kernels are Codex configuration,
-not a Mod API: `[[features.code_mode.kernels]]` entries with `name`, `command`, absolute `driver` and
+A kernel is a persistent interpreter that the `kernel` code-mode tool runs cells in. You configure kernels in Codex,
+not through the Mod API: `[[features.code_mode.kernels]]` entries with `name`, `command`, absolute `driver` and
 `driver_sha256` register kernels for the `kernel` code-mode tool. The driver hash is checked before each worker
 starts; with no entries the tool reports that no kernel is configured.
 

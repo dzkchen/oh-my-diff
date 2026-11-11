@@ -41,7 +41,7 @@ streaming, and macOS keeps managing the fans. When the work finishes with the li
 sleep. Without the broker it only prevents idle sleep while the lid is open (like `caffeinate -i`), and the display
 can still turn off.
 
-While it keeps the Mac awake, the mod has a hold on sleep. The commands and status line call that holding.
+The commands and status line say the mod is "holding" while it keeps the Mac awake.
 
 | Command | What it does |
 | --- | --- |
@@ -83,8 +83,8 @@ The hotspot password comes from the Keychain, where macOS stored it when you fir
 settings. If `hotspot_ssid` isn't a saved network when a lid-closed hold starts, the mod tells you to join it once
 from the menu bar.
 
-This is best effort. The iPhone must be awake with Personal Hotspot on and discoverable. Instant Hotspot has no API,
-and macOS may refuse to join a network without the screen unlocked.
+The hotspot rejoin is best effort. The iPhone must be awake with Personal Hotspot on and discoverable. Instant Hotspot
+has no API, and macOS may refuse to join a network without the screen unlocked.
 
 ## Settings
 

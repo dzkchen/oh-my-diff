@@ -1,6 +1,6 @@
 # Running commands
 
-Use it when a mod runs one program with `exec.run`: its arguments, sandbox and environment, limits, result,
+Use this page when a mod runs one program with `exec.run`: its arguments, sandbox and environment, limits, result,
 complete-output artifacts, guards and access checks, and runs against a frozen snapshot. Long-lived helper
 processes use [Managed processes](managed-processes.md) instead.
 

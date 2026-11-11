@@ -1,6 +1,6 @@
 # Limits
 
-Use it when you check whether a design fits the host. Each row gives one limit and links its owner page, which
+Use this page when you check whether a design fits the host. Each row gives one limit and links its owner page, which
 states the exact rule and the error a call gets. The `host.json` limits an operator can change are under
 [Host limits](#host-limits).
 

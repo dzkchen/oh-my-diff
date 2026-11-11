@@ -1,8 +1,9 @@
 # Peers, power holds and mod-started turns
 
-Use it when a mod messages other live sessions, keeps the Mac awake, queues or continues turns on its own, or submits
-prompts the user captured. Session on this page means a live session: one running `codex` process. Reading recorded
-sessions, thread-scoped data and `turns.abort` are in [Thread data and recorded sessions](threads-and-sessions-store.md).
+Use this page when a mod messages other live sessions, keeps the Mac awake, queues or continues turns on its own, or
+submits prompts the user captured. Session on this page means a live session: one running `codex` process. Reading
+recorded sessions, thread-scoped data and `turns.abort` are in [Thread data and recorded
+sessions](threads-and-sessions-store.md).
 
 Mod API `1.0.0`: every entry on this page is experimental. Platform: Apple Silicon macOS; `lid_closed` power holds
 need the [authority broker](protected-authority.md).
@@ -224,7 +225,7 @@ The `reason` values are:
 - `delivered`: the message with that `client_id` was committed to the thread, also when replayed on resume;
 - `unconfirmed`: spent, but no commit seen.
 
-A caller can use it to reconcile an uncertain submission instead of sending twice. `prompts.revoke {consent}` drops
+Use `prompts.status` to reconcile an uncertain submission instead of sending twice. `prompts.revoke {consent}` drops
 one.
 
 A consent never grants autonomous authority: anything not captured by the user still needs `autonomous`.

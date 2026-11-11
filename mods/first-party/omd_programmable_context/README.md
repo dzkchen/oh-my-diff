@@ -57,12 +57,12 @@ If the kernel, the plugin or this mod is missing, turned off or broken, the mode
 
 ### Session harness
 
-Each session starts with the promoted project and personal notes, memories, skill descriptions and reusable agent
-specs (`rlm.spawn(..., spec="name")`). It records its own changes as versions of that harness. Removing a promoted
-entry hides it for the session. The mod adds them, with a usage hint, as a developer message at the start of each lead
-request. It adds the kept-variable list (name, size and digest; `rlm.vars()` returns sources) as a short developer
-message just before the newest item, so keeping a variable doesn't change the cached prefix. These messages are part
-of the request only: the transcript and the base system prompt are unchanged, and compaction can't drop them.
+Each session starts with the promoted project and personal notes, memories, skill descriptions and reusable agent specs
+(`rlm.spawn(..., spec="name")`). The session records its own changes as versions of that harness. Removing a promoted
+entry hides it for the session. The mod adds these entries, with a usage hint, as a developer message at the start of
+each lead request. It adds the kept-variable list (name, size and digest; `rlm.vars()` returns sources) as a short
+developer message just before the newest item, so keeping a variable doesn't change the cached prefix. These messages
+are part of the request only: the transcript and the base system prompt are unchanged, and compaction can't drop them.
 
 The model proposes up to four changes with a reason and evidence references through `rlm.refine`. The `refine`
 setting decides what happens to a proposal. Every applied change creates a new version with before and after

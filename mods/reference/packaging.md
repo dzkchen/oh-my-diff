@@ -1,6 +1,6 @@
 # Packaging
 
-Use it when you plan, install, update, roll back, protect or inspect packages, from the shell with `omd-mod` or
+Use this page when you plan, install, update, roll back, protect or inspect packages, from the shell with `omd-mod` or
 from a mod with `packages.*`. For the author-side commands, see [Authoring](authoring.md). To publish a mod to npm
 or Git step by step, see
 [Install, share and update a mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/mod-authors/publish-a-mod.md).
@@ -432,8 +432,8 @@ local snapshots evicted from that history when no installed package, retained hi
 deployment references them.
 
 - Cleanup leaves editable sources and remote package caches alone; uninstall retains its cache.
-- This is best-effort cleanup of history evictions, not a store-wide size limit: abandoned previews, older orphaned
-  snapshots, interrupted cleanup and deletion failures can retain extra files.
+- Cleanup is best-effort and covers only history evictions. It sets no store-wide size limit, so abandoned
+  previews, older orphaned snapshots, interrupted cleanup and deletion failures can retain extra files.
 
 ## Protection, recovery and the security log
 

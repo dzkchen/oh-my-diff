@@ -44,8 +44,8 @@ wrapper. Linked binaries and procedural macros still require compilation.
 
 Native checks on `main` save the shared lint cache when its key is absent, making it available to new PRs without
 waiting for a passing nightly. PRs can save their own baseline for later pushes. GitHub scopes those caches to the
-PR; other PRs and main-branch jobs cannot restore them. When there is no exact success marker, patch replay, drift, formatting and compile checks still
-run. Newer pushes cancel superseded checks.
+PR; other PRs and main-branch jobs cannot restore them. When there is no exact success marker, patch replay,
+drift, formatting and compile checks still run. Newer pushes cancel superseded checks.
 
 Each job uses a local `SCCACHE_DIR`, restored and saved through `actions/cache`, rather than sccache's GitHub backend.
 The lint/PR cache is capped at 1 GB, native and build at 2 GB each, and core at 3 GB. Keys include job, OS,
@@ -58,12 +58,12 @@ Cargo downloads. A changed patch can miss the baseline and recompile its changed
 to compile those crates again. Changes to the upstream pin, tool versions or build wrapper create a new key.
 GitHub can still evict caches under its storage and retention limits.
 
-On November 10, 2026, [nightly run 42845598062](https://github.com/dzkchen/oh-my-diff/actions/runs/42845598062)
-spent 7,814 seconds building the host with no restored compiler cache and zero cache hits. A subsequent cache
-inspection found ten lint snapshots totaling 7.93 GiB, 2.56 GiB of Cargo downloads and no native, core or build
-snapshot. [PR run 42926063515](https://github.com/dzkchen/oh-my-diff/actions/runs/42926063515) already had a 99.82%
-compiler cache hit rate. The baseline policy reduces duplicate storage; its effect on hosted run times still needs
-a cold and warm comparison after rollout.
+On November 10, 2026, [nightly run 42845598062](https://github.com/dzkchen/oh-my-diff/actions/runs/42845598062) spent
+7,814 seconds building the host with no restored compiler cache and zero cache hits. A subsequent cache inspection found
+ten lint snapshots totaling 7.93 GiB, 2.56 GiB of Cargo downloads and no native, core or build snapshot. [PR run
+42926063515](https://github.com/dzkchen/oh-my-diff/actions/runs/42926063515) already had a 99.82% compiler cache hit
+rate. Keeping one baseline per key avoids duplicate storage. Its effect on hosted run times still needs a cold and warm
+comparison after rollout.
 
 PR native and nightly lint use the same work root and tree name (`/Users/runner/omd/omd-bnightly`), matching `CARGO_*`
 settings and the same `build.py check` package set. Both stop the sccache server before saving. PR/main checks save

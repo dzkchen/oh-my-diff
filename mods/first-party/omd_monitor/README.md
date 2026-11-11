@@ -60,9 +60,10 @@ spaces or a custom file timeout. Gitignored build output cannot be watched; use 
 `exists` and `absent` require every listed path, while `change` fires on the first change.
 
 Direct watch commands request setup in a native callback. Setup then reports the monitor id or an error in the
-transcript. GitHub commands accept an optional timeout in seconds (default: 24 hours). An already satisfied condition also delivers its result to the agent.
+transcript. GitHub commands accept an optional timeout in seconds (default: 24 hours). An already satisfied condition
+also delivers its result to the agent.
 
-### The message
+### Result message
 
 A message looks like this:
 
@@ -81,10 +82,10 @@ starts it a second after the thread goes idle and marks it as not typed by you. 
 
 Monitors belong to the thread that created them and survive `/resume` and a restart in that thread. A fork starts
 without its parent’s monitors or results; it can create its own watches. Enabling the mod exposes its tools to other
-sessions using the same mod store, so each agent may monitor its own work automatically. Watches, the timer and
-adapters are re-armed. A monitor whose deadline passed reports a timeout. An `until change` file monitor whose path was deleted meanwhile
-reports that as `condition met`. A command session that no longer exists reports `source lost` only when OMD itself
-restarted. A plain `/resume` in the same OMD process keeps it watching until its exit or timeout.
+sessions using the same mod store, so each agent may monitor its own work automatically. Watches, the timer and adapters
+are re-armed. A monitor whose deadline passed reports a timeout. An `until change` file monitor whose path was deleted
+meanwhile reports that as `condition met`. A command session that no longer exists reports `source lost` only when OMD
+itself restarted. A plain `/resume` in the same OMD process keeps it watching until its exit or timeout.
 
 ### Sources
 
