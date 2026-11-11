@@ -141,7 +141,8 @@ async function setup(name, action, login) {
   let previous = {};
   try { previous = JSON.parse(await readFile(routePath, 'utf8')); } catch {}
   const known = (previous.accounts ?? []).find(account => account.name === name);
-  let accounts = (previous.accounts ?? []).filter(account => account.name !== name);
+  const kept = account => action === 'refresh' || account.name !== name;
+  let accounts = (previous.accounts ?? []).filter(kept);
   const home = homedir();
   const username = userInfo().username;
   let host = {};
@@ -167,7 +168,7 @@ async function setup(name, action, login) {
       if (!signedOut) throw new Error(`claude_sign_out_failed: ${name} and its sign-in were kept; check Claude CLI and Keychain access, then retry /claude remove ${name}`);
       await rm(known.config_dir, { recursive: true, force: true });
     }
-  } else {
+  } else if (action !== 'refresh') {
     if (!['subscription', 'api'].includes(action)) throw new Error('claude_billing_must_be_subscription_or_api');
     const config = name === 'default' ? null : login || join(directory, 'accounts', name);
     if (config && !known) discard = async () => {
@@ -207,7 +208,7 @@ async function setup(name, action, login) {
   const merge = async host => {
     let current = {};
     try { current = JSON.parse(await readFile(routePath, 'utf8')); } catch {}
-    accounts = (current.accounts ?? []).filter(account => account.name !== name);
+    accounts = (current.accounts ?? []).filter(kept);
     if (added) accounts.splice(name === 'default' ? 0 : accounts.length, 0, added);
     else claude = current.claude ?? null;
     const port = current.port ?? await unusedPort();

@@ -320,8 +320,9 @@ export default function activate(api: ModAPI): void {
     if (!run.ok || run.value.exit_code !== 0) return run.ok ? run.value.stderr.trim() : nodeError(run.error);
     try { return JSON.parse(run.value.stdout); } catch { return 'setup returned no result'; }
   };
-  const adopt = (result: Row) => {
-    api.state.set({ ...saved(), accounts: result.accounts, models: result.models });
+  const applied = (mod: string) => `${api.package.sha256 ?? api.package.version ?? ''} ${mod}`;
+  const adopt = (result: Row, mod: string) => {
+    api.state.set({ ...saved(), accounts: result.accounts, models: result.models, setup: applied(mod) });
     if (result.accounts.length) return ensure(true);
     api.host.tryCall('providers.unregister', { id: service });
     api.state.set({ ...saved(), published: false });
@@ -333,7 +334,7 @@ export default function activate(api: ModAPI): void {
     if (!mod) return say(`Claude setup could not find the installed mod; enable it in /mods and run ${again} again`, true);
     const result = setup(mod, [String(login.account), String(login.billing), String(login.dir ?? '')]);
     if (typeof result === 'string') return say(`Claude setup failed: ${result}${last ? `; the login printed: ${last}` : ''}`, true);
-    if (!adopt(result)) return say('Claude setup finished, but the provider did not start; restart OMD+ and run /claude', true);
+    if (!adopt(result, mod)) return say('Claude setup finished, but the provider did not start; restart OMD+ and run /claude', true);
     const account = (result.accounts as Row[]).find(item => item.name === login.account);
     say(`Claude account ${login.account}${account?.email ? ` (${account.email})` : ''} is ready on ${login.billing === 'api' ? 'Console API credits' : 'your subscription'}; pick its models with /model or switch with /profile`);
   };
@@ -359,10 +360,18 @@ export default function activate(api: ModAPI): void {
     setLogin(id, null);
     finish(login, out.trim().split('\n').pop()!.trim());
   });
-  api.on('start', () => {
-    ensure();
-  });
-  api.on('resume', () => { ensure(); });
+  const reapply = () => {
+    const mod = installed();
+    if (!mod || !(saved().accounts as Row[] | undefined)?.length || saved().setup === applied(mod)) return ensure();
+    const result = setup(mod, ['default', 'refresh']);
+    if (typeof result === 'string') {
+      say(`Claude could not re-apply its setup after the update: ${result}; run /claude login`, true);
+      return ensure();
+    }
+    return adopt(result, mod);
+  };
+  api.on('start', () => { reapply(); });
+  api.on('resume', () => { reapply(); });
   api.on('turn_start', () => {
     if (api.session().provider === provider) ensure();
   });
@@ -373,7 +382,7 @@ export default function activate(api: ModAPI): void {
       if (!mod) return void say('Claude setup could not find the installed mod; enable it in /mods and try again', true);
       const result = setup(mod, [name, 'remove']);
       if (typeof result === 'string') return void say(`Claude account ${name} was not removed: ${result}`, true);
-      adopt(result);
+      adopt(result, mod);
       return void say(`Removed Claude account ${name}${result.signed_out === null ? '; your Claude Code login is kept' : result.signed_out ? ' and signed it out' : '; signing it out failed, so its Keychain item may remain'}`);
     }
     if (channel !== `${api.package.id}/login`) return;

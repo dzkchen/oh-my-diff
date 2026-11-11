@@ -583,6 +583,18 @@ else if (argv[0] === 'auth') {
     assert.equal(fromCache.status, 0, fromCache.stderr);
     assert.deepEqual((await host()).routes.map(route => route.name), ['claude']);
     assert.ok((await host()).services.find(service => service.id === 'claude_cli').read_paths.includes(cached));
+    const updated = join(store, 'package-cache/omd_claude_cli/4567ef01');
+    await cp(cached, updated, { recursive: true });
+    const before = await host();
+    await writeFile(join(store, 'host.json'), JSON.stringify({ ...before, worker_limits: { ...before.worker_limits, requests: 350 } }));
+    const probes = (await readFile(join(root, 'auth.log'), 'utf8')).length;
+    const refreshed = spawnSync(process.execPath, [join(updated, 'setup.mjs'), 'default', 'refresh'], { encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin' } });
+    assert.equal(refreshed.status, 0, refreshed.stderr);
+    assert.deepEqual(JSON.parse(refreshed.stdout).accounts, JSON.parse(fromCache.stdout).accounts);
+    const after = await host();
+    assert.equal(after.services.find(service => service.id === 'claude_cli').arguments[0], join(updated, 'transport.mjs'));
+    assert.deepEqual([after.routes, after.worker_limits.requests], [before.routes, 350]);
+    assert.equal((await readFile(join(root, 'auth.log'), 'utf8')).length, probes);
     const loose = join(root, 'loose');
     await cp(join(store, 'sources/omd_claude_cli'), loose, { recursive: true });
     assert.match(spawnSync(process.execPath, [join(loose, 'setup.mjs'), 'default', 'subscription'], { encoding: 'utf8' }).stderr, /setup_must_run_from_installed_mod/);
@@ -719,6 +731,25 @@ test('login skips the browser when the CLI already reports the account signed in
   for (const [auth, billing] of [[signedIn, 'api'], [JSON.stringify({ loggedIn: false }), 'subscription'], [undefined, 'subscription']]) {
     assert.equal(login(auth, billing).calls.some(call => call.operation === 'process.start'), true);
   }
+});
+
+test('a session start re-applies setup once after the mod changed, and says so only when it fails', () => {
+  const accounts = [{ name: 'default', billing: 'subscription', config_dir: null, route: 'claude', models: 1 }];
+  const models = [{ slug: 'claude-opus-5', display: 'Claude Opus 5', context_window: 200000, efforts: ['high'] }];
+  const start = (state, setup = { exit_code: 0, stdout: JSON.stringify({ accounts, models }), stderr: '' }) => modEvent('start', {}, state, call => {
+    if (call.operation === 'packages.list') return { packages: [{ id: 'omd_claude_cli', path: '/store/package-cache/omd_claude_cli/new' }] };
+    return call.operation === 'exec.run' ? setup : {};
+  });
+  const runs = result => result.calls.filter(call => call.operation === 'exec.run').map(call => call.arguments.argv);
+  assert.deepEqual(runs(start(null)), []);
+  const stale = start({ accounts, models, setup: ' /store/package-cache/omd_claude_cli/old' });
+  assert.deepEqual(runs(stale), [['/store/package-cache/omd_claude_cli/new/setup.mjs', 'default', 'refresh']]);
+  assert.equal(stale.state.setup, ' /store/package-cache/omd_claude_cli/new');
+  assert.deepEqual(notices(stale.calls), []);
+  assert.deepEqual(runs(start(stale.state)), []);
+  const failed = start({ accounts, models }, { exit_code: 1, stdout: '', stderr: 'host_route_limit' });
+  assert.match(notices(failed.calls)[0], /could not re-apply its setup after the update: host_route_limit; run \/claude login/);
+  assert.equal(failed.state.setup, undefined);
 });
 
 test('login runs as a background process that says the sign-in link once and reports through setup', () => {
