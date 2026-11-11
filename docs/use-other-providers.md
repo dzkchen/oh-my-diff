@@ -35,6 +35,9 @@ When you turn one of these mods on, it asks to run `node` outside the sandbox, a
 3. Pick a Claude model in `/model`. The conversation (thread) switches to Claude from your next message and keeps
    its history.
 
+Claude models can only be picked inside a session. `codex -m` and `codex exec -m` with a Claude model name send that
+name to OpenAI, which refuses it, so `codex exec` can't run on Claude.
+
 To add another Claude account, run `/claude login NAME`. `/claude` shows the CLI version, each account's sign-in
 and whether its models are published. The [`omd_claude_cli` README](../mods/first-party/omd_claude_cli/README.md)
 covers billing, several accounts and limits.

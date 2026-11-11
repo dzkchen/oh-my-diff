@@ -48741,10 +48741,18 @@ index e76b50b6ee093df883a7dec48e6cba56b583f02e..0b181454aaab7a718a3786c6423c3560
              | ServerRequest::ApplyPatchApproval { .. }
              | ServerRequest::ExecCommandApproval { .. } => {
 diff --git a/codex-rs/tui/src/chatwidget/rate_limits.rs b/codex-rs/tui/src/chatwidget/rate_limits.rs
-index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..4192d45be281be0dfd3a9bf5f3adca30cb33c263 100644
+index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..932416a63704f291951cf824906f3e18ae7c5298 100644
 --- a/codex-rs/tui/src/chatwidget/rate_limits.rs
 +++ b/codex-rs/tui/src/chatwidget/rate_limits.rs
-@@ -376,7 +376,16 @@ impl ChatWidget {
+@@ -366,6 +366,7 @@ impl ChatWidget {
+                 && !has_workspace_credits
+                 && !self.rate_limit_switch_prompt_hidden()
+                 && self.current_model() != NUDGE_MODEL_SLUG
++                && !self.current_model_has_own_provider()
+                 && !matches!(
+                     self.rate_limit_switch_prompt,
+                     RateLimitSwitchPromptState::Shown
+@@ -376,7 +377,16 @@ impl ChatWidget {
 
              // /wham/usage identifies ordinary and additional model limits separately. Streamed
              // updates still drive warnings/recovery above, but must not overwrite status data.
@@ -48762,7 +48770,7 @@ index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..4192d45be281be0dfd3a9bf5f3adca30
                  let limit_label = snapshot
                      .limit_name
                      .clone()
-@@ -411,6 +420,12 @@ impl ChatWidget {
+@@ -411,6 +421,12 @@ impl ChatWidget {
          self.refresh_status_line();
      }
 
@@ -48775,6 +48783,29 @@ index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..4192d45be281be0dfd3a9bf5f3adca30
      pub(super) fn stop_rate_limit_poller(&mut self) {}
 
      #[cfg_attr(not(test), allow(dead_code))]
+@@ -431,6 +447,14 @@ impl ChatWidget {
+             .cloned()
+     }
+
++    fn current_model_has_own_provider(&self) -> bool {
++        self.model_catalog.try_list_models().is_ok_and(|models| {
++            models.iter().any(|preset| {
++                preset.model == self.current_model() && preset.model_provider.is_some()
++            })
++        })
++    }
++
+     fn rate_limit_switch_prompt_hidden(&self) -> bool {
+         self.local_settings
+             .notices
+@@ -444,6 +468,7 @@ impl ChatWidget {
+         }
+         if self.rate_limit_switch_prompt_hidden()
+             || matches!(self.current_model(), NUDGE_MODEL_SLUG | LUNA_RESERVE_MODEL)
++            || self.current_model_has_own_provider()
+         {
+             self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
+             return;
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
 index 8ab45414e5ad2c83a9da8dc73e5711ccb0cdbaa3..5cf38088c000a447a73700b049a12aa56814fbd9 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
@@ -51342,7 +51373,7 @@ index 5fc368856d2a9ceb90b176fe2574a76c0b449077..9670cfb6d0bfbee65655347be448a61c
 -› Ask Codex to do anything
 +• Working (0s • esc to interrupt)
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
-index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1f4ab1ed9 100644
+index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..cfef7b9d5a27e6549436f5c95c6c4825b5c09e76 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 @@ -863,6 +863,7 @@ async fn status_line_uses_secondary_fallback_for_unsupported_window() {
@@ -51457,7 +51488,39 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      }));
 
      assert!(matches!(
-@@ -2260,7 +2274,7 @@ async fn streaming_final_answer_keeps_task_running_state() {
+@@ -1412,6 +1426,31 @@ async fn rate_limit_usage_warnings_show_when_authoritative_snapshot_clears_credi
+     ));
+ }
+
++#[tokio::test]
++async fn rate_limit_switch_prompt_skips_a_model_on_its_own_provider() {
++    let (mut chat, _, _) = make_chatwidget_manual(Some("connected-model")).await;
++    chat.has_chatgpt_account = true;
++    let mut presets = crate::test_support::TEST_MODEL_PRESETS.clone();
++    let mut connected = presets[0].clone();
++    connected.model = "connected-model".to_string();
++    connected.model_provider = Some("connected".to_string());
++    presets.push(connected);
++    chat.model_catalog = Arc::new(ModelCatalog::new(presets));
++
++    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 95.0)));
++    assert!(matches!(
++        chat.rate_limit_switch_prompt,
++        RateLimitSwitchPromptState::Idle
++    ));
++
++    chat.rate_limit_switch_prompt = RateLimitSwitchPromptState::Pending;
++    chat.maybe_show_pending_rate_limit_prompt();
++    assert!(matches!(
++        chat.rate_limit_switch_prompt,
++        RateLimitSwitchPromptState::Idle
++    ));
++}
++
+ #[tokio::test]
+ async fn rate_limit_switch_prompt_clears_pending_when_workspace_credits_become_usable() {
+     let (mut chat, _, _) = make_chatwidget_manual(Some("gpt-5")).await;
+@@ -2260,7 +2299,7 @@ async fn streaming_final_answer_keeps_task_running_state() {
      drain_insert_history(&mut rx);
 
      assert!(chat.bottom_pane.is_task_running());
@@ -51466,7 +51529,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
 
      chat.bottom_pane
          .set_composer_text("queued submission".to_string(), Vec::new(), Vec::new());
-@@ -2286,7 +2300,7 @@ async fn answer_phase_controls_working_status_snapshot() {
+@@ -2286,7 +2325,7 @@ async fn answer_phase_controls_working_status_snapshot() {
      for (phase, working_visible, snapshot) in [
          (
              MessagePhase::FinalAnswer,
@@ -51475,7 +51538,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
              "single_line_final_answer_hides_working_status",
          ),
          (
-@@ -2465,7 +2479,7 @@ fn assert_goal_paused_event(
+@@ -2465,7 +2504,7 @@ fn assert_goal_paused_event(
  }
 
  #[tokio::test]
@@ -51484,7 +51547,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
      chat.on_task_started();
-@@ -2475,12 +2489,11 @@ async fn idle_commit_ticks_do_not_restore_status_without_commentary_completion()
+@@ -2475,12 +2514,11 @@ async fn idle_commit_ticks_do_not_restore_status_without_commentary_completion()
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
 
@@ -51499,7 +51562,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
  }
 
  #[tokio::test]
-@@ -2498,7 +2511,7 @@ async fn final_answer_completion_restores_status_indicator_for_pending_steer() {
+@@ -2498,7 +2536,7 @@ async fn final_answer_completion_restores_status_indicator_for_pending_steer() {
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
 
@@ -51508,7 +51571,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      assert_eq!(chat.bottom_pane.is_task_running(), true);
 
      chat.bottom_pane.set_composer_text(
-@@ -2553,7 +2566,7 @@ async fn commentary_completion_restores_status_indicator_before_exec_begin() {
+@@ -2553,7 +2591,7 @@ async fn commentary_completion_restores_status_indicator_before_exec_begin() {
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
 
@@ -51517,7 +51580,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
 
      complete_assistant_message(
          &mut chat,
-@@ -2982,7 +2995,7 @@ async fn stream_error_restores_hidden_status_indicator() {
+@@ -2982,7 +3020,7 @@ async fn stream_error_restores_hidden_status_indicator() {
      chat.on_agent_message_delta("Preamble line\n".to_string());
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
@@ -51526,7 +51589,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
 
      let msg = "Reconnecting... 2/5";
      let details = "Idle timeout waiting for SSE";
-@@ -4879,7 +4892,7 @@ async fn unterminated_prose_is_visible_before_completion() {
+@@ -4879,7 +4917,7 @@ async fn unterminated_prose_is_visible_before_completion() {
          }
 
          assert!(draw_rx.try_recv().is_ok());
@@ -51535,7 +51598,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
          let snapshot = if mode == ModeKind::Plan {
              assert_eq!(
                  chat.plan_stream_controller.as_ref().unwrap().queued_lines(),
-@@ -4943,7 +4956,7 @@ async fn newline_agent_delta_redraws_stream_tail_after_noop_catch_up() {
+@@ -4943,7 +4981,7 @@ async fn newline_agent_delta_redraws_stream_tail_after_noop_catch_up() {
      chat.on_task_started();
      chat.handle_streaming_delta("Earlier line\n".to_string());
      chat.on_commit_tick();
@@ -51544,7 +51607,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      while draw_rx.try_recv().is_ok() {}
 
      chat.handle_streaming_delta("Intro line\n| Step | Owner |\n".to_string());
-@@ -4972,7 +4985,7 @@ async fn newline_plan_delta_redraws_stream_tail_after_noop_catch_up() {
+@@ -4972,7 +5010,7 @@ async fn newline_plan_delta_redraws_stream_tail_after_noop_catch_up() {
      chat.on_task_started();
      chat.on_plan_delta("Earlier line\n".to_string());
      chat.on_commit_tick();
@@ -51553,7 +51616,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      while draw_rx.try_recv().is_ok() {}
 
      chat.on_plan_delta("Intro line\n| Step | Owner |\n".to_string());
-@@ -5065,7 +5078,7 @@ async fn reasoning_delta_restores_recreated_status_indicator_header() {
+@@ -5065,7 +5103,7 @@ async fn reasoning_delta_restores_recreated_status_indicator_header() {
      chat.on_agent_message_delta("Preamble line\n".to_string());
      chat.on_commit_tick();
      drain_insert_history(&mut rx);

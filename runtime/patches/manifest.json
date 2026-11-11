@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.1.patch",
-    "sha256": "c05ec96910c2a596d48d3af4c674bfd572e083b9a275bdd56d60d1c9073695d4"
+    "sha256": "801e154e05110af5e1a701695b7029ce24d976718b567f5c61a689361d50e03f"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -2567,7 +2567,7 @@
     },
     "codex-rs/tui/src/chatwidget/rate_limits.rs": {
       "before": "7193808550399f9a1b36b647680d90afa66fd6d7e4829979f9c52d715ba46b8d",
-      "after": "9117e5884a6cf7445b52819548ccf4b8800f6df4b100add121e02174ae70098b"
+      "after": "bbf815044ece8ededb28981d7f1286ecfb4733b31154ef8bc1b423a33e772a00"
     },
     "codex-rs/tui/src/chatwidget/rendering.rs": {
       "before": "fa1d5fe53c90e6db5aed52e103f17ddfa1b43f28aba08dd02c43b12309e512a7",
@@ -2691,7 +2691,7 @@
     },
     "codex-rs/tui/src/chatwidget/tests/status_and_layout.rs": {
       "before": "b59309b9c3b72c2e427b26b1f560abece6514ac52ee548d8f8469a434dfa2151",
-      "after": "9908ca3007d51ced6da16d6a95feb0b4a3c3cb4af5792388a9e772baba742bae"
+      "after": "d9c887ded3f87be6f8d2f5c68c3b1f84c1e4cbe10e8162ea3fea543c45ae7b18"
     },
     "codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs": {
       "before": "e02eab47063473a35b7f24c41301b451193fae7277dcde4000d51035e60085c7",
