@@ -166,7 +166,7 @@ pub fn install(
         && root.is_absolute()
         && let Ok(root) = root.canonicalize()
         && let Ok(repository) = std::env::current_dir().and_then(|path| path.canonicalize())
-        && !root.starts_with(repository)
+        && !codex_omd::inside_repository(&root, &repository)
     {
         let _ = inactive(&root, error.clone());
     }
@@ -188,16 +188,7 @@ fn install_active(
         .and_then(|path| path.canonicalize())
         .map_err(|error| error.to_string())?;
     let root = canonical_store_root(&root)?;
-    if codex_omd::app_routes::unscoped_directory(&repository) {
-        return inactive(
-            &root,
-            format!(
-                "{} is the home or filesystem root; start Oh My Diff in a project directory",
-                repository.display()
-            ),
-        );
-    }
-    if root.starts_with(&repository) {
+    if codex_omd::inside_repository(&root, &repository) {
         return Err("the mod store must be canonical and outside the repository".into());
     }
     let stamp = host_config_stamp(&root);
@@ -826,6 +817,44 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&result.stdout)
         );
+    }
+
+    #[test]
+    fn mod_store_under_a_launch_folder_is_refused_only_inside_a_git_work_tree() {
+        const CHILD: &str = "OMD_STORE_SCOPE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let refused = install(&mut ExtensionRegistryBuilder::default(), Weak::new())
+                .err()
+                .is_some_and(|error| error.contains("outside the repository"));
+            let launch = std::env::current_dir().unwrap();
+            assert_eq!(refused, codex_omd::git_work_tree(&launch).is_some());
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let store = home.path().join(".omd/store");
+        std::fs::create_dir_all(&store).unwrap();
+        for repository in [false, true] {
+            if repository {
+                std::fs::create_dir(home.path().join(".git")).unwrap();
+            }
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::mod_store_under_a_launch_folder_is_refused_only_inside_a_git_work_tree",
+                ])
+                .current_dir(home.path())
+                .env(CHILD, "1")
+                .env("HOME", home.path())
+                .env(codex_omd::MODE_ENV, "omd")
+                .env(codex_omd::MOD_STORE_ENV, &store)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+        }
     }
 
     #[test]

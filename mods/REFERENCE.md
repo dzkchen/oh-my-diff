@@ -69,7 +69,7 @@ it.
 | Provenance | Three meanings. Package-source provenance is the broker's record of a verified install's origin ([Administrator policy](reference/administrator-policy.md#package-source-provenance)). Manifest `provenance.source` is the repository a package says it comes from ([Packaging](reference/packaging.md#provenancesource-for-git-installs)). A store record's `provenance` is the host-attested writer of that record. |
 | Receipt | Two meanings. A contract receipt is evidence a mod submits with `receipts.submit` ([Contracts and receipts](reference/contracts.md#receiptssubmit)). An access receipt is the host's record of an HTTP, MCP, external file or environment call ([Authority grants](reference/authority-grants.md#access-receipts)). |
 | Producer | Who made a contract receipt: `any`, `lead`, `host`, `integration` or `separate_agent`. See [Contracts and receipts](reference/contracts.md#registering-a-contract). For rasters, a producer is the process that publishes frames ([Graphics](reference/graphics.md#raster-processes-process_raster_v1)). |
-| Contract | A versioned document that gates task completion and workspace integration on receipts. See [Contracts and receipts](reference/contracts.md). |
+| Contract | A versioned document specifying which receipts the host must accept before completing a task or integrating workspace changes. See [Contracts and receipts](reference/contracts.md). |
 | Snapshot | A frozen copy of the workspace or of an agent's workspace, made with `workspace.snapshot`. See [Workspace files](reference/workspace-files.md#snapshots-workspacesnapshot). |
 | Candidate | The workspace change a receipt or `workspace.integrate` is about, identified by `candidate_sha256`. See [Workspace files](reference/workspace-files.md#snapshots-workspacesnapshot). |
 
@@ -153,7 +153,7 @@ Any other `OMD_MODE` value is rejected.
 
 ### What mods can't replace or bypass
 
-A mod runs inside the host, asks for only the capabilities it needs, and composes with other mods by the
+A mod runs under the host, asks for only the capabilities it needs, and combines with other mods by the
 [composition rules](#composition-order). A mod can never replace or bypass:
 
 | Area | Reserved to the host |
@@ -317,9 +317,9 @@ host-operation provenance.
 
 ### Composition order
 
-Dependencies run before consumers, and remaining mods use lexical id order. Managed scope shadows project scope, which
-shadows user scope. A selection doesn't inherit state or grants from the selection it shadows. Observers compose in
-that order. Interceptors follow the [interceptor order](reference/interceptors.md#interceptor-order).
+Dependencies run before the mods that use them; remaining mods run in lexical id order. For copies with the same mod ID,
+the host uses a managed copy instead of a project copy, and a project copy instead of a user copy. The selected copy inherits no state or
+grants from the copy it overrides. Observers run in the same order. Interceptors follow the [interceptor order](reference/interceptors.md#interceptor-order).
 
 Exclusive replacements, contract ids, service providers and namespaced tools fail closed when contested. Native
 permissions, credentials, accounting, cancellation, evidence, workflow enforcement and provider authorization stay
@@ -720,6 +720,17 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ### Migration notes
 
+These changes ship in OMD 1.6.0.
+
+- Mods run in any session directory, including the home directory and `/`; before, the host stayed off there.
+- Programs and sockets the host runs or passes unsandboxed (`os_access` programs, `exec.run` sockets, managed
+  processes and services, frozen in Mod API `1.0.0`) are refused anywhere the agent can write: the whole Git work tree
+  around the session directory, or the session directory outside one. Before, only the session directory was
+  checked, so a launch from a repository's subfolder allowed programs elsewhere in the work tree. This is a safety
+  fix; a mod that runs such a program needs it installed outside the repository (or outside the session directory).
+- `workspace.*` without `root` fails with `workspace_unavailable` when the session directory is `/`, the home
+  directory or a directory above it and isn't in a Git work tree. Other directories behave as before.
+
 These changes ship in OMD 1.4.0.
 
 - A `builtins` mode disable (`capabilities:builtins`, frozen in Mod API `1.0.0`) no longer removes tools limited to
@@ -757,8 +768,9 @@ These changes ship in OMD 1.3.0.
 
 Package digests now prefix each manifest, path and file-content record with its eight-byte big-endian length.
 Existing trust digests change: inspect and re-trust folder mods, and reinstall curated packages from the new release.
-Do not copy old grants to a new digest. Same-ID mods share storage and owned credential authority; project scope takes precedence.
-Package previews report `identity_warning` when the ID is installed in another scope.
+Do not copy old grants to a new digest. Mods with the same ID share storage and the right to use or manage
+credentials owned by that ID. A project copy takes precedence over a user copy. Package previews report
+`identity_warning` when the ID is installed in another scope.
 
 ## Authoring
 
@@ -907,8 +919,8 @@ operation error.
 - Every normal mock validates request and result shapes. Shared pure validators also check store keys,
   values and revision syntax, environment inputs and timer inputs.
 - Malformed result fixtures fail before the scenario runs unless explicitly marked unsafe.
-- Authority, declarations, persistence, revision conflicts, quotas, filesystem resolution and process/network state
-  require real-host boundary tests; a valid mock cannot prove those behaviors.
+- Test authority, declarations, persistence, revision conflicts, quotas, filesystem resolution and process/network
+  state against the real host; a valid mock cannot prove those behaviors.
 
 #### Negative tests
 
@@ -986,8 +998,8 @@ file.
   result includes `trace[].location` (`index.ts:75:7`), so an exact expectation breaks when lines move. Test
   interceptors in a `*.test.ts` file instead ([TypeScript tests](#typescript-tests)).
 - A store-level `omd-mod test STORE SCENARIO` uses the store's own settings instead of `settings`.
-- A mod that fails to activate reports its retained cause, so a missing service provider, denied capability or source
-  error names itself instead of only asking for a reload.
+- When activation fails, the report keeps the original cause, such as a missing service provider, denied capability
+  or source error, instead of only asking for a reload.
 
 #### Step types
 
@@ -1265,7 +1277,7 @@ These `omd-mod` commands manage a package store.
 
 | Command | Result |
 | --- | --- |
-| `omd-mod package-plan STORE REQUEST_JSON` | Resolve and preview the exact graph, per-package authority and grant changes, settings, and enablement |
+| `omd-mod package-plan STORE REQUEST_JSON` | Resolve packages and dependencies; preview each package's authority, grant changes, settings and on/off state |
 | `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION` | Re-resolve and atomically apply only the unchanged preview |
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
 | `omd-mod package-rollback-plan STORE ID` | Preview the prior integrity-addressed package version |
@@ -1603,7 +1615,7 @@ These `packages.list` fields say whether a package change has taken effect.
 #### `packages.apply`, `packages.preview` and `packages.reload`
 
 ```text
-packages.preview {...request, expected_generation?} → {action, id, changes, grants_added}
+packages.preview {...request, expected_generation?} → {action, id, changes, grants_added, phrases?}
 packages.apply {...request, expected_generation} → {status: 'applied', generation, enabled?, reason?} | {status: 'declined'}
 packages.reload → {generation, failed, applies: 'next_boundary'}
 ```
@@ -1615,9 +1627,12 @@ The request is the one under
 | --- | --- |
 | `expected_generation` | The `generation` from `packages.list`; required on `apply`, optional on `preview` |
 
+- `phrases` lists `grants_added` in plain words, `risky` (authority) capabilities first, as
+  `{capability, phrase, risky}`.
 - `apply` returns the new generation, or `declined` when the user declines the confirmation. In the terminal a
-  `disable` from the mod's own slash command or panel action applies without asking, unless the target mod
-  registers a required interceptor or holds `request_policy`.
+  `disable`, or an `enable` that adds no grants, from the mod's own slash command or
+  panel action applies without asking, unless the target mod registers a required interceptor or holds
+  `request_policy`.
 - An `install` with `enable: true` that installs but can't turn the mod on returns `enabled: false` and the
   `reason`; the mod stays installed and off.
 - `reload` returns the generation, the ids of mods that failed, and `next_boundary`, when the revalidation applies.
@@ -1642,9 +1657,9 @@ an edited selection's current source and capabilities and keeps it enabled.
 - Installing never enables a package unless the request sets `enable: true`; see
   [Enablement on install and update](#enablement-on-install-and-update).
 - The preview lists per package `authority {from, to}`, `grant {from, to}` and `renewed_approval`.
-- Once a confirmed package mutation starts, it returns its definitive result even if its writes reload or disable
-  the calling mod. A queued call is still rejected when it's cancelled or when the mod's source, the originating
-  generation or the client context changed.
+- Once the host starts a confirmed package change, it returns the final result even if that change reloads or
+  disables the calling mod. While a call is still queued, the host rejects it if it is
+  cancelled or if the mod's source, originating generation or client context changes.
 - An update resolves dependencies through the index the package came from and previews the capabilities it adds.
 - `packages.reload` makes every enabled selection revalidate at the next safe boundary, retrying failed mods.
 
@@ -1669,8 +1684,8 @@ scopes and origin are unchanged; otherwise it is off until enabled.
 
 #### Rollback and cleanup
 
-Package rollback repoints the selection at the immutable store cache, so returning to editable local development is a
-fresh local install of the rolled-back source.
+Rollback selects the previous version from the immutable store cache. To edit that version locally, install its
+source folder again.
 
 Successful local package updates retain eight rollback history entries. After commit, the package manager removes
 local snapshots evicted from that history when no installed package, retained history, selection or managed
@@ -1723,7 +1738,7 @@ Each changed key passes through `config_set` before the validated batch is appli
 leaves the batch unchanged; successful writes notify other `config_change` listeners.
 It runs only from [user contexts](reference/host-model.md#callback-contexts). Without `id` it writes the caller's own settings.
 With `id` or `scope` it needs `packages`. Experimental `scope: "user" | "project"` selects that trusted copy explicitly,
-including a copy shadowed by project precedence. Omit `scope` to use the current effective copy. The selected
+including a user copy overridden by a project copy. Omit `scope` to use the currently selected copy. The selected
 copy supplies its own schema, file settings and authority checks. Settings of a mod the installer keeps on can be
 written; an administrator-managed mod's settings can't. `/omd` stays the native recovery path for settings.
 
@@ -1738,9 +1753,11 @@ declares and drops it at the next shared settings write or package update, so a 
 undeclared setting is still refused with `unknown_setting`.
 
 A property can also have a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
-instead of the raw name. A string property without `enum` can set `choices: "routes"`. `packages.list` then fills its
-`enum` with the names of the `host.json` worker routes open to that mod, then the lead-only routes open to it whose
-connected provider offers the route's model right now, the ones its workers can run on.
+instead of the raw name. A string property without `enum` can set `choices: "routes"`. `packages.list` then fills
+`enum` with routes from `host.json` that the mod's workers can use, in this order:
+
+1. Worker routes open to that mod.
+2. Lead-only routes open to it whose connected provider currently offers the route's model.
 
 ### Settings file (`settings_file_v1`)
 
@@ -2129,7 +2146,8 @@ those runs have external network access.
 
 Requires the `os` and `exec` capabilities. `os` without `os_access`, or the reverse, fails with `invalid_os_access`.
 
-- A program is `*`, a bare name resolved on `PATH` outside the repository, or an absolute path.
+- A program is `*`, a bare name resolved on `PATH` outside the
+  [repository](reference/state-and-storage.md#session-directory-and-repository), or an absolute path.
 - A program inside the repository runs only when its absolute path is listed.
 - With `network: false`, unsandboxed runs use a profile that denies IP networking only.
 - Every unsandboxed `exec.run`, `process.start` and `terminal.pty` start asks once per mod and binary ("Run NAME for
@@ -2166,7 +2184,8 @@ without `approves`, or the reverse, fails with `invalid_approves`.
 - `server/tool` of an MCP call.
 
 Patterns may be `*` or `prefix*`. A bare name or `prefix*` also matches an absolute path that `PATH` resolves that
-name to outside the repository, but never a same-named file elsewhere.
+name to outside the [repository](reference/state-and-storage.md#session-directory-and-repository), but never a same-named file
+elsewhere.
 
 #### Ending and showing the grants
 
@@ -2713,7 +2732,7 @@ call, so they never overlap a tool that is not parallel-safe. Failures and denia
 #### `tools.check`
 
 `tools.check {tool, arguments}` returns `{decision: 'allow' | 'ask' | 'deny', reason, authority}` without running
-anything. The tool's own runtime computes the host requirement the call would meet:
+anything. The host asks the tool's own runtime which approval requirement applies:
 
 | Tool | Requirement computed |
 | --- | --- |
@@ -2985,7 +3004,7 @@ whole, and check every leaf of a table value as its own key.
 - every line that looks like a credential (bearer tokens, key prefixes, private keys, user information in URLs; the
   other lines of multi-line text stay).
 
-They also reduce an MCP server `url` or provider `base_url` to scheme, host and port: user information becomes
+`config/read` also reduces an MCP server `url` or provider `base_url` to scheme, host and port: user information becomes
 `<redacted>@`, and anything after the host becomes `/<redacted>`. This applies in the effective config and in each
 layer. `hooks/list` applies the same line rule to hook `command` strings.
 
@@ -3156,8 +3175,8 @@ complete terminal contribution, or `{terminal: null}` to clear it.
   [`api.uiState`](reference/state-and-storage.md#session-ui-state-apiuistate).
 - Other owners refresh at different times when a command returns a view. Commands without `terminal` keep their
   synchronous preview behavior.
-- Moving a dialog from durable state to a command view moves only its transient presentation fields to
-  `api.uiState`; persisted settings, replay and module lifetimes are unchanged.
+- When moving a dialog to a command view, put its temporary presentation fields in `api.uiState`. Keep persisted
+  settings as they are; replay behavior and module lifetimes do not change.
 
 #### `config.describe`
 
@@ -3563,8 +3582,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 
 #### `exec.run` program, working directory and environment
 
-- A bare program name resolves on `PATH` outside the repository. An absolute path must be canonical and outside the
-  repository. `sha256` pins the resolved file.
+- A bare program name resolves on `PATH` outside the
+  [repository](reference/state-and-storage.md#session-directory-and-repository). An absolute path must be canonical and outside it.
+  `sha256` pins the resolved file.
 - `cwd` is repository-relative.
 - The environment starts empty except `PATH`, a private `HOME`/`TMPDIR`, `TERM=dumb`, locale variables, the
   declared [`exec_environment` names](reference/authority-grants.md#exec_environment-names) and `env` entries limited to
@@ -3590,9 +3610,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 - The host captures at most `max_output_bytes` of stdout (at most 1 MiB, which is also the default, or at most
   16 MiB with `output_artifact`) and 1 MiB of stderr, and reports `stdout_truncated`/`stderr_truncated`.
   `stdout_sha256` and `stdout_bytes` cover the captured stdout.
-- The returned `stdout` and `stderr` are previews so the result fits a callback's host-call transport;
-  `stdout_preview_truncated`/`stderr_preview_truncated` report a shortened preview. Use `output_artifact` for
-  complete output.
+- The host returns previews in `stdout` and `stderr` to fit the callback's host-call transport budget.
+  `stdout_preview_truncated`/`stderr_preview_truncated` report a shortened preview. Use `output_artifact` to keep
+  complete stdout.
 - Output draining shares the command's deadline and cancellation, so a descendant that keeps a pipe open cannot
   keep the call running past its timeout.
 
@@ -3601,8 +3621,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 `unix_sockets` names up to 4 declared `exec_environment` variables whose host values are Unix sockets the command
 may connect to. It needs the `unix_sockets` capability (experimental).
 
-- Each value must be an absolute, canonical path outside the repository to an existing socket owned by the current
-  user, or the call fails with `exec_socket_unavailable`.
+- Each value must be an absolute, canonical path outside the
+  [repository](reference/state-and-storage.md#session-directory-and-repository) to an existing socket owned by the current user, or the
+  call fails with `exec_socket_unavailable`.
 - The mod never supplies the path and no IP network is added.
 
 #### `exec.run` with `sandbox: "none"`
@@ -3612,8 +3633,8 @@ With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` with
 - `cwd` may be absolute.
 - The first run of a binary asks the user, who can decline (`exec_program_declined`); see [Authority
   grants](reference/authority-grants.md#os_access-manifest-field).
-- A program reached through a symlink outside the repository runs as the link, so a version-manager shim such as
-  `node` from mise or Volta runs the version it manages.
+- A program reached through a symlink outside the [repository](reference/state-and-storage.md#session-directory-and-repository) runs as
+  the link, so a version-manager shim such as `node` from mise or Volta runs the version it manages.
 - The environment is cleared and then contains `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale,
   `SSH_AUTH_SOCK` (so `ssh` and `git` over SSH can use the user's SSH agent), a private `TMPDIR`, `TERM=dumb`, the
   declared `exec_environment` names and `env`. No other host credential or Codex variable is passed and no secrets
@@ -3719,7 +3740,10 @@ Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 `fs.read` grants `workspace.read` and the `workspace_change` event; `fs.write` grants `workspace.transaction`,
 `workspace.request_rename` and the `workspace_pre_rename` event (see [Capabilities](reference/capabilities.md#capabilities)).
 These operations work only in the session's current local repository, at its canonical path, and the host checks the
-effective read and write permissions for every path.
+effective read and write permissions for every path. When the session directory is `/`, the home directory or a
+directory above it and isn't in a Git work tree, every `workspace.*` operation without `root` fails with
+`workspace_unavailable` (see
+[Session directory and repository](reference/state-and-storage.md#session-directory-and-repository)).
 
 #### Workspace reads and transactions
 
@@ -3749,6 +3773,7 @@ workspace.transaction {expected, writes?, deletes?, renames?, backup?, root?} �
 
 | Error | When |
 | --- | --- |
+| `workspace_unavailable` | The session directory is `/`, the home directory or above it, outside a Git work tree |
 | `workspace_path_scope_invalid` | No paths, more than 128, or a repeated path |
 | `workspace_read_permission_denied`, `workspace_write_permission_denied` | The session can't read or write a path |
 | `fs_root_invalid` | `root` isn't a string |
@@ -3834,6 +3859,7 @@ Each change contains the path's before and after hashes.
 - At most 16 watches per mod by default (`watches_per_mod` in [Host limits](reference/limits.md#host-limits)).
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
+- If the host cannot register the paths with the file watcher, the call fails with `watch_registration_failed`.
 
 Watches end and deliver as described in [Callback delivery](reference/events-and-lifecycle.md#callback-delivery).
 
@@ -3889,11 +3915,27 @@ freshness; it is also available in the `context` event, where `workspace.snapsho
 ## State and storage
 
 Use it when a mod keeps data: `store.*` records, evidence and binary evidence, `api.state` and where it lives,
-state migration, session UI state and the reactive helpers over `api.state`.
+state migration, session UI state and the reactive helpers over `api.state`. It also defines the session directory
+and repository the other pages refer to.
 
 Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 [registry table](reference/stability-and-migration.md#experimental-entries-in-the-registry)). Every operation here needs the
 `store` capability except `api.uiState`, which needs `terminal`.
+
+### Session directory and repository
+
+Mods run in any session directory, including the home directory and `/`. The repository is the Git work tree around
+the session directory; outside one there is no repository.
+
+- Programs and sockets the host runs or passes unsandboxed (`os_access` programs, managed processes, services,
+  `exec.run` sockets) must be outside the repository, or outside the session directory when there is no repository,
+  because the agent can write there.
+- The mod store, `host.json` protected paths and secret references must be outside the session directory only when
+  it is inside a repository. Otherwise the host keeps them out of agent commands through the sandbox's denied paths.
+- `workspace.*` operations on the session directory fail with `workspace_unavailable` when there is no repository
+  and the session directory is `/`, the home directory or a directory above it, so a mod can't read or change files
+  such as `~/.ssh` through them; `root` calls on [`fs_access`](reference/authority-grants.md#fs_access-manifest-field) roots
+  still work. Workspace change tracking is off there too, and checkout state is off wherever there is no repository.
 
 ### Durable data: `store.*` and evidence
 
@@ -4018,8 +4060,8 @@ is one per mod store, per thread or per checkout.
 
 #### `api.state` compare-and-swap
 
-`api.state` is re-read before every callback and written back with a compare-and-swap. If another process wrote it
-meanwhile, the host runs the callback again against the fresh state, within the callback's 5 s budget.
+Before each callback, the host reads `api.state`. It writes the state back with a compare-and-swap: if another process
+changed it meanwhile, the host reruns the callback against the fresh state, within the callback's 5 s budget.
 
 - The rerun's host calls get the results already recorded, so no operation runs twice.
 - The clock stays at the first attempt's start, so `Date.now()` in arguments replays.
@@ -4055,8 +4097,6 @@ or thread state. Hooks, prompts, timers, channels and `api.uiState` stay with th
 
 These rules apply in every scope:
 
-- Mods never run with the home directory or the filesystem root as the session directory. The host stays off with a
-  notice in `/omd`.
 - `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the given THREAD and
   the checkout of their working directory. A `thread` mod run from `omd-mod command` without THREAD fails with
   `state_thread_unavailable`.
@@ -4068,9 +4108,9 @@ These rules apply in every scope:
 A mod raises the manifest's `state_version` when its saved state changes shape. Thread and checkout state migrate
 inside a session. Mod store state migrates with `omd-mod migrate`.
 
-- Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that thread or
-  checkout: the host runs the mod's `migrate` handler (an experimental event that needs `store`) on it and keeps the
-  previous file beside it as `<file>-backup-<sha256>`; until then registration and render reads see `null`.
+- Before the mod's next callback in a thread or checkout, the host converts state saved at another `state_version` by
+  running the mod's `migrate` handler (an experimental event that needs `store`). It keeps the previous file beside
+  the new one as `<file>-backup-<sha256>`. Until migration runs, registration and render reads see `null`.
 - A package update that changes the `state_version` of a thread- or checkout-scoped mod with `store` is refused
   (`migration_handler_required`) unless the new version registers `migrate`; an adapter-wrapped package is not
   checked.
@@ -4499,12 +4539,15 @@ limit fails with `channel_sequence_limit`, while existing channels remain publis
 #### Session activations and background jobs (experimental)
 
 Require `session_activation_v1` to keep one activation per package binding and thread. Ordinary TypeScript variables
-survive admitted session callbacks, including commands and timers. Render callbacks, component modules, input hooks,
-workspace pre-rename and history persistence retain their separate execution contexts; share presentation through
-`api.state`, not a module variable. Settings, source or authority changes, explicit reload and thread teardown discard
-the activation. A lost runner reports `session_activation_lost`; later work starts a new activation. Persisted state
-remains explicit. Session callbacks are serialized from admission through completion and are not automatically
-replayed after state conflicts or failed completion. External effects already performed cannot be rolled back.
+then survive admitted session callbacks, including commands and timers. Render callbacks, component modules, input
+hooks, workspace pre-rename and history persistence still use separate execution contexts. Share presentation data
+with them through `api.state`, not a module variable.
+
+Settings, source or authority changes, explicit reload and thread teardown discard the activation. A lost runner
+reports `session_activation_lost`; later work starts a new activation. Save persistent state explicitly.
+
+The host serializes session callbacks from admission through completion. It does not automatically replay them
+after state conflicts or failed completion, and cannot roll back external effects already performed.
 
 `api.background<T, R>(key, handler)` registers a typed job during activation. It requires `store`, `events`,
 `state_scope: "thread"`, `session_activation_v1` and `background_jobs_v1`. Keys contain 1–53 ASCII letters, digits, underscores, dots or hyphens.
@@ -4514,11 +4557,11 @@ it. The handler may return a JSON result or a promise of one. `get()` returns `i
 with `result`, `failed` with `error`, or `cancelled`. A handler failure is saved as a failed status.
 
 Jobs use the regular timer limits and the `background_<key>` state key, which authors must reserve for the helper.
-At most 32 session activations are retained per process; reaching the bound reports `session_activation_limit`.
-The host rechecks callback authority and rejects stale completions. Reload abandons pending work; call `start()`
-explicitly to retry. Cancelling stops pending delivery. A running callback keeps the ordinary host cancellation and completion checks;
-external effects already performed are not rolled back. Status writes become visible when the callback commits.
-These APIs are experimental and opt in.
+The host retains at most 32 session activations per process; reaching the bound reports `session_activation_limit`.
+It rechecks callback authority and rejects stale completions. Reload abandons pending work; call `start()` explicitly
+to retry. Cancelling stops delivery of pending work. A running callback still follows the host's cancellation and
+completion checks; the host cannot roll back external effects already performed. Status writes become visible when
+the callback commits. These APIs are experimental and opt in.
 
 `assistant_message {thread_id, turn_id, message_id, text, truncated}` (capability `lifecycle`, feature
 `assistant_message_identity_v1`) reports completed assistant messages. Text is bounded to 8,192 characters.
@@ -4699,8 +4742,8 @@ options.
 
 ## Contracts and receipts
 
-A contract is a versioned document that gates task completion and workspace integration on receipts. Mods register
-documents; users select one.
+A contract specifies which receipts the host must accept before completing a task or integrating workspace
+changes. Mods register versioned contract documents; users select one.
 
 Use it when a mod registers a workflow contract, submits receipts, checks the completion or integration gate, or
 narrows operations for the rest of a session. The agents that produce receipts are in [Agents](reference/agents.md).
@@ -4748,8 +4791,8 @@ current contract, then writes the same user selection that the commands above wr
 - Selections pin the document digest. A mod that changes a registered document makes the selection unavailable
   instead of silently weakening it.
 - A weaker selection needs the confirmation printed by `omd-contract plan`.
-- With no selection nothing is gated.
-- An unavailable selection fails closed.
+- Without a selected contract, the host requires no contract receipts for completion or integration.
+- If the selected contract is unavailable, the host refuses completion and integration.
 
 ### `receipts.submit`
 
@@ -4935,12 +4978,15 @@ interruption sends nothing, so its result ends with no `delivered`.
 - The host keeps at most 16 agent handles, counting spawns in progress.
 - Agent handles last until cancelled, the mod is disabled or fails, or the session stops. A held failure is dropped
   when its session stops.
-- A finished or failed agent's result also reaches the parent thread's mailbox, as a native child's does, from
-  `<parent path>/<handle>` with the handle lowercased and each character other than a letter, digit or `_` made `_`.
-  An interrupted agent sends nothing, and a cancel sends only what its returned `delivered` reports. Nor is a result sent once it was claimed before the host
-  sent it: by an `agents.wait` that was already waiting, or by `agents.result` with `claim: true`. A claimed failure of a
-  `hold_failure` agent stays held for `agents.cancel` with `deliver: true`. A result over 16 KiB is cut there. With `agents.completion_wake` on, the result wakes an idle
-  parent ([Completion wake](#completion-wake)).
+- The host also sends a finished or failed agent's result to the parent thread's mailbox, as it does for a native
+  child, from `<parent path>/<handle>`. It lowercases the handle and replaces each character other than a letter,
+  digit or `_` with `_`.
+- An interrupted agent sends nothing. Cancelling sends only what the returned `delivered` reports.
+- The host does not send a result claimed before delivery by an `agents.wait` that was already waiting or by
+  `agents.result` with `claim: true`. A claimed failure of a `hold_failure` agent stays held for `agents.cancel`
+  with `deliver: true`.
+- Mailbox results are cut at 16 KiB. With `agents.completion_wake` on, delivery wakes an idle parent
+  ([Completion wake](#completion-wake)).
 
 ### Parent history
 
@@ -5488,8 +5534,8 @@ The `resume` event fires when the lead thread is resumed.
 When a saved thread is resumed, the host reopens that thread's task [ledger](reference/routes.md#ledger) instead of starting a
 new one. The ledger keeps its requests, exposure, observed lead usage and uncertain in-flight requests.
 
-- Repository, thread identity, original limits and saved journal must validate.
-- Reopening a ledger without a resume, changed limits and completed tasks are refused.
+- Before reopening the ledger, the host validates the repository, thread identity, original limits and saved journal.
+- The host refuses to reopen a ledger without a resume, with changed limits or for a completed task.
 - Agent handles and snapshot handles don't survive a process restart. A mod must reconcile saved pending work
   without silently spawning replacements.
 
@@ -5708,9 +5754,14 @@ Without `model` the route uses the conversation's model and effort. With `model`
 model from the ChatGPT catalog of the Codex ChatGPT sign-in, the list `routes.models` returns, and `effort`, which
 defaults to the model's own default. This works while the conversation, or Codex itself, uses another provider. The
 host reads that catalog from the Codex model cache and refreshes it from the ChatGPT models endpoint only when the
-cache is stale; it never sends a model request. The route's input limit is the chosen model's usable context window,
-taken from the first of: a window set with `models.context_window`, the Codex `model_context_window` setting when the
-chosen model is the configured model, the ChatGPT catalog, the host's bundled model metadata, or 272,000 tokens.
+cache is stale; it never sends a model request. For the route's input limit, the host uses the first available
+context window in this order:
+
+1. A window set with `models.context_window`.
+2. Codex's `model_context_window` setting, when the chosen model is the configured model.
+3. The ChatGPT catalog.
+4. The host's bundled model metadata.
+5. 272,000 tokens.
 
 It returns `{route}`, or `{status: 'declined'}`. It refuses with `routes_add_needs_chatgpt` without a ChatGPT sign-in
 (an API key doesn't count), or without `model` when the conversation's provider doesn't use it. A model outside the
@@ -6569,11 +6620,11 @@ stop the compaction.
 
 #### Evidence across compaction
 
-With the `sessions` capability, `turn_end` delivers `evidence`, a completed-turn packet of the turn's visible records.
-Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each
-segment's records with its history revision. Compaction summaries do not replace those records. An unobserved
-history reset or interrupted compaction still rejects evidence explicitly. The mod chooses how to select and
-summarize a truncated packet.
+With the `sessions` capability, a mod receives `evidence` on `turn_end`: a completed-turn packet of visible records.
+The host keeps bounded original records even when it observes compaction during the turn, and tags each segment
+with its history revision. Compaction summaries do not replace those records. The host rejects evidence after an
+unobserved history reset or interrupted compaction. If the packet is truncated, the mod chooses which records to
+select and summarize.
 
 Evidence is delivered only to mods that subscribed at the turn's start and still subscribe with the same source
 hash when it finishes. Reloading unchanged mods preserves their evidence; newly added or changed subscribers
@@ -7344,16 +7395,20 @@ position, never a backlog. Views with no pointer components add no pointer work.
 
 `component_event` reports interaction with a mod's components and goes only to the component's owner. Two experimental
 events report native state: `view` (`{phase, view, view_id, dropped?}`) when a native bottom-pane view or overlay opens
-or closes, and `focus` (`{focused, idle?, dropped?}`) when the terminal window gains or loses focus or enters/leaves display idle.
-`idle: true` means five minutes without terminal input. Stop visual timers while `!focused || idle` and restart
-them on the next active event. `terminal` callbacks also carry `client.active` so a newly shown
-thread can recover without waiting for another window focus change. Active turns, tools, monitors and desktop
-notifications continue; the TUI redraws at most once a second, so content stays current without animation, and releases unused stateless
-runners and spare processes. Session runners and mounted component state remain resident. After a minute without
-runner use, all spare runners are released. Focus, keys, paste or mouse resume full-rate drawing; resize and returning from
-an external editor resume it while focused, and an approval, question or finished turn ends display idle in a
-focused terminal. Background detection needs a terminal that reports focus events.
-This reduces display work and disposable memory; it does not unload the conversation or freeze the session process.
+or closes, and `focus` (`{focused, idle?, dropped?}`) when the terminal window gains or loses focus or enters or leaves
+display idle.
+
+`idle: true` means five minutes without terminal input. Stop visual timers while `!focused || idle` and restart them
+on the next active event. `terminal` callbacks also carry `client.active`, so a newly shown thread can recover
+without waiting for another window focus change.
+
+While unfocused or display-idle, active turns, tools, monitors and desktop notifications continue. The TUI redraws
+at most once a second and releases unused stateless runners and spare processes. Session runners and mounted
+component state remain resident. After a minute without runner use, all spare runners are released.
+
+Focus, keys, paste or mouse resume full-rate drawing. Resize and returning from an external editor resume it while
+focused; an approval, question or finished turn ends display idle in a focused terminal. Background detection needs
+a terminal that reports focus events. The conversation stays loaded and the session process keeps running.
 
 With `terminal_thread_view_v1`, attaching or switching the shown conversation also sends
 `view {phase: 'opened', view: 'thread', view_id: THREAD_ID}` in that thread's state, including when viewing a subagent.
@@ -7830,10 +7885,14 @@ terminal.open {url} | {path} | {path, line?, editor: true} → {opened: true} | 
 It opens an http(s) URL or an existing HTML, Markdown, text, PDF or image file after a
 native confirmation.
 
-`{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file in the argv the user sets as `editor`
-in `host.json`, with `{path}` and `{line}` substituted. Without one it runs `$VISUAL`, else `$EDITOR`, in the terminal
-while Codex waits, with the path appended unless the value contains `{path}`; neither set fails with
-`terminal_open_editor_unconfigured`, and an `editor` that isn't 1 to 16 strings with `terminal_open_editor_invalid`.
+`{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file using the `editor` argument list in
+`host.json`, substituting `{path}` and `{line}`. That setting must contain 1 to 16 strings; otherwise the call fails
+with `terminal_open_editor_invalid`.
+
+Without that setting, the host uses `$VISUAL`, falling back to `$EDITOR`, and runs the editor in the terminal while
+Codex waits.
+It appends the path unless the value contains `{path}`. If neither variable is set, the call fails with
+`terminal_open_editor_unconfigured`.
 
 ### `terminal.prompt`
 
@@ -8113,7 +8172,8 @@ rows, sites?}` and, with external clients attached, `clients` (see
   to the conversation with it.
 - A change in `welcome` or `chat` renders the view again.
 
-`client` is null without a terminal client. When any of these change (the window or font is resized, animations are
+`client` is null without a terminal client. Behind a remote app-server it is the facts the terminal frontend
+reports with [`omd/client/update`](reference/omd-client-protocol.md#omdclientupdate) `client`. When any of these change (the window or font is resized, animations are
 turned off) the view renders again with the new `client`. If several changes arrive while a render is in progress,
 the host renders once more after it. A change in a drawn site's area also renders the view again. The exception is
 when the area returns within a second to the size it had before the last change. A view that sizes its own layout
@@ -8136,9 +8196,9 @@ Host behavior outside the mod API. macOS only: the broker is a LaunchDaemon.
 | The broker | The hidden `_omdbroker` account, which owns `/Library/Application Support/OhMyDiff/broker` (mode 0700) | `/var/run/dev.ohmydiff.broker.sock` | Pinned hardened-runtime binaries (see below) |
 | `omd-broker power` | root | `/var/run/dev.ohmydiff.broker.power.sock` | Only the broker's account |
 
-The broker answers a peer only when the peer's kernel audit token resolves to a hardened-runtime binary whose code
-directory hash root has pinned. The broker asks the kernel for the running peer's signing status and code directory hash
-and never reads the executable, so binaries installed under a private home folder verify too.
+The broker answers a peer only when its kernel audit token identifies a hardened-runtime binary with a code
+directory hash pinned by root. The broker gets the running peer's signing status and code directory hash from the
+kernel rather than reading its executable. It can therefore verify binaries installed under a private home folder.
 
 `omd-broker power` does one thing: it sets `SleepDisabled` for
 [power holds](reference/sessions-and-turns.md#power-holds-power_hold_v1). It restores the previous value when the last hold
@@ -8402,8 +8462,8 @@ can't grant install scripts.
 `omd-mod package-sync STORE` deploys the policy unattended for the account that owns the store, typically from the
 organization's own launch agent or configuration tool after it installs the policy; it takes no confirmation.
 
-Every applicable entry, across projects, comes from the content-addressed package cache, otherwise from its
-`source` and then each mirror in order, through the normal package resolver:
+For every applicable entry across projects, `package-sync` first looks in the content-addressed package cache.
+If the package is absent, the normal package resolver tries its `source`, then each mirror in order:
 
 - `ID@VERSION` uses the first `index` location whose bytes match its sha256.
 - `npm:` sources without a registry use `registry` and the user's own `.npmrc` tokens (the policy contains no
@@ -8428,10 +8488,10 @@ only, and `--rollback` makes the previous generation active again.
   doesn't target the account or project.
 - Content the policy no longer lists never runs, so removing an entry or changing its pin revokes it at once and an
   administrator's `policy rollback` with an unchanged cache restores the previous generation offline.
-- A target can have nothing running: not deployed yet, a reset or unreadable `managed.json`, stale content, or a
-  package that never inspected. Then every interception surface its policy `capabilities` reach fails closed with
-  `intercept_required_failed: ID: REASON` until `package-sync` deploys it. Tool calls stay blocked between installing
-  a policy and its first sync.
+- A target has no running package if it has not been deployed, `managed.json` was reset or cannot be read, its
+  content is stale, or the host never successfully inspected it. The host then refuses every operation on an
+  interception surface covered by that target's policy `capabilities`, with `intercept_required_failed: ID: REASON`,
+  until `package-sync` deploys it. Tool calls stay blocked between installing a policy and its first sync.
 - In that state, a broken `mods.json` drops only user and project mods.
 - Managed reloads reject broken selections individually so a user mod cannot prevent policy updates.
 - If authority cannot be read or authenticated, interception fails closed until authority recovers.
@@ -8589,11 +8649,12 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 
 - The object `connect` returns has `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`,
   `resource`, `recovery` and `request(method, params)`. Together they cover every `omd/*` and app-server method.
-- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches
-  with the last accepted or interrupted attach (a reattach the host refused is not carried over), retains the
-  in-memory `attachment.terminalToken`, replays the viewport and focus updated since that attach, resumes the
-  threads it resumed through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`.
-  Explicit detach clears terminal ownership. If a restarted host rejects the retained token, it attaches once
+- After a disconnect, the SDK reconnects with backoff (`reconnect: false` turns that off) and re-initializes.
+  It re-attaches using the last accepted or interrupted attach and the in-memory `attachment.terminalToken`;
+  it does not carry over a reattach the host refused. It then replays viewport and focus updates made since that
+  attach, resumes the threads previously resumed through `request('thread/resume', …)`, and calls
+  `onReconnect({epoch, previousEpoch})`.
+- Explicit detach clears terminal ownership. If a restarted host rejects the retained token, the SDK attaches once
   without it and inherits shared defaults. Keep terminal tokens private and in memory. Clients with separate
   terminal owners share a mod's saved state, not its settings, enablement or session UI state.
 - `unsupported(component, renderer, drawable)` returns null when the renderer can draw the component. Otherwise it
@@ -8668,11 +8729,16 @@ omd/client/attach {name, renderer: {kind: 'terminal'|'gui'|'text', formats: ('sv
 #### `omd/client/update`
 
 ```text
-omd/client/update {renderer?, viewport?: {width, height, unit}, focus?}
+omd/client/update {renderer?, viewport?: {width, height, unit}, focus?, client?}
 // → {}
 ```
 
 `focus` sets the entry's `focused`. Every client gets `omd/roster/updated` and mods render again.
+
+`client` is a terminal frontend's facts, the [`TerminalClient`](reference/terminal-operations.md#terminal-event-client) object mods receive as `client` in
+the `terminal` handler (`columns`, `rows`, `chat`, `welcome`, `sites`, `colors` and the rest). When the host has no
+terminal of its own, mods of the client's terminal owner receive the facts of its focused client, else of the one
+that attached last. It must be an object of at most 16 KiB (`client_facts_invalid`). It isn't part of the roster.
 
 #### `omd/client/detach`
 
@@ -8872,8 +8938,9 @@ is closing`).
 - `revision` grows within an `epoch`.
 - A new `epoch` means the host restarted and invalidates everything the client stored.
 
-Reconnecting is `initialize`, attach with the retained `terminalToken` (a full snapshot, never deltas), then `thread/resume` per thread, which
-replays pending approvals. `thread/resume` also joins a loaded thread before its first turn.
+To reconnect, send `initialize`, attach with the retained `terminalToken` to receive a full snapshot rather than
+deltas, then send `thread/resume` for each thread. Resuming replays pending approvals and also joins a loaded thread
+before its first turn.
 
 - Approvals stay upstream server requests broadcast to subscribed connections (first answer wins,
   `serverRequest/resolved` tells the rest).

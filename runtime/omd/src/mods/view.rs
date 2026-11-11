@@ -2083,8 +2083,8 @@ impl ModThemePatch {
 }
 
 impl ModViewPatch {
-    pub fn parse(value: Value) -> Result<Self> {
-        let patch: Self = serde_json::from_value(value)?;
+    pub fn parse(value: &Value) -> Result<Self> {
+        let patch = Self::deserialize(value)?;
         let invalid = [
             (
                 "session_title_suffix",
@@ -2354,7 +2354,7 @@ impl ModViewPatch {
             .glyphs
             .retain(|glyph, _| claim(format!("theme.glyphs.{glyph}")));
         self.theme.apply(&mut candidate.theme);
-        ModView::parse_with(serde_json::to_value(&candidate)?, MOD_COMPOSED_KEY_LIMIT)?;
+        candidate.validate(MOD_COMPOSED_KEY_LIMIT)?;
         *target = candidate;
         *claims = candidate_claims;
         if dropped_contexts {
@@ -2385,7 +2385,9 @@ pub struct ModViewConflict {
 
 impl ModView {
     pub fn parse(value: Value) -> Result<Self> {
-        Self::parse_with(value, MOD_KEY_LIMIT)
+        let view: Self = serde_json::from_value(value)?;
+        view.validate(MOD_KEY_LIMIT)?;
+        Ok(view)
     }
 
     pub(super) fn close_wraps(&mut self) {
@@ -2397,88 +2399,86 @@ impl ModView {
         }
     }
 
-    /// Each mod's view or patch keeps 24 keys; the view composed from every mod may hold more.
-    fn parse_with(value: Value, key_limit: usize) -> Result<Self> {
-        let view: Self = serde_json::from_value(value)?;
+    fn validate(&self, key_limit: usize) -> Result<()> {
         let invalid = [
             (
                 "session_title_suffix",
-                view.session_title_suffix
+                self.session_title_suffix
                     .as_ref()
                     .is_some_and(|text| !visible(text, 80)),
             ),
             (
                 "greeting",
-                view.greeting
+                self.greeting
                     .as_ref()
                     .is_some_and(|text| !visible(text, 256)),
             ),
-            ("sidebar_width", view.sidebar_width > 60),
+            ("sidebar_width", self.sidebar_width > 60),
             (
                 "sidebar_style",
-                view.sidebar_style
+                self.sidebar_style
                     .as_ref()
                     .is_some_and(|style| !style.still()),
             ),
             (
                 "panels",
-                view.panels.len() > 8 || view.panels.iter().any(|panel| !panel.valid(32)),
+                self.panels.len() > 8 || self.panels.iter().any(|panel| !panel.valid(32)),
             ),
             (
                 "title",
-                view.title
+                self.title
                     .as_ref()
                     .is_some_and(|title| !visible(title, 1024)),
             ),
             (
                 "header",
-                view.header.as_ref().is_some_and(|panel| !panel.valid(3)),
+                self.header.as_ref().is_some_and(|panel| !panel.valid(3)),
             ),
             (
                 "footer",
-                view.footer.as_ref().is_some_and(|panel| !panel.valid(3)),
+                self.footer.as_ref().is_some_and(|panel| !panel.valid(3)),
             ),
-            ("status", !valid_status(&view.status)),
-            ("keybindings", !valid_bindings(&view.keybindings, key_limit)),
-            ("key_contexts", !valid_contexts(&view.key_contexts, 16, 128)),
-            ("keybindings.focus", !valid_focus_targets(&view)),
+            ("status", !valid_status(&self.status)),
+            ("keybindings", !valid_bindings(&self.keybindings, key_limit)),
+            ("key_contexts", !valid_contexts(&self.key_contexts, 16, 128)),
+            ("keybindings.focus", !valid_focus_targets(self)),
             (
                 "theme.syntax",
-                view.theme
+                self.theme
                     .syntax
                     .as_ref()
                     .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128)),
             ),
             (
                 "placeholder",
-                view.placeholder
+                self.placeholder
                     .as_ref()
                     .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80)),
             ),
-            ("theme.glyphs", !valid_glyphs(&view.theme.glyphs)),
+            ("theme.glyphs", !valid_glyphs(&self.theme.glyphs)),
             (
                 "layout",
-                view.layout.as_ref().is_some_and(|layout| !layout.valid()),
+                self.layout.as_ref().is_some_and(|layout| !layout.valid()),
             ),
             (
                 "surface_styles",
-                !valid_surface_styles(&view.surface_styles),
+                !valid_surface_styles(&self.surface_styles),
             ),
             (
                 "underlay",
-                view.underlay
+                self.underlay
                     .as_ref()
                     .is_some_and(|underlay| !mod_component_id(&underlay.raster)),
             ),
-            ("size", serde_json::to_vec(&view)?.len() > 1_048_576),
+            ("size", serde_json::to_vec(self)?.len() > 1_048_576),
         ]
         .into_iter()
         .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
-        .or_else(|| invalid_sites(&view.sites));
+        .or_else(|| invalid_sites(&self.sites));
         if let Some(field) = invalid {
             return Err(failure(format!("invalid_terminal_view: {field}")));
         }
-        Ok(view)
+        Ok(())
     }
 
     pub fn read(path: &Path) -> Result<Self> {
@@ -2489,11 +2489,8 @@ impl ModView {
 impl ModViewSnapshot {
     pub fn read(path: &Path) -> Result<Self> {
         let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
-        let mut snapshot: Self = serde_json::from_value(value)?;
-        snapshot.view = ModView::parse_with(
-            serde_json::to_value(&snapshot.view)?,
-            MOD_COMPOSED_KEY_LIMIT,
-        )?;
+        let snapshot: Self = serde_json::from_value(value)?;
+        snapshot.view.validate(MOD_COMPOSED_KEY_LIMIT)?;
         if snapshot
             .progress
             .as_ref()

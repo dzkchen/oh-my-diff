@@ -1,8 +1,8 @@
 # omd_verify_stop
 
-Stops the agent from finishing a coding task with untested edits. When a turn would end after code edits and no test or
-check has passed since the last edit, it continues the turn once with a short checklist. If a check then fails, it
-continues once more with the failure. It's experimental, and no install profile includes it.
+Asks the agent to check its edits before ending a turn. If no test or check has passed since the last code edit, it
+continues the turn once with a short checklist. If a check then fails, it continues once more with the failure.
+These prompts don't guarantee that the agent will run or pass a check. It's experimental, and no install profile includes it.
 
 ## Turn it on
 

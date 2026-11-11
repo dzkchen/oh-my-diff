@@ -1,7 +1,8 @@
 # Tests
 
-How OMD finds and runs its tests, and which command checks what. Which checks to run for a change is in
-[CONTRIBUTING.md](../CONTRIBUTING.md#check-your-change). What CI runs is in
+`mise run mods:test` discovers and runs the Node tests. Python tests, Rust tests and mod-host scenarios use separate
+runners, listed below. Choose checks for your change from
+[CONTRIBUTING.md](../CONTRIBUTING.md#check-your-change). For CI jobs, see
 [How CI checks a change](../docs/contributing/ci.md).
 
 ## Run the mod tests
@@ -22,10 +23,14 @@ The suite:
   `tests/` and `plugins/`. New tests join automatically.
 - Discovery fails if a test file is in another location or has another extension. A test that shouldn't run by default
   needs its exact path and a reason under `optional` in `tests/suites.json`. It's reported as not executed.
-- Runs mods through `tests/mod_runner.mjs`, which starts the `omd-runner` in `OMD_TEST_RUNNER`, else the one beside
-  `omd-mod` (`OMD_MOD_BIN`, or the installed `omd-mod` on `PATH`), else the newest one in a scratch tree's
-  `artifacts/`, `target/release/` or `target/debug/` under `OMD_WORK_ROOT` (default `/private/tmp`). `mods:test`
-  passes the runner it found to every test file, with the `omd-mod` beside it as `OMD_MOD_BIN` when that isn't set.
+- Runs mods through `tests/mod_runner.mjs`, which selects `omd-runner` in this order:
+  1. The path in `OMD_TEST_RUNNER`.
+  2. The runner beside `omd-mod`, found through `OMD_MOD_BIN` or `PATH`.
+  3. The newest runner in a scratch tree's `artifacts/`, `target/release/` or `target/debug/` under `OMD_WORK_ROOT`
+     (default `/private/tmp`).
+
+`mods:test` passes the selected runner to every test file. If `OMD_MOD_BIN` is unset, it also passes the
+`omd-mod` beside that runner.
 
 The suite assigns these files to other runners without running them:
 

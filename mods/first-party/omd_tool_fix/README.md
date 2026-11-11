@@ -18,7 +18,7 @@ omd mods enable omd_tool_fix
 
 ## Use it
 
-There is nothing to run. `/toolfix` shows what it fixed in this thread: counts, the last 12 changes, whether each
+There is nothing to run. `/tool_fixes` shows what it fixed in this thread: counts, the last 12 changes, whether each
 fixed call ran and the evidence record that contains the original and fixed arguments. For arguments over 32 KiB,
 the record contains only the list of changes.
 
@@ -40,7 +40,7 @@ It has no settings.
 
 ## Needs and limits
 
-- It asks to add `/toolfix`, check and change tool calls before they run, repair the JSON of finished tool calls in the
+- It asks to add `/tool_fixes`, check and change tool calls before they run, repair the JSON of finished tool calls in the
   model's response, and keep its records. The capabilities are `commands`, `interception`, `middleware` and `store` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).
 - It never changes text the tool expects as text, so commands, paths and file contents are never rewritten. It

@@ -1,6 +1,6 @@
 # omd-artifact-reading
 
-Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from. It's experimental: no install profile stages it. [Experimental plugins](../../../../README.md#experimental-plugins)
+Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites where each answer came from. It's experimental, and neither install profile puts it on disk. [Experimental plugins](../../../../README.md#experimental-plugins)
 has the steps to add it.
 
 Everything except PDFs works once you add the plugin. PDF reading also needs Ghostscript (`gs`). An optional mod

@@ -81,8 +81,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 
 ### `exec.run` program, working directory and environment
 
-- A bare program name resolves on `PATH` outside the repository. An absolute path must be canonical and outside the
-  repository. `sha256` pins the resolved file.
+- A bare program name resolves on `PATH` outside the
+  [repository](state-and-storage.md#session-directory-and-repository). An absolute path must be canonical and outside it.
+  `sha256` pins the resolved file.
 - `cwd` is repository-relative.
 - The environment starts empty except `PATH`, a private `HOME`/`TMPDIR`, `TERM=dumb`, locale variables, the
   declared [`exec_environment` names](authority-grants.md#exec_environment-names) and `env` entries limited to
@@ -108,9 +109,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 - The host captures at most `max_output_bytes` of stdout (at most 1 MiB, which is also the default, or at most
   16 MiB with `output_artifact`) and 1 MiB of stderr, and reports `stdout_truncated`/`stderr_truncated`.
   `stdout_sha256` and `stdout_bytes` cover the captured stdout.
-- The returned `stdout` and `stderr` are previews so the result fits a callback's host-call transport;
-  `stdout_preview_truncated`/`stderr_preview_truncated` report a shortened preview. Use `output_artifact` for
-  complete output.
+- The host returns previews in `stdout` and `stderr` to fit the callback's host-call transport budget.
+  `stdout_preview_truncated`/`stderr_preview_truncated` report a shortened preview. Use `output_artifact` to keep
+  complete stdout.
 - Output draining shares the command's deadline and cancellation, so a descendant that keeps a pipe open cannot
   keep the call running past its timeout.
 
@@ -119,8 +120,9 @@ if (run.exit_code !== 0) throw new Error(run.stderr);
 `unix_sockets` names up to 4 declared `exec_environment` variables whose host values are Unix sockets the command
 may connect to. It needs the `unix_sockets` capability (experimental).
 
-- Each value must be an absolute, canonical path outside the repository to an existing socket owned by the current
-  user, or the call fails with `exec_socket_unavailable`.
+- Each value must be an absolute, canonical path outside the
+  [repository](state-and-storage.md#session-directory-and-repository) to an existing socket owned by the current user, or the
+  call fails with `exec_socket_unavailable`.
 - The mod never supplies the path and no IP network is added.
 
 ### `exec.run` with `sandbox: "none"`
@@ -130,8 +132,8 @@ With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` with
 - `cwd` may be absolute.
 - The first run of a binary asks the user, who can decline (`exec_program_declined`); see [Authority
   grants](authority-grants.md#os_access-manifest-field).
-- A program reached through a symlink outside the repository runs as the link, so a version-manager shim such as
-  `node` from mise or Volta runs the version it manages.
+- A program reached through a symlink outside the [repository](state-and-storage.md#session-directory-and-repository) runs as
+  the link, so a version-manager shim such as `node` from mise or Volta runs the version it manages.
 - The environment is cleared and then contains `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale,
   `SSH_AUTH_SOCK` (so `ssh` and `git` over SSH can use the user's SSH agent), a private `TMPDIR`, `TERM=dumb`, the
   declared `exec_environment` names and `env`. No other host credential or Codex variable is passed and no secrets

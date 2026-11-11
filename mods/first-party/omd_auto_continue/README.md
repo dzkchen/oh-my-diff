@@ -1,8 +1,8 @@
 # omd_auto_continue
 
-When a turn stops on an approval or a question while you're away, it answers for you after a wait (two minutes by
-default) so the turn keeps going. It never approves anything. Approvals are declined, and questions get an instruction
-to carry on. It's off by default in OMD+. OMD Core doesn't include it.
+Declines unanswered approvals and responds to unanswered questions after a wait (two minutes by default). For
+questions, it tells the agent to continue already-authorized work and use best judgment for optional choices.
+It never approves an action or settles a required decision. It's off by default in OMD+. OMD Core doesn't include it.
 
 ## Turn it on
 
@@ -18,9 +18,8 @@ To turn it off again, run `omd mods disable omd_auto_continue`.
 
 ## Use it
 
-When the agent stops to wait for you, on an approval, a permission request, a question it asks (`request_user_input`) or
-an MCP elicitation (a form a connected tool server asks you to fill in), a toast shows how long you have. If you answer
-first, your answer wins.
+A toast counts down the wait for an approval, permission request, agent question (`request_user_input`) or MCP
+elicitation (a form from a connected tool server). If you answer before the deadline, the mod uses your answer.
 
 When the time runs out:
 

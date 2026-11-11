@@ -187,12 +187,15 @@ limit fails with `channel_sequence_limit`, while existing channels remain publis
 ### Session activations and background jobs (experimental)
 
 Require `session_activation_v1` to keep one activation per package binding and thread. Ordinary TypeScript variables
-survive admitted session callbacks, including commands and timers. Render callbacks, component modules, input hooks,
-workspace pre-rename and history persistence retain their separate execution contexts; share presentation through
-`api.state`, not a module variable. Settings, source or authority changes, explicit reload and thread teardown discard
-the activation. A lost runner reports `session_activation_lost`; later work starts a new activation. Persisted state
-remains explicit. Session callbacks are serialized from admission through completion and are not automatically
-replayed after state conflicts or failed completion. External effects already performed cannot be rolled back.
+then survive admitted session callbacks, including commands and timers. Render callbacks, component modules, input
+hooks, workspace pre-rename and history persistence still use separate execution contexts. Share presentation data
+with them through `api.state`, not a module variable.
+
+Settings, source or authority changes, explicit reload and thread teardown discard the activation. A lost runner
+reports `session_activation_lost`; later work starts a new activation. Save persistent state explicitly.
+
+The host serializes session callbacks from admission through completion. It does not automatically replay them
+after state conflicts or failed completion, and cannot roll back external effects already performed.
 
 `api.background<T, R>(key, handler)` registers a typed job during activation. It requires `store`, `events`,
 `state_scope: "thread"`, `session_activation_v1` and `background_jobs_v1`. Keys contain 1–53 ASCII letters, digits, underscores, dots or hyphens.
@@ -202,11 +205,11 @@ it. The handler may return a JSON result or a promise of one. `get()` returns `i
 with `result`, `failed` with `error`, or `cancelled`. A handler failure is saved as a failed status.
 
 Jobs use the regular timer limits and the `background_<key>` state key, which authors must reserve for the helper.
-At most 32 session activations are retained per process; reaching the bound reports `session_activation_limit`.
-The host rechecks callback authority and rejects stale completions. Reload abandons pending work; call `start()`
-explicitly to retry. Cancelling stops pending delivery. A running callback keeps the ordinary host cancellation and completion checks;
-external effects already performed are not rolled back. Status writes become visible when the callback commits.
-These APIs are experimental and opt in.
+The host retains at most 32 session activations per process; reaching the bound reports `session_activation_limit`.
+It rechecks callback authority and rejects stale completions. Reload abandons pending work; call `start()` explicitly
+to retry. Cancelling stops delivery of pending work. A running callback still follows the host's cancellation and
+completion checks; the host cannot roll back external effects already performed. Status writes become visible when
+the callback commits. These APIs are experimental and opt in.
 
 `assistant_message {thread_id, turn_id, message_id, text, truncated}` (capability `lifecycle`, feature
 `assistant_message_identity_v1`) reports completed assistant messages. Text is bounded to 8,192 characters.

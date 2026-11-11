@@ -710,8 +710,10 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     let path = Path::new(name);
     if path.is_absolute() {
         let canonical = path.canonicalize().ok()?;
-        return (canonical == path && canonical.is_file() && !canonical.starts_with(repository))
-            .then_some(canonical);
+        return (canonical == path
+            && canonical.is_file()
+            && !crate::agent_writable(&canonical, repository))
+        .then_some(canonical);
     }
     if name.is_empty()
         || name.len() > 64
@@ -723,7 +725,7 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     }
     std::env::split_paths(&std::env::var_os("PATH")?).find_map(|directory| {
         let candidate = directory.join(name).canonicalize().ok()?;
-        (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
+        (candidate.is_file() && !crate::agent_writable(&candidate, repository)).then_some(candidate)
     })
 }
 
@@ -747,7 +749,8 @@ pub fn unrestricted_program(
     } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
         std::env::var_os("PATH").and_then(|paths| {
             std::env::split_paths(&paths).find_map(|directory| {
-                link(&directory.join(name)).filter(|(_, target)| !target.starts_with(repository))
+                link(&directory.join(name))
+                    .filter(|(_, target)| !crate::agent_writable(target, repository))
             })
         })
     } else {
@@ -759,12 +762,12 @@ pub fn unrestricted_program(
         .programs
         .iter()
         .any(|allowed| Path::new(allowed) == resolved || Path::new(allowed) == path);
-    if resolved.starts_with(repository) && !listed
+    if crate::agent_writable(&resolved, repository) && !listed
         || !access.allows(name, &resolved) && !access.allows(name, path)
     {
         return Err(format!("os_access_denied: {name}"));
     }
-    Ok(if launch.starts_with(repository) {
+    Ok(if crate::agent_writable(&launch, repository) {
         resolved
     } else {
         launch
@@ -832,7 +835,7 @@ fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
     let metadata = fs::symlink_metadata(&path).ok()?;
     (path.is_absolute()
         && path.canonicalize().ok()? == path
-        && !path.starts_with(repository)
+        && !crate::agent_writable(&path, repository)
         && metadata.file_type().is_socket()
         && metadata.uid() == rustix::process::geteuid().as_raw())
     .then_some(path)
@@ -1007,7 +1010,7 @@ impl Host<'_> {
                 .canonicalize()
                 .map_err(|error| error.to_string())?
                 != self.data_root
-            || self.data_root.starts_with(self.repository())
+            || crate::inside_repository(self.data_root, self.repository())
         {
             return Err("exec_output_binding_invalid".into());
         }
@@ -1236,6 +1239,9 @@ impl Host<'_> {
             )
         {
             return self.external(caller, operation, arguments);
+        }
+        if crate::workspace_refused(operation, &arguments, self.repository()) {
+            return Err("workspace_unavailable".into());
         }
         let source = match operation {
             "workspace.transaction" | "workspace.restore" => Some("transaction"),
@@ -1617,8 +1623,8 @@ impl Host<'_> {
         let started = Instant::now();
         let mut child = spawn_session(&command, input.stdin.is_some())
             .map_err(|error| format!("exec_spawn_failed: {error}"))?;
-        if let (Some(bytes), Some(mut pipe)) = (input.stdin.as_ref(), child.stdin.take()) {
-            let bytes = bytes.clone().into_bytes();
+        if let (Some(bytes), Some(mut pipe)) = (input.stdin, child.stdin.take()) {
+            let bytes = bytes.into_bytes();
             std::thread::spawn(move || {
                 let _ = pipe.write_all(&bytes);
             });
@@ -1745,7 +1751,7 @@ impl Host<'_> {
         for name in selected {
             let value = match snapshot.files.get(&name) {
                 Some(file) => json!({
-                    "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
+                    "text": std::str::from_utf8(&file.bytes).map_err(|_| "workspace_text_not_utf8")?,
                     "sha256": crate::sha256_hex(&file.bytes),
                 }),
                 None => Value::Null,
@@ -1936,7 +1942,7 @@ impl Host<'_> {
     fn save_backup(
         &self,
         caller: &Caller<'_>,
-        files: &BTreeMap<String, Option<Vec<u8>>>,
+        files: &BTreeMap<&str, Option<&[u8]>>,
     ) -> std::io::Result<Value> {
         let directory = self
             .backup_directory(caller)
@@ -1946,7 +1952,7 @@ impl Host<'_> {
             "owner": caller.id,
             "repository": repository_key(self.repository()),
             "created_ms": crate::peers::now_ms(),
-            "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
+            "files": files.iter().map(|(name, bytes)| ((*name).to_owned(), bytes.map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
         });
         let bytes = serde_json::to_vec(&record)?;
         let digest = crate::sha256_hex(&bytes);
@@ -1985,7 +1991,7 @@ impl Host<'_> {
             &transaction.expected.keys().cloned().collect::<Vec<_>>(),
             true,
         )?;
-        let sink = |files: &BTreeMap<String, Option<Vec<u8>>>| self.save_backup(caller, files);
+        let sink = |files: &BTreeMap<&str, Option<&[u8]>>| self.save_backup(caller, files);
         let result = transaction
             .apply_with_backup(self.repository(), || (self.active)(), Some(&sink))
             .map_err(|error| error.to_string())?;
@@ -2006,7 +2012,7 @@ impl Host<'_> {
             .map_err(|error| error.to_string())?;
         let mut files = BTreeMap::new();
         for (name, expected) in &input.expected {
-            let current = snapshot.files.get(name).map(|file| file.bytes.clone());
+            let current = snapshot.files.get(name).map(|file| file.bytes.as_slice());
             let stat = Self::file_stat(
                 &crate::workspace_path(self.repository(), name)
                     .map_err(|error| error.to_string())?,
@@ -2023,7 +2029,7 @@ impl Host<'_> {
             if !matches {
                 return Err(format!("stale expected version for {name}"));
             }
-            files.insert(name.clone(), current);
+            files.insert(name.as_str(), current);
         }
         let backup = self
             .save_backup(caller, &files)
@@ -2094,6 +2100,26 @@ impl Host<'_> {
 #[cfg(test)]
 mod installation_tests {
     use super::*;
+
+    #[test]
+    fn resolve_program_refuses_programs_the_agent_can_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        if crate::git_work_tree(&root).is_some() {
+            return;
+        }
+        let launch = root.join("launch");
+        fs::create_dir(&launch).unwrap();
+        let [outside, planted] = [root.join("tool"), launch.join("tool")];
+        for program in [&outside, &planted] {
+            fs::write(program, "").unwrap();
+        }
+        let resolve = |program: &Path| resolve_program(program.to_str().unwrap(), &launch);
+        assert_eq!(resolve(&planted), None);
+        assert_eq!(resolve(&outside), Some(outside.clone()));
+        fs::create_dir(root.join(".git")).unwrap();
+        assert_eq!(resolve(&outside), None);
+    }
 
     #[test]
     fn unrestricted_commands_pass_the_ssh_agent_and_declared_names_only() {

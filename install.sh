@@ -18,6 +18,10 @@ if [ -z "$OMD_PYTHON" ] && command -v mise >/dev/null 2>&1; then
   candidate=$(mise which python3 2>/dev/null)
   usable "$candidate" && OMD_PYTHON=$candidate
 fi
+if [ -z "$OMD_PYTHON" ] && { [ "$(uname -s)" != Darwin ] || [ "$(uname -m)" != arm64 ]; }; then
+  echo "omd installer: Oh My Diff supports Apple Silicon macOS only" >&2
+  exit 1
+fi
 if [ -z "$OMD_PYTHON" ]; then
   echo "omd installer: Python 3.12 or newer is required (macOS ships 3.9); install one, for example with 'brew install python@3.12' or mise, and retry" >&2
   exit 1
@@ -73,7 +77,7 @@ PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 NOTICE_BYTES = 4096
 MAX_MEMBER_BYTES = 1_000_000_000
-NETWORK_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException)
+NETWORK_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLError, http.client.HTTPException)
 DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_WAIT = "Waiting for the background update check or download to finish…"
 BROKER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
@@ -343,8 +347,15 @@ def download_progress(copied, total):
 
 
 def fetch_bytes(url, limit):
-    with opened(url, 15) as response:
-        body = response.read(limit + 1)
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            with opened(url, 15) as response:
+                body = response.read(limit + 1)
+            break
+        except NETWORK_ERRORS as error:
+            if attempt == DOWNLOAD_ATTEMPTS or not retryable(error):
+                raise
+            time.sleep(attempt)
     if len(body) > limit:
         fail("release metadata exceeds its size limit")
     return body
@@ -606,14 +617,14 @@ def installed(result):
         say(f"  {paint('!', '33')} " + (f"codex on your PATH is {tilde(shadowing)}, not OMD's." if shadowing != "missing"
                                          else f"OMD isn't on your PATH: {tilde(result['bin_dir'])} is missing from it."))
         profile = tilde(result["shell_profile"]) if result["shell_profile"] else "your shell's startup file"
-        say(f"    Add this line to the end of {profile}, then open a new terminal, cd into a project and run codex:")
+        say(f"    Add this line to the end of {profile}, then open a new terminal and run codex:")
         say()
         say(f"      {result['path_line']}")
         say()
     elif result.get("path_added_to") or result.get("path_in"):
-        rows.insert(0, ("Start", "open a new terminal, cd into a project, then run codex"))
+        rows.insert(0, ("Start", "open a new terminal, then run codex"))
     else:
-        rows.insert(0, ("Start", "cd into a project, then run codex (run hash -r first in this terminal)"))
+        rows.insert(0, ("Start", "run codex (run hash -r first in this terminal)"))
     for label, text in rows:
         say(f"    {paint(f'{label:<9}', '2')}{text}")
     say()
@@ -1278,14 +1289,14 @@ def probe(args, root, current):
         result["withdrawn"] = {"version": record["version"], "run": "omd update" if result["available"] else
                                "omd update rollback" if (root / "previous").resolve() not in (current, root / "previous") else None
                                } if published and record["version"] in missing else None
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, *NETWORK_ERRORS) as error:
         return {"error": text(str(error), 300)}
     try:
         bundle = None if pin else mod_bundle(release_source(details.get("releases_url") or RELEASES_URL), record["version"],
                                              record.get("mods_bundle", {}).get("serial", 0))
         changed = bundle and mod_changes(current, record, bundle)
         result["mods"] = bundle | {"changed": changed} if changed else None
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, *NETWORK_ERRORS) as error:
         result["error"] = result["error"] or text(str(error), 300)
     return result
 

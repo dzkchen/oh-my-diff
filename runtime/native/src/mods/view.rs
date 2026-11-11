@@ -179,16 +179,17 @@ impl Views {
     }
 
     pub(super) fn progress(&self, owner: &Host, label: &str, text: &str) {
-        let lines = text
-            .split('\n')
+        let mut lines = text
+            .rsplit('\n')
             .map(|line| visible(line, 1024))
             .filter(|line| !line.is_empty())
+            .take(8)
             .collect::<Vec<_>>();
-        let start = lines.len().saturating_sub(8);
+        lines.reverse();
         self.update(owner, |state| {
             state.snapshot.progress = Some(ModPanel {
                 title: visible(label, 128),
-                lines: lines[start..].to_vec(),
+                lines,
             });
             true
         });

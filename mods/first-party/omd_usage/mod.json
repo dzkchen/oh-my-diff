@@ -1,24 +1,24 @@
 {
   "schema": 1,
   "id": "omd_usage",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "api": "1.0.0",
   "assets": ["cache_ttl.ts"],
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Usage dialog (Alt+a or /hud): context, cache, cost and quota for each request",
+  "description": "Usage dialog (Alt+a or /usage): context, cache, cost and quota for each request",
   "contributes": {
-    "commands": [{ "name": "hud", "description": "Open the usage dialog: context, cache, cost and quota for each request" }, { "name": "budget", "description": "Set a soft spending budget in USD that only warns; 0 removes it" }, { "name": "categories", "description": "Turn the per-role request breakdown on or off" }],
+    "commands": [{ "name": "usage", "description": "Open the usage dialog; budget USD sets a soft budget that only warns, roles on|off the per-role breakdown" }],
     "keys": [{ "key": "Alt+a", "description": "Open or close the usage dialog" }]
   },
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_usage" },
-  "capabilities": ["agents", "commands", "store", "terminal", "events", "model", "lifecycle", "middleware", "threads", "config", "account", "inventory"],
+  "capabilities": ["agents", "builtins", "commands", "store", "terminal", "events", "model", "lifecycle", "middleware", "threads", "config", "account", "inventory"],
   "subscriptions": {
     "channels": ["omd_usage/refresh"],
     "app": ["account/updated", "account/rateLimits/updated", "thread/settings/updated", "thread/tokenUsage/updated", "thread/reverted", "turn/plan/updated"]
   },
-  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1", "app_v1", "model_turn_interception_v1", "ui_controls_v1", "package_imports_v1", "package_text_assets_v1"] },
+  "compatibility": { "required_features": ["builtins_v1", "terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1", "app_v1", "model_turn_interception_v1", "ui_controls_v1", "package_imports_v1", "package_text_assets_v1"] },
   "settings_schema": {
     "type": "object",
     "properties": {

@@ -117,10 +117,10 @@ test('every dialog action ends in a refresh that changes the saved state, since 
   const open = { ...feed(start(), [['model_response', response('i1')]]), open: true };
   const task = hostCall => hostCall.operation === 'task.status' ? { ledger: { thread_id: 'lead', cost: null }, limits: {}, worker_limits: {} } : { delivered: 1, dropped: 0 };
   for (const argument of ['', 'refresh', 'expanded', 'compact', 'close', 'toggle']) {
-    const out = call(usageMod, { event: 'command', name: 'hud', payload: argument, state: open }, task);
+    const out = call(usageMod, { event: 'command', name: 'usage', payload: argument, state: open }, task);
     assert.deepEqual(out.calls.filter(item => item.operation === 'events.publish').map(item => item.arguments.channel), ['refresh'], argument);
   }
-  assert.equal(call(usageMod, { event: 'command', name: 'hud', payload: 'noop', state: open }, task).calls.length, 0);
+  assert.equal(call(usageMod, { event: 'command', name: 'usage', payload: 'noop', state: open }, task).calls.length, 0);
   const refresh = state => call(usageMod, { event: 'channel', payload: { channel: 'omd_usage/refresh', data: null, publisher: 'omd_usage' }, state }, task).state;
   const once = refresh(open);
   assert.notDeepEqual(refresh(once), once);
@@ -221,8 +221,15 @@ test('the budget counts spend that left the rolling window or settled late, warn
   assert.deepEqual([settled.state.hud.owed, settled.state.hud.shed], [[], 9]);
   assert.equal(notices(settled.calls).length, 1);
   assert.equal(call(usageMod, { event: 'model_response', payload: { ...pending, cost: { microusd: 9_000_000, basis: 'settled' } }, state: settled.state, settings }).state.hud.shed, 9);
-  const budget = value => call(usageMod, { event: 'command', name: 'budget', payload: value, state: null, settings: {} }).calls.map(item => item.operation);
+  const budget = value => call(usageMod, { event: 'command', name: 'usage', payload: `budget ${value}`, state: null, settings: {} }).calls.map(item => item.operation);
   assert.deepEqual([budget('Infinity'), budget('5')], [[], ['settings.write']]);
+});
+
+test('/usage codex closes the dialog and opens Codex\'s own usage menu', () => {
+  const out = call(usageMod, { event: 'command', name: 'usage', payload: 'codex', state: null, settings: {} }, ({ operation }) => operation === 'commands.invoke' ? { command: 'usage', result: { invoked: true } } : null);
+  assert.deepEqual(out.calls.find(item => item.operation === 'commands.invoke').arguments, { command: 'usage' });
+  assert.equal(out.value, null);
+  assert.equal(out.state.open, false);
 });
 
 test('the budget notice says how many requests had no price', () => {

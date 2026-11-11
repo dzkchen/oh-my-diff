@@ -27,11 +27,8 @@ pub fn directory() -> PathBuf {
 
 fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
     let path = path.canonicalize()?;
-    let root = path
-        .ancestors()
-        .find(|parent| parent.join(".git").exists())
-        .unwrap_or(&path);
-    let metadata = fs::metadata(root)?;
+    let root = crate::workspace::git_work_tree(&path).unwrap_or(path);
+    let metadata = fs::metadata(&root)?;
     let created = metadata
         .created()
         .ok()
@@ -42,7 +39,7 @@ fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
     }
     let key =
         crate::sha256_hex(format!("{}:{}:{created:?}", metadata.dev(), metadata.ino()).as_bytes());
-    Ok((root.to_owned(), key))
+    Ok((root, key))
 }
 
 fn acquire(path: &Path, exclusive: bool) -> io::Result<Lease> {

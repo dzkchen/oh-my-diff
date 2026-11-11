@@ -189,13 +189,13 @@ const parts: Record<string, (env: Env) => Part> = {
   },
   tokens: ({ data, ascii }) => data.tokens.requests ? [{ text: ascii ? `in ${count(data.tokens.input)} out ${count(data.tokens.output)}` : `↑${count(data.tokens.input)} ↓${count(data.tokens.output)}` },
     ...data.tokens.reasoning ? [{ text: ` r${count(data.tokens.reasoning)}`, tone: 'muted' as const }] : [], ...data.tokens.cached ? [{ text: ` c${count(data.tokens.cached)}`, tone: 'muted' as const }] : []] : null,
-  cache: ({ data, now }) => data.cache.ratio === null ? null : [{ text: `cache ${Math.round(data.cache.ratio * 100)}%` },
+  cache: ({ data, now }) => data.cache.ratio === null || data.tokens.requests < 2 ? null : [{ text: `cache ${Math.round(data.cache.ratio * 100)}%` },
     ...data.cache.expires !== null && data.cache.expires > now ? [{ text: ` ${span(data.cache.expires - now)}`, tone: 'muted' as const }] : []],
   cost: env => {
     const { billed, estimate, included, pending, unknown } = env.data.cost;
     const total = Math.max(env.settled ?? 0, billed + estimate);
-    if (!total && !included && !pending && !unknown) return null;
-    if (!total) return [{ text: included ? 'included' : pending ? 'cost pending' : 'cost unknown', tone: 'muted' }];
+    if (!total && !included && !pending) return null;
+    if (!total) return [{ text: included ? 'included' : 'cost pending', tone: 'muted' }];
     return [{ text: `${estimate ? '~' : ''}${usd(total)}`, tone: level(env, 'cost', total) }, ...estimate && !billed ? [{ text: ' est.', tone: 'muted' as const }] : [],
       ...pending || unknown ? [{ text: ' +?', tone: 'muted' as const }] : []];
   },

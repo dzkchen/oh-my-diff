@@ -34,7 +34,7 @@ nothing to migrate. OMD is in beta and runs only on Apple Silicon macOS.
 
 A mod is a small TypeScript program. It can add a slash command, give the model a new tool, add context to a request,
 draw a status line, panel or dialog, or react when the agent runs a tool. Before a mod runs, OMD shows its source,
-license and the permissions it asks for, and you can turn any mod off at any time.
+license and the permissions it asks for. You control which mods run, subject to any administrator policy.
 
 [How OMD works](docs/how-omd-works.md) · [Trust and permissions](docs/trust-and-permissions.md) ·
 [Write your first mod](docs/mod-authors/first-mod.md)
@@ -59,7 +59,7 @@ Experimental mods add other providers, a workspace dock, `/undo` and language-se
   <a href="docs/use-other-providers.md#use-claude"><kbd>Claude (experimental)</kbd></a> &nbsp;
   <a href="docs/use-other-providers.md#use-cursor"><kbd>Cursor (experimental)</kbd></a> &nbsp;
   <a href="docs/use-other-providers.md#use-an-api-key-or-another-provider"><kbd>OpenAI and Anthropic API keys (experimental)</kbd></a> &nbsp;
-  <a href="docs/use-with-t3-code.md"><kbd>T3 Code</kbd></a> &nbsp;
+  <a href="docs/use-with-t3-code.md"><kbd>T3 Code (experimental)</kbd></a> &nbsp;
   <kbd>+ any app that runs <code>codex app-server</code></kbd>
 </p>
 
@@ -70,7 +70,7 @@ Codex while it's on 0.167.x) and Python 3.12 or later. The [install guide](docs/
 
 ### OMD+ (recommended)
 
-The mod host plus the [included mods](docs/collection.md), with more on the way.
+The mod host plus the [included mods](docs/collection.md).
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
@@ -93,16 +93,15 @@ You can switch later by running the other command.
 codex
 ```
 
-Codex asks you to sign in if you haven't before, then shows the OMD logo. Type `/mods` to see which mods are on and
+Run it in any folder. Codex asks you to sign in if you haven't before, then shows the OMD logo. Type `/mods` to see which mods are on and
 to turn others on or off; Esc closes it. Outside
 `codex`, run `omd` for a short summary of the commands that install, update and manage mods. If `codex` still starts
 plain Codex, see [troubleshooting](docs/troubleshooting.md).
 
 ## Status
 
-OMD is in beta and under active development, so expect bugs and rough edges. Mod API `1.0.0` is stable, and the parts
-marked experimental can change ([support policy](docs/support.md)). Many of the mods I'm developing are experimental
-and still have bugs to fix: open a PR if you're feeling up to it!
+OMD is in beta; expect bugs. Mod API `1.0.0` is stable, while entries marked experimental can change
+([support policy](docs/support.md)). Experimental mods need more testing and fixes; contributions are welcome.
 
 ## Community and support
 

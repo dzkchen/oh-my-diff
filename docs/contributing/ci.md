@@ -1,7 +1,7 @@
 # How CI checks a change
 
-What the GitHub workflows run on a pull request, every night and for a release, and why a pull request runs only
-part of it. For the test commands you run locally, see [tests/README.md](../../tests/README.md).
+Pull requests run selected checks; nightly and release workflows run the full suite. The tables below list each
+workflow and job. For local test commands, see [tests/README.md](../../tests/README.md).
 
 ## Workflows
 
@@ -34,8 +34,8 @@ selects it, Markdown copies included, to detect patch drift.
 The selection compares the merge commit with its first parent and examines both paths of a rename.
 
 The native job runs on macOS. It replays the patch and fails on drift, runs Rustfmt, and compiles `codex-cli`,
-`codex-exec` and every crate the nightly tests, including their tests. Native tests run only in the nightly and release
-workflows, together with full validation.
+`codex-exec` and all crates tested by the nightly, including their test targets. Native tests run only in the nightly
+and release workflows, together with full validation.
 
 ## Validation
 

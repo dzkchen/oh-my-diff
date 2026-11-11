@@ -48,11 +48,24 @@ test('two results on one line both get a row', () => {
 
 test('the servers card shows why a running server is degraded', () => {
   const servers = [
-    { adapter: 'python', server: 'pyright', status: 'synced', reason: 'degraded: workspace_index_unavailable', documents: 2, count: 0, errors: [] },
-    { adapter: 'typescript', server: 'tsserver', status: 'synced', reason: '', documents: 1, count: 0, errors: [] },
+    { adapter: 'python', server: 'pyright', status: 'synced', recovery: 'degraded', reason: 'degraded: workspace_index_unavailable', documents: 2, count: 0, errors: [] },
+    { adapter: 'typescript', server: 'tsserver', status: 'synced', recovery: null, reason: '', documents: 1, count: 0, errors: [] },
   ];
   const published = run('channel', undefined, { channel: 'omd_lsp_sync/status', publisher: 'omd_lsp_sync', data: servers }, { open: true });
   const view = run('terminal', undefined, { ledger: null }, published.state).value;
   const lines = walk(view).filter(node => node.type === 'line').map(node => node.spans.map(span => span.text).join(''));
   assert.deepEqual(lines, ['python pyright · degraded: workspace index unavailable', 'typescript tsserver']);
+  assert.deepEqual(walk(view).filter(node => node.type === 'line').map(node => node.spans.at(-1).tone), ['attention', 'success']);
+});
+
+test('server warning tone follows recovery state independently of reason wording', () => {
+  const servers = [
+    { adapter: 'python', server: 'pyright', status: 'synced', recovery: 'degraded', reason: 'Index coverage limited', documents: 2, errors: [] },
+    { adapter: 'typescript', server: 'tsserver', status: 'synced', recovery: 'resynced', reason: 'degraded: old wording', documents: 1, errors: [] },
+  ];
+  const published = run('channel', undefined, { channel: 'omd_lsp_sync/status', publisher: 'omd_lsp_sync', data: servers }, { open: true });
+  const view = run('terminal', undefined, { ledger: null }, published.state).value;
+  const lines = walk(view).filter(node => node.type === 'line');
+  assert.deepEqual(lines.map(node => node.spans.map(span => span.text).join('')), ['python pyright · Index coverage limited', 'typescript tsserver']);
+  assert.deepEqual(lines.map(node => node.spans.at(-1).tone), ['attention', 'success']);
 });

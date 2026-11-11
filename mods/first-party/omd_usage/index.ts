@@ -37,6 +37,7 @@ const EMPTY: Snapshot = { open: false, ledger: null, error: null, allowance: nul
 const SPARK = ' .:-=+*#';
 
 export default function activate(api: ModAPI) {
+  api.builtins({ commands: { replace: { usage: 'usage' } } });
   const categories = api.settings.categories === true;
   const budget = typeof api.settings.budget_usd === 'number' && api.settings.budget_usd > 0 ? api.settings.budget_usd : null;
   const saved = (): Snapshot => {
@@ -296,52 +297,57 @@ export default function activate(api: ModAPI) {
         const label = fit(`${isLead(h, entry) ? 'chat' : entry.agent ? `agent ${entry.agent.slice(0, 6)}` : entry.kind} #${entry.billing ?? '-'}.${entry.attempt} ${entry.served ?? entry.requested} ${entry.tokens ? `in ${count(entry.tokens.input ?? 0)} c ${count(entry.tokens.cached ?? 0)} out ${count(entry.tokens.output ?? 0)}` : 'no usage'} ${item.usd !== null ? usd(item.usd) : ''} ${item.kind}${entry.revision ? ` r${entry.revision}` : ''} ${span(now - entry.at)}`, 120);
         return { value: entry.key.slice(0, 120), label: visible(label, 120), spans: [{ text: visible(label, 120), tone: item.kind === 'unknown' || item.kind === 'pending' ? 'attention' : 'normal' }] };
       });
-      if (rows.length) children.push({ type: 'list', id: 'omd_usage_requests', label: 'Recent requests', rows, height: Math.min(10, rows.length), action: { command: 'omd_usage:hud', args: 'noop' } });
+      if (rows.length) children.push({ type: 'list', id: 'omd_usage_requests', label: 'Recent requests', rows, height: Math.min(10, rows.length), action: { command: 'usage', args: 'noop' } });
     }
     return children;
   };
 
   const view = (ledger: Ledger | null): TerminalPatch => {
     const state = saved(); const now = Date.now();
-    const keybindings = { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } };
+    const keybindings = { 'Alt+a': { command: 'usage', args: 'toggle' } };
     if (!state.open) return { keybindings };
     const effective = ledger ?? state.ledger;
     const children: TerminalComponent[] = [
       ...(state.error ? [text('omd_usage_error', 'Status', state.error)] : []),
       text('omd_usage_keys', 'Keys', 'Esc or Alt+a closes · Tab moves between buttons · Enter presses one'),
       ...expanded({ ...state, ledger: effective }, now),
-      { type: 'button', id: 'omd_usage_refresh', label: 'Refresh usage', text: 'Refresh', action: { command: 'omd_usage:hud', args: 'refresh' } },
-      { type: 'button', id: 'omd_usage_detail', label: state.hud.detail ? 'Show compact usage' : 'Show expanded usage', text: state.hud.detail ? 'Compact' : 'Expanded', action: { command: 'omd_usage:hud', args: state.hud.detail ? 'compact' : 'expanded' } },
-      { type: 'button', id: 'omd_usage_close', label: 'Close usage', text: 'Close', action: { command: 'omd_usage:hud', args: 'close' } },
+      { type: 'button', id: 'omd_usage_refresh', label: 'Refresh usage', text: 'Refresh', action: { command: 'usage', args: 'refresh' } },
+      { type: 'button', id: 'omd_usage_detail', label: state.hud.detail ? 'Show compact usage' : 'Show expanded usage', text: state.hud.detail ? 'Compact' : 'Expanded', action: { command: 'usage', args: state.hud.detail ? 'compact' : 'expanded' } },
+      { type: 'button', id: 'omd_usage_codex', label: "Open Codex's usage menu", text: 'Codex usage', action: { command: 'usage', args: 'codex' } },
+      { type: 'button', id: 'omd_usage_close', label: 'Close usage', text: 'Close', action: { command: 'usage', args: 'close' } },
     ];
     return { sites: { dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_usage_dialog', label: 'Usage', title: 'Usage', children }] } }, keybindings };
   };
 
+  const write = (values: { [key: string]: Json }, done: string) => {
+    const written = api.host.tryCall('settings.write', { values });
+    return { display: written.ok ? `${done}; applies when the mod reloads at the next turn` : `Usage settings unchanged: ${written.error}` };
+  };
   // Slash commands can't read task status, so they hop to this mod's own native channel handler.
-  api.command('hud', value => {
-    const argument = String(value ?? '').trim();
+  api.command('usage', value => {
+    const [argument = '', choice = ''] = String(value ?? '').trim().split(/\s+/);
+    if (argument === 'budget') {
+      return choice !== '' && Number.isFinite(Number(choice)) && Number(choice) >= 0 ? write({ budget_usd: Number(choice) }, Number(choice) ? `Soft budget ${usd(Number(choice))}` : 'Soft budget removed')
+        : { display: `usage: /usage budget USD (0 removes it; now ${budget === null ? 'none' : usd(budget)})` };
+    }
+    if (argument === 'roles') {
+      return choice === 'on' || choice === 'off' ? write({ categories: choice === 'on' }, `Category drilldown ${choice}`)
+        : { display: `usage: /usage roles on|off (now ${categories ? 'on' : 'off'})` };
+    }
     const state = saved();
+    if (argument === 'codex') {
+      save({ ...state, open: false });
+      const invoked = api.host.tryCall('commands.invoke', { command: 'usage' });
+      if (invoked.ok && !('status' in invoked.value)) return null;
+      return { display: `Codex's usage menu is unavailable: ${invoked.ok ? 'declined' : invoked.error}` };
+    }
     if (argument === 'noop') return null;
     if (argument === 'close' || argument === 'toggle' && state.open) save({ ...state, open: false });
     else if (argument === 'expanded' || argument === 'compact') save({ ...state, hud: { ...state.hud, detail: argument === 'expanded' } });
     else save({ ...state, open: true });
     const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });
     return asked.ok ? null : { display: `Usage refresh unavailable: ${asked.error}` };
-  }, { description: 'Open or refresh the usage dialog (/omd_usage:hud toggle or Alt+a toggles it)' });
-  const write = (values: { [key: string]: Json }, done: string) => {
-    const written = api.host.tryCall('settings.write', { values });
-    return { display: written.ok ? `${done}; applies when the mod reloads at the next turn` : `Usage settings unchanged: ${written.error}` };
-  };
-  api.command('budget', value => {
-    const amount = String(value ?? '').trim();
-    return amount !== '' && Number.isFinite(Number(amount)) && Number(amount) >= 0 ? write({ budget_usd: Number(amount) }, Number(amount) ? `Soft budget ${usd(Number(amount))}` : 'Soft budget removed')
-      : { display: `usage: /omd_usage:budget USD (0 removes it; now ${budget === null ? 'none' : usd(budget)})` };
-  }, { description: 'Set a soft spending budget in USD for warnings only (0 removes it)' });
-  api.command('categories', value => {
-    const choice = String(value ?? '').trim();
-    return choice === 'on' || choice === 'off' ? write({ categories: choice === 'on' }, `Category drilldown ${choice}`)
-      : { display: `usage: /omd_usage:categories on|off (now ${categories ? 'on' : 'off'})` };
-  }, { description: 'Turn the assembled-request category drilldown on or off (it runs on the request path)' });
+  }, { description: 'Usage dialog: context, cache, cost and quota; budget USD sets a soft budget, roles on|off the per-role breakdown, codex opens Codex\'s usage menu', args_hint: '[toggle|budget USD|roles on|off|codex]' });
   api.on('channel', ({ channel }) => {
     if (channel !== 'omd_usage/refresh') return;
     const fresh = capture(saved());

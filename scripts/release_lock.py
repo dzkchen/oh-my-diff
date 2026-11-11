@@ -7,18 +7,17 @@ import subprocess
 import tarfile
 
 from scripts import install_support as support
-from scripts import mods_lock, profiles, build_provenance
-from scripts.build_provenance import BINARIES
+from scripts import mods_lock, profiles, build_provenance, release_artifacts
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/release.lock.json"
 TARGET = "aarch64-apple-darwin"
-HARDENED = ("codex", "omd-mod", "omd", "omd-contract", "omd-broker")
 ENTITLEMENTS = ROOT / "runtime/hardened-entitlements.plist"
 AUTHOR_ARCHIVE = "mod-api.tgz"
 SOURCES = (
     "scripts/build_provenance.py",
+    "scripts/release_artifacts.py",
     "plugins/release-files.json",
     "scripts/profiles.py", "scripts/release_lock.py",
     "scripts/package.py", "scripts/install_support.py",
@@ -78,12 +77,13 @@ def build(artifact_dir, package_mode=False, version=None):
         raise ValueError("curated catalog does not match the active release pin")
     plugins = sorted(support.plugin_sources()["plugins"])
     artifacts = {}
-    for name in BINARIES:
+    for artifact in release_artifacts.ARTIFACTS:
+        name = artifact.name
         path = artifact_dir / name
         if not path.is_file() or "arm64" not in subprocess.check_output(
                 ["file", "-b", str(path)], text=True):
             raise ValueError(f"missing Apple Silicon release artifact: {name}")
-        if name in HARDENED and not hardened(path):
+        if artifact.hardened and not hardened(path):
             raise ValueError(f"release artifact lacks the hardened runtime signature: {name}")
         artifacts[name] = {"sha256": support.digest(path), "bytes": path.stat().st_size}
     archive = artifact_dir / AUTHOR_ARCHIVE

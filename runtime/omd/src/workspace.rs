@@ -76,10 +76,10 @@ pub struct WorkspaceTransactionResult {
 }
 
 pub type BackupSink<'a> =
-    dyn Fn(&BTreeMap<String, Option<Vec<u8>>>) -> io::Result<serde_json::Value> + 'a;
+    dyn Fn(&BTreeMap<&str, Option<&[u8]>>) -> io::Result<serde_json::Value> + 'a;
 
 fn fingerprint_matches(
-    expected: &Option<Fingerprint>,
+    expected: Option<&Fingerprint>,
     entry: &Option<(Vec<u8>, fs::Permissions)>,
     metadata: Option<(u64, u64)>,
 ) -> bool {
@@ -247,45 +247,53 @@ impl WorkspaceTransaction {
         let writes = self
             .writes
             .iter()
-            .map(|(name, text)| (name.clone(), text.as_bytes().to_vec()))
-            .chain(self.byte_writes.clone())
+            .map(|(name, text)| (name.as_str(), text.as_bytes()))
+            .chain(
+                self.byte_writes
+                    .iter()
+                    .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+            )
             .collect::<BTreeMap<_, _>>();
         if writes.len() != self.writes.len() + self.byte_writes.len() {
             return Err(invalid("duplicate write"));
         }
-        let deletes = self.deletes.iter().cloned().collect::<BTreeSet<_>>();
+        let deletes = self
+            .deletes
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
         if deletes.len() != self.deletes.len()
-            || deletes.iter().any(|name| writes.contains_key(name))
+            || deletes.iter().any(|name| writes.contains_key(*name))
         {
             return Err(invalid("duplicate or overlapping delete"));
         }
-        let mut affected = writes.keys().cloned().collect::<BTreeSet<_>>();
-        affected.extend(deletes.iter().cloned());
+        let mut affected = writes.keys().copied().collect::<BTreeSet<_>>();
+        affected.extend(deletes.iter().copied());
         let mut rename_sources = BTreeSet::new();
         let mut rename_destinations = BTreeSet::new();
         for rename in &self.renames {
             if rename.old == rename.new
-                || !rename_sources.insert(rename.old.clone())
-                || !rename_destinations.insert(rename.new.clone())
+                || !rename_sources.insert(rename.old.as_str())
+                || !rename_destinations.insert(rename.new.as_str())
             {
                 return Err(invalid("duplicate or overlapping rename"));
             }
-            affected.insert(rename.old.clone());
-            affected.insert(rename.new.clone());
+            affected.insert(rename.old.as_str());
+            affected.insert(rename.new.as_str());
         }
         if affected.is_empty()
             || affected.len() > 128
             || affected.len() != self.expected.len()
             || affected
                 .iter()
-                .any(|name| !self.expected.contains_key(name))
-            || writes.values().map(Vec::len).sum::<usize>() > 4 * 1024 * 1024
+                .any(|name| !self.expected.contains_key(*name))
+            || writes.values().map(|bytes| bytes.len()).sum::<usize>() > 4 * 1024 * 1024
             || rename_sources
                 .iter()
-                .any(|name| rename_destinations.contains(name) || deletes.contains(name))
+                .any(|name| rename_destinations.contains(*name) || deletes.contains(*name))
             || rename_destinations
                 .iter()
-                .any(|name| writes.contains_key(name) || deletes.contains(name))
+                .any(|name| writes.contains_key(*name) || deletes.contains(*name))
         {
             return Err(invalid("transaction scope or size invalid"));
         }
@@ -301,14 +309,14 @@ impl WorkspaceTransaction {
             if observed_bytes > 4 * 1024 * 1024 {
                 return Err(invalid("transaction source bytes exceed limit"));
             }
-            let expected = self.expected.get(name).cloned().flatten();
-            if !fingerprint_matches(&expected, &entry, stat_fingerprint(repository, name)?) {
+            let expected = self.expected.get(*name).and_then(Option::as_ref);
+            if !fingerprint_matches(expected, &entry, stat_fingerprint(repository, name)?) {
                 return Err(invalid(format!("stale expected version for {name}")));
             }
-            before.insert(name.clone(), entry);
+            before.insert(*name, entry);
         }
         for name in &deletes {
-            if before.get(name).is_none_or(Option::is_none) {
+            if before.get(*name).is_none_or(Option::is_none) {
                 return Err(invalid("delete target must exist"));
             }
         }
@@ -316,9 +324,7 @@ impl WorkspaceTransaction {
             Some(sink) => Some(sink(
                 &before
                     .iter()
-                    .map(|(name, entry)| {
-                        (name.clone(), entry.as_ref().map(|(bytes, _)| bytes.clone()))
-                    })
+                    .map(|(name, entry)| (*name, entry.as_ref().map(|(bytes, _)| bytes.as_slice())))
                     .collect(),
             )?),
             None => None,
@@ -335,8 +341,8 @@ impl WorkspaceTransaction {
                 .map(|(bytes, _)| crate::sha256_hex(bytes))
         };
         for rename in &self.renames {
-            if before.get(&rename.old).is_none_or(Option::is_none)
-                || before.get(&rename.new).is_some_and(Option::is_some)
+            if before.get(rename.old.as_str()).is_none_or(Option::is_none)
+                || before.get(rename.new.as_str()).is_some_and(Option::is_some)
             {
                 return Err(invalid(
                     "rename source must exist and destination must be absent",
@@ -359,7 +365,7 @@ impl WorkspaceTransaction {
                     .map(|(_, permissions)| permissions.clone())
                     .unwrap_or_else(|| fs::Permissions::from_mode(0o644));
                 write_version(repository, name, bytes, &permissions)?;
-                applied.insert(name.clone(), Some(crate::sha256_hex(bytes)));
+                applied.insert(*name, Some(crate::sha256_hex(bytes)));
             }
             for name in &deletes {
                 if !active() {
@@ -370,7 +376,7 @@ impl WorkspaceTransaction {
                 }
                 let (parent, target) = open_parent(repository, name)?;
                 unlinkat(&parent, &target, AtFlags::empty())?;
-                applied.insert(name.clone(), None);
+                applied.insert(*name, None);
             }
             for rename in &self.renames {
                 if !active() {
@@ -381,7 +387,7 @@ impl WorkspaceTransaction {
                 let (old_parent, old_name) = open_parent(repository, &rename.old)?;
                 let (new_parent, new_name) = open_parent(repository, &rename.new)?;
                 let expected_old = applied
-                    .get(&rename.old)
+                    .get(rename.old.as_str())
                     .cloned()
                     .unwrap_or_else(|| before_hash(&rename.old));
                 if read_version(repository, &rename.old, 4 * 1024 * 1024)?
@@ -393,8 +399,8 @@ impl WorkspaceTransaction {
                     return Err(invalid("workspace changed before rename"));
                 }
                 rename_exclusive(&old_parent, &old_name, &new_parent, &new_name)?;
-                applied.insert(rename.old.clone(), None);
-                applied.insert(rename.new.clone(), expected_old);
+                applied.insert(rename.old.as_str(), None);
+                applied.insert(rename.new.as_str(), expected_old);
             }
             Ok(())
         })();
@@ -428,7 +434,7 @@ impl WorkspaceTransaction {
         let mut files = BTreeMap::new();
         for name in &affected {
             files.insert(
-                name.clone(),
+                (*name).to_owned(),
                 read_version(repository, name, 4 * 1024 * 1024)?
                     .as_ref()
                     .map(|(bytes, _)| crate::sha256_hex(bytes)),
@@ -554,11 +560,46 @@ pub fn observe_workspace_changes(repository: &Path, observed: bool) {
     }
 }
 
+pub fn git_work_tree(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|directory| directory.join(".git").exists())
+        .map(Path::to_path_buf)
+}
+
+pub fn agent_writable(path: &Path, launch: &Path) -> bool {
+    path.starts_with(git_work_tree(launch).as_deref().unwrap_or(launch))
+}
+
+pub fn workspace_scoped(launch: &Path) -> bool {
+    let home = std::env::var_os("HOME").and_then(|home| Path::new(&home).canonicalize().ok());
+    scoped_under(launch, home.as_deref())
+}
+
+fn scoped_under(launch: &Path, home: Option<&Path>) -> bool {
+    git_work_tree(launch).is_some()
+        || (launch.parent().is_some() && !home.is_some_and(|home| home.starts_with(launch)))
+}
+
+pub fn workspace_refused(operation: &str, arguments: &serde_json::Value, launch: &Path) -> bool {
+    operation.starts_with("workspace.")
+        && !(arguments.get("root").is_some()
+            && matches!(
+                operation,
+                "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.transaction"
+            ))
+        && !workspace_scoped(launch)
+}
+
+pub fn inside_repository(path: &Path, launch: &Path) -> bool {
+    path.starts_with(launch) && git_work_tree(launch).is_some()
+}
+
 pub fn change_baseline(repository: &Path) -> Option<io::Result<WorkspaceIndex>> {
-    OBSERVED
+    (OBSERVED
         .lock()
         .is_ok_and(|repositories| repositories.contains(repository))
-        .then(|| WorkspaceIndex::capture(repository, INDEX_FILES, INDEX_BYTES))
+        && workspace_scoped(repository))
+    .then(|| WorkspaceIndex::capture(repository, INDEX_FILES, INDEX_BYTES))
 }
 
 pub fn record_workspace_change(
@@ -1255,6 +1296,18 @@ mod transaction_tests {
     use std::cell::Cell;
 
     #[test]
+    fn workspaces_outside_git_are_scoped_unless_they_hold_home() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        assert!(!scoped_under(Path::new("/"), None));
+        assert!(!scoped_under(&root, Some(&root)));
+        assert!(!scoped_under(&root, Some(&root.join("me"))));
+        assert!(scoped_under(&root.join("project"), Some(&root.join("me"))));
+        fs::create_dir(root.join(".git")).unwrap();
+        assert!(scoped_under(&root, Some(&root.join("me"))));
+    }
+
+    #[test]
     fn workspace_index_rehashes_same_size_edits() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
@@ -1532,15 +1585,18 @@ mod transaction_tests {
     }
 
     #[test]
-    fn transaction_deletes_with_stat_precondition_and_backup() {
+    fn transaction_mixes_text_and_binary_writes_with_delete_and_backup() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
         fs::write(root.join("keep.txt"), "keep\n").unwrap();
         fs::write(root.join("drop.txt"), "drop\n").unwrap();
         let (size, mtime_ms) = stat_fingerprint(&root, "drop.txt").unwrap().unwrap();
         let saved = std::cell::RefCell::new(BTreeMap::new());
-        let sink = |files: &BTreeMap<String, Option<Vec<u8>>>| {
-            *saved.borrow_mut() = files.clone();
+        let sink = |files: &BTreeMap<&str, Option<&[u8]>>| {
+            *saved.borrow_mut() = files
+                .iter()
+                .map(|(name, bytes)| ((*name).to_owned(), bytes.map(<[u8]>::to_vec)))
+                .collect();
             Ok(serde_json::json!({"backup": "ok"}))
         };
         let transaction = WorkspaceTransaction {
@@ -1553,8 +1609,10 @@ mod transaction_tests {
                     "keep.txt".into(),
                     Some(Fingerprint::Hash(crate::sha256_hex(b"keep\n"))),
                 ),
+                ("binary.bin".into(), None),
             ]),
             writes: BTreeMap::from([("keep.txt".into(), "kept\n".into())]),
+            byte_writes: BTreeMap::from([("binary.bin".into(), vec![0, 255, 128])]),
             deletes: vec!["drop.txt".into()],
             backup: true,
             ..Default::default()
@@ -1564,9 +1622,16 @@ mod transaction_tests {
             .unwrap();
         assert!(!root.join("drop.txt").exists());
         assert_eq!(fs::read_to_string(root.join("keep.txt")).unwrap(), "kept\n");
+        assert_eq!(fs::read(root.join("binary.bin")).unwrap(), [0, 255, 128]);
+        assert_eq!(
+            result.files["binary.bin"],
+            Some(crate::sha256_hex([0, 255, 128]))
+        );
         assert_eq!(result.files["drop.txt"], None);
         assert_eq!(result.backup, Some(serde_json::json!({"backup": "ok"})));
         assert_eq!(saved.borrow()["drop.txt"], Some(b"drop\n".to_vec()));
+        assert_eq!(saved.borrow()["keep.txt"], Some(b"keep\n".to_vec()));
+        assert_eq!(saved.borrow()["binary.bin"], None);
         let stale = WorkspaceTransaction {
             expected: BTreeMap::from([(
                 "keep.txt".into(),

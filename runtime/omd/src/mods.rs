@@ -3334,19 +3334,23 @@ mod reload_tests {
         let loaded = host.loaded["hello"].clone();
         // Trust pinned outside the store turns the code cache off, also for a reused inspection.
         assert!(loaded.code_cache.is_none());
-        host.check_callback_authority(&loaded).unwrap();
+        host.check_callback_authority(&loaded.package.id, &loaded.selection)
+            .unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
             host.brokered.as_mut().unwrap().0 = Instant::now();
-            host.check_callback_authority(&loaded).unwrap();
+            host.check_callback_authority(&loaded.package.id, &loaded.selection)
+                .unwrap();
         }
         assert_eq!(store::READS.get(), reads);
-        host.check_callback_authority(&loaded).unwrap();
+        host.check_callback_authority(&loaded.package.id, &loaded.selection)
+            .unwrap();
         std::fs::write(package.join("index.ts"), "export default () => {}").unwrap();
-        host.check_callback_authority(&loaded).unwrap();
+        host.check_callback_authority(&loaded.package.id, &loaded.selection)
+            .unwrap();
         host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
         assert!(
-            host.check_callback_authority(&loaded)
+            host.check_callback_authority(&loaded.package.id, &loaded.selection)
                 .unwrap_err()
                 .to_string()
                 .contains("source_changed")
@@ -3445,25 +3449,41 @@ type Authority = (
 );
 
 impl Loaded {
-    /// This activation for another host: the inspection without this host's UI or telemetry.
     fn inspected(&self) -> Self {
         Self {
+            state: self.state.clone(),
             ui: None,
+            ..self.invocation()
+        }
+    }
+
+    fn invocation(&self) -> Self {
+        Self {
+            package: self.package.clone(),
+            selection: self.selection.clone(),
+            source: self.source.clone(),
+            assets: self.assets.clone(),
+            request_metadata: self.request_metadata.clone(),
+            session_key: self.session_key.clone(),
+            code_cache: self.code_cache.clone(),
+            adapter: self.adapter.clone(),
+            state: Value::Null,
+            state_revision: self.state_revision,
+            registered_state: self.registered_state.clone(),
+            ui: self.ui.clone(),
             ui_state: Value::Null,
             ui_revision: 0,
             ui_clears: 0,
             command_view: None,
+            registrations: self.registrations.clone(),
+            source_use: self.source_use.clone(),
+            unused_grants: self.unused_grants.clone(),
+            unused_environment: self.unused_environment.clone(),
+            withheld: self.withheld.clone(),
+            settings_file: self.settings_file.clone(),
+            error: self.error.clone(),
             telemetry: ModTelemetry::default(),
-            ..self.clone()
         }
-    }
-
-    fn invocation(&mut self) -> Self {
-        let state = std::mem::take(&mut self.state);
-        let telemetry = std::mem::take(&mut self.telemetry);
-        let copy = self.clone();
-        (self.state, self.telemetry) = (state, telemetry);
-        copy
     }
 
     fn set_state(&mut self, state: Value) {
@@ -3987,12 +4007,12 @@ fn invoke(
             if generation != runtime.generation {
                 return Err(failure("stale_mod_generation"));
             }
-            let loaded = runtime
+            let selection = runtime
                 .loaded
                 .get(id)
-                .cloned()
+                .map(|loaded| Arc::clone(&loaded.selection))
                 .ok_or_else(|| failure("mod_disabled"))?;
-            runtime.check_callback_authority(&loaded)?;
+            runtime.check_callback_authority(id, &selection)?;
             runtime.session_key(id, thread.as_deref())
         })?
     } else {
@@ -5983,14 +6003,14 @@ impl ModHost {
     }
 
     /// Between broker refreshes a passed check stands until `mods.json` or the authority inventory changes.
-    fn check_callback_authority(&mut self, loaded: &Loaded) -> Result<()> {
+    fn check_callback_authority(&mut self, id: &str, selection: &ModSelection) -> Result<()> {
         let key = (
-            loaded.package.id.clone(),
-            loaded.selection.path.clone(),
-            loaded.selection.scope.clone(),
+            id.to_owned(),
+            selection.path.clone(),
+            selection.scope.clone(),
         );
         let modified = configuration_stamp(&self.store.root.join("mods.json"));
-        let grant = store::grant(&json!(loaded.selection));
+        let grant = store::grant(&json!(selection));
         if let Some((at, stamp, sha256, granted)) = self.callback_verdicts.get(&key)
             && modified.is_some()
             && self.fresh_broker() == Some(*at)
@@ -6001,7 +6021,7 @@ impl ModHost {
         {
             return Ok(());
         }
-        self.check_callback_authority_now(loaded)?;
+        self.check_callback_authority_now(id, selection)?;
         if self.configuration_stamp.is_some()
             && let Some(at) = self.fresh_broker()
         {
@@ -6020,7 +6040,11 @@ impl ModHost {
             .map(|(at, _, _)| *at)
     }
 
-    fn check_callback_authority_now(&mut self, loaded: &Loaded) -> Result<()> {
+    fn check_callback_authority_now(
+        &mut self,
+        id: &str,
+        invoked_selection: &ModSelection,
+    ) -> Result<()> {
         let (configuration_sha256, configuration) = self.callback_configuration();
         let authority = self.authority(&configuration_sha256)?;
         let hash = self.authority_hash(&configuration_sha256, &authority);
@@ -6038,10 +6062,7 @@ impl ModHost {
             None => Vec::new(),
         };
         let mut administered = selections.len();
-        let configured = self
-            .tier_selections
-            .get(&loaded.package.id)
-            .unwrap_or(&loaded.selection);
+        let configured = self.tier_selections.get(id).unwrap_or(invoked_selection);
         // An unchanged authority inventory cannot introduce a different precedence winner.
         let overrides = self.current_overrides();
         let unchanged = hash == self.configuration_sha256
@@ -6054,7 +6075,7 @@ impl ModHost {
                 config
                     .mods
                     .iter()
-                    .filter(|selection| !unchanged || selection.path == loaded.selection.path)
+                    .filter(|selection| !unchanged || selection.path == invoked_selection.path)
                     .cloned(),
             ),
             _ if configured.scope == MANAGED_SCOPE && managed.is_some() => (),
@@ -6064,9 +6085,9 @@ impl ModHost {
             administered = selections
                 .iter()
                 .take(administered)
-                .filter(|selection| selection.path == loaded.selection.path)
+                .filter(|selection| selection.path == invoked_selection.path)
                 .count();
-            selections.retain(|selection| selection.path == loaded.selection.path);
+            selections.retain(|selection| selection.path == invoked_selection.path);
         }
         for selection in &mut selections {
             selection.enabled = overrides.enabled(selection);
@@ -6082,7 +6103,7 @@ impl ModHost {
                 store::verified_package(path).map(|(package, hash)| (package, String::new(), hash))
             },
         )?;
-        let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
+        let Some((selection, _, _)) = selected.get(id) else {
             return Err(failure("callback_authority_changed"));
         };
         if selection.path != configured.path
@@ -6130,7 +6151,7 @@ impl ModHost {
         if generation != self.generation {
             return Err(failure("stale_mod_generation: retry on the next turn"));
         }
-        let Some(mut loaded) = self.loaded.get_mut(id).map(Loaded::invocation) else {
+        let Some(mut loaded) = self.loaded.get(id).map(Loaded::invocation) else {
             return Err(
                 match self
                     .rejected
@@ -6145,7 +6166,7 @@ impl ModHost {
         if let Some(error) = &loaded.error {
             return Err(failure(format!("mod_failed: {error}")));
         }
-        self.check_callback_authority(&loaded)?;
+        self.check_callback_authority(&loaded.package.id, &loaded.selection)?;
         loaded.session_key = self.session_key(id, thread)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let mut migrate = false;
@@ -6274,7 +6295,7 @@ impl ModHost {
                 return Err(failure("terminal_capability_denied"));
             }
             if !patch.is_null() {
-                parsed_command = Some(Arc::new(ModViewPatch::parse(patch.clone())?));
+                parsed_command = Some(Arc::new(ModViewPatch::parse(patch)?));
             }
         }
         let replaces = |point: &str| {
@@ -6393,7 +6414,7 @@ impl ModHost {
         {
             return Err(failure("stale_mod_generation: retry on the next turn"));
         }
-        self.check_callback_authority(&invocation.loaded)?;
+        self.check_callback_authority(&invocation.loaded.package.id, &invocation.loaded.selection)?;
         if invocation.authority_current
             && !invocation.loaded.selection.authority_current()
             && invocation
@@ -6899,7 +6920,7 @@ impl ModHost {
         } else {
             let parsed = validated
                 .map(Ok)
-                .unwrap_or_else(|| ModViewPatch::parse(patch.clone()))?;
+                .unwrap_or_else(|| ModViewPatch::parse(&patch))?;
             self.valid_views.insert(id.to_owned(), patch.clone());
             Some((id, parsed))
         };
@@ -6951,7 +6972,7 @@ impl ModHost {
                 }
                 Ok(value) => match accepted_patch.take_if(|(owner, _)| *owner == id) {
                     Some((_, patch)) => Ok(patch),
-                    None => ModViewPatch::parse(value.clone()).inspect(|_| {
+                    None => ModViewPatch::parse(&value).inspect(|_| {
                         self.valid_views.insert(id.clone(), value);
                     }),
                 },
@@ -6970,7 +6991,7 @@ impl ModHost {
                 {
                     diagnostics.push(format!("{id}: {error}"));
                 }
-                ModViewPatch::parse(self.valid_views.get(&id).cloned().ok_or(error)?)
+                ModViewPatch::parse(self.valid_views.get(&id).ok_or(error)?)
             });
             let Ok(mut patch) = parsed else {
                 continue;

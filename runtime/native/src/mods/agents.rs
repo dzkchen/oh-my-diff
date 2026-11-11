@@ -642,7 +642,7 @@ impl Notifier {
                 &mut runtime,
                 &notifier.host,
                 &notifier.views,
-                core.terminal_owner.is_some(),
+                core.terminal_owner.as_deref(),
                 "agent_end",
                 lead.ledger(),
                 || lead.session.task.check_active().is_ok(),

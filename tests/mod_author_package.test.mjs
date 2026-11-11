@@ -6,6 +6,18 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { invoke, state, text } from '../mods/author/testing.mjs';
 
+test('importing the SDK testing helpers preserves the process warning handler', () => {
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+import assert from 'node:assert/strict';
+const warning = process.emitWarning;
+await import(${JSON.stringify(new URL('../mods/author/testing.mjs', import.meta.url).href)});
+assert.equal(process.emitWarning, warning);
+`], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+});
+
 test('author check enforces the host entrypoint and aggregate package limits without TypeScript', { skip: !process.env.OMD_MOD_BIN && 'needs OMD_MOD_BIN' }, () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-limits-'));
   const api = JSON.parse(readFileSync(new URL('../mods/package.json', import.meta.url))).version;

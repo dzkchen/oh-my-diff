@@ -9,9 +9,9 @@ type Density = 'sparse' | 'normal' | 'dense';
 type Prefs = { scene: string; speed: Speed; density: Density; calm: boolean; image: Sample | null; family: string };
 type Area = { x: number; y: number; columns: number; rows: number };
 type View = { columns: number; rows: number; reduced: boolean; color: boolean; colors: string; phase: string | null; surface: string | null; chat: Area | null; raster: string };
-type State = { inactive?: boolean; prefs: Prefs | null; view: View | null; run: number; origin?: number; frame?: number; switched: { from: string; at: number } | null; busy: boolean; ended?: number; keep?: { id: string; cell: string } };
+type State = { inactive?: boolean; idle?: boolean; prefs: Prefs | null; view: View | null; run: number; origin?: number; frame?: number; switched: { from: string; at: number } | null; busy: boolean; ended?: number; keep?: { id: string; cell: string } };
 type Remembered = { selected?: string; query?: string };
-type Tick = { run: number; drawn: number; width: number; height: number; look: string; misses: number };
+type Tick = { run: number; drawn: number; rest?: number; width: number; height: number; look: string; misses: number };
 
 const DEFAULTS: Prefs = { scene: 'ember', speed: 'normal', density: 'normal', calm: true, image: null, family: '' };
 const SPEEDS: Speed[] = ['normal', 'slow', 'off'];
@@ -28,6 +28,7 @@ const BEHIND = 0.55;
 const BEHIND_CAP = 64;
 const WELCOME_CAP = 150;
 const BAND_CELLS = 14_000;
+const BLIT_BYTES = 768 * 1024;
 const STARTUP_MS = 3000;
 const RETRY_MS = 50;
 const FLARE_MS = 1800;
@@ -35,6 +36,8 @@ const HIDDEN_MS = 1000;
 const STILL_POLL_MS = 1500;
 const PAUSE_POLL_MS = 400;
 const UNKNOWN_RETRIES = 40;
+const WAIT_MS = 2000;
+const WAKE_MS = 30_000;
 const SAMPLE = { columns: 60, rows: 24 };
 const TABS = [{ id: 'scenes', title: 'Scenes' }, { id: 'motion', title: 'Motion' }, { id: 'terminal', title: 'Terminal' }];
 const encoder = new TextEncoder();
@@ -59,10 +62,11 @@ const stepsFor = (prefs: Prefs, terminal: Terminal, topic: Topic, family = prefs
   steps(terminal, topic, palette(prefs), prefs.scene === 'off' ? SCENES[0].id : prefs.scene, family || DEFAULT_FONT);
 const rasterFor = (thread: string | null | undefined) => thread ? `omd_theme_${thread.toLowerCase().replace(/[^a-z0-9]/g, '')}`.slice(0, 48) : RASTER;
 const digest = (text: string) => [...text].reduce((hash, char) => Math.imul(hash ^ char.charCodeAt(0), 0x01000193), 0x811c9dc5) >>> 0;
-const tickKey = (tick: Tick) => ['f', tick.run, tick.drawn, tick.width, tick.height, tick.look, tick.misses].join('.');
+const tickKey = (tick: Tick) => ['f', tick.run, tick.rest === undefined ? tick.drawn : `${tick.drawn}r${tick.rest}`, tick.width, tick.height, tick.look, tick.misses].join('.');
 const parseTick = (key: string): Tick | null => {
   const [tag, run, drawn, width, height, look, misses] = key.split('.');
-  return tag === 'f' ? { run: Number(run), drawn: Number(drawn), width: Number(width), height: Number(height), look, misses: Number(misses) } : null;
+  const [frame, rest] = (drawn ?? '').split('r');
+  return tag === 'f' ? { run: Number(run), drawn: Number(frame), ...rest ? { rest: Number(rest) } : {}, width: Number(width), height: Number(height), look, misses: Number(misses) } : null;
 };
 const restarted = (reply: { ok: true; value: { frame: number; queued: number } | { status: string } } | { ok: false }) =>
   reply.ok && !('status' in reply.value) && reply.value.frame === 1 && reply.value.queued > 0;
@@ -74,7 +78,7 @@ const bands = (rect: Rect): Rect[] => {
 };
 
 export default function activate(api: ModAPI) {
-  api.builtins({ commands: { replace: { theme: 'scenes' } } });
+  api.builtins({ commands: { replace: { theme: 'theme' } } });
 
   const read = (): State => ({ prefs: null, view: null, run: 0, switched: null, busy: false, ...api.state.get() as Partial<State> | null });
   const write = (patch: Partial<State>) => api.state.set({ ...read(), ...patch } as unknown as Json);
@@ -95,14 +99,24 @@ export default function activate(api: ModAPI) {
     api.host.tryCall('store.put', { key: 'prefs', value: prefs as unknown as { [key: string]: Json }, expected_revision: stored()?.revision ?? null, scope: 'user' });
   };
   const schedule = (tick: Tick, delay: number) => {
-    if (!read().inactive && read().prefs?.scene !== 'off') api.host.call('events.schedule', { key: tickKey(tick), delay_ms: Math.max(16, Math.round(delay)) });
+    if (read().prefs?.scene !== 'off') api.host.tryCall('events.schedule', { key: tickKey(tick), delay_ms: Math.max(16, Math.round(delay)) });
   };
   const first = (run: number): Tick => ({ run, drawn: -1, width: 0, height: 0, look: '0', misses: 0 });
-  const restart = (resize = false) => {
+  const bump = (resize: boolean) => {
     const s = read();
     const run = Math.max(Date.now(), s.run + 1);
     write({ run, origin: resize ? s.origin ?? s.run : run, frame: resize ? s.frame : -1 });
-    api.host.tryCall('events.publish', { channel: 'wake', data: run });
+    return run;
+  };
+  const restart = (resize = false) => {
+    const run = Math.max(Date.now(), read().run + 1);
+    if (api.host.tryCall('events.publish', { channel: 'wake', data: run }).ok) bump(resize);
+  };
+  const active = () => {
+    const s = read();
+    if (!s.inactive || !s.idle) return;
+    write({ inactive: false, idle: false });
+    schedule(first(bump(true)), 16);
   };
   const begin = () => {
     const run = Math.max(Date.now(), read().run + 1);
@@ -123,10 +137,11 @@ export default function activate(api: ModAPI) {
   api.on('focus', ({ focused, idle }) => {
     const inactive = !focused || idle === true;
     const wasInactive = read().inactive;
-    write({ inactive });
+    write({ inactive, idle: focused && idle === true });
     if (wasInactive && !inactive) restart(true);
   });
   api.on('turn_start', () => {
+    active();
     const s = read();
     if (s.busy) return;
     const shown = s.prefs && !still(s) ? Math.max(1, Math.floor((Date.now() - (s.origin ?? s.run)) / (s.prefs.speed === 'slow' ? SLOW_MS : FRAME_MS))) : s.frame;
@@ -134,21 +149,25 @@ export default function activate(api: ModAPI) {
   });
   api.on('turn_end', () => {
     write({ busy: false, ended: Date.now() });
+    active();
   });
 
   api.on('timer', ({ key }) => {
     const tick = parseTick(key);
     const s = read();
-    if (!tick || tick.run < s.run || !s.prefs || s.inactive) return;
+    if (!tick || tick.run < s.run || !s.prefs) return;
     const now = Date.now();
     const again = (delay: number, next: Partial<Tick> = {}) => schedule({ ...first(tick.run), ...next }, delay);
     if (tick.run > s.run) {
-      if (tick.misses < UNKNOWN_RETRIES) again(RETRY_MS, { misses: tick.misses + 1 });
+      if (now - tick.run < WAKE_MS) again(tick.misses < UNKNOWN_RETRIES ? RETRY_MS : WAIT_MS, { misses: tick.misses + 1 });
+      return;
+    }
+    if (s.inactive) {
+      again(WAIT_MS);
       return;
     }
     if (!drawable(s)) {
-      const starting = now - s.run < STARTUP_MS;
-      if (starting || s.prefs.scene !== 'off' && (!s.view || !blocked(s.view))) again(starting ? RETRY_MS : HIDDEN_MS);
+      again(now - s.run < STARTUP_MS ? RETRY_MS : s.view && blocked(s.view) ? WAIT_MS : HIDDEN_MS);
       return;
     }
     try {
@@ -170,7 +189,8 @@ export default function activate(api: ModAPI) {
     const period = prefs.speed === 'slow' ? SLOW_MS : FRAME_MS;
     const origin = s.origin ?? s.run;
     const drawn = Math.max(s.frame ?? -1, tick.drawn);
-    const k = quiet ? 0 : paused(s) && drawn > 0 ? drawn : Math.max(1, Math.floor((now - origin) / period));
+    const rest = same ? tick.rest : undefined;
+    const k = rest !== undefined ? tick.drawn : quiet ? 0 : paused(s) && drawn > 0 ? drawn : Math.max(1, Math.floor((now - origin) / period));
     const poll = quiet ? STILL_POLL_MS : PAUSE_POLL_MS;
     const shown = { width, height, look };
     const frame = (n: number) => {
@@ -179,45 +199,60 @@ export default function activate(api: ModAPI) {
       const canvas = place(art, width, height, chat.x, chat.y);
       return behind(s) ? shade(canvas, BEHIND, BEHIND_CAP) : shade(canvas, 0, WELCOME_CAP);
     };
-    if ((quiet || paused(s)) && same && tick.drawn === k) {
+    let reset = false;
+    let bytes = 0;
+    if ((quiet || paused(s)) && same && tick.drawn === k && rest === undefined) {
       const cell = { x: 0, y: 0, width: 1, height: 1 };
       const id = [tick.run, k, width, height, look].join('.');
       const keep = s.keep?.id === id ? s.keep : { id, cell: pack(frame(k), cell) };
       if (keep !== s.keep) write({ keep });
       const kept = api.host.tryCall('terminal.blit', { key: view.raster, rect: cell, packed: keep.cell });
-      again(poll, { ...shown, drawn: restarted(kept) ? -1 : k });
-      return;
+      reset = restarted(kept);
+      if (!reset) {
+        again(poll, { ...shown, drawn: k });
+        return;
+      }
+      bytes += keep.cell.length;
     }
     const next = frame(k);
-    const partial = !quiet && same && tick.drawn > 0;
-    const rects = partial ? changed(frame(tick.drawn), next, BAND_CELLS) : bands({ x: 0, y: 0, width, height });
-    let lost = false;
-    for (const band of rects) {
-      const reply = api.host.tryCall('terminal.blit', { key: view.raster, rect: band, packed: pack(next, band) });
+    let partial = !reset && (rest !== undefined || !quiet && same && tick.drawn > 0);
+    let rects = rest !== undefined ? bands({ x: 0, y: rest, width, height: height - rest })
+      : partial ? changed(frame(tick.drawn), next, BAND_CELLS) : bands({ x: 0, y: 0, width, height });
+    while (rects.length) {
+      const band = rects.shift()!;
+      const packed = pack(next, band);
+      bytes += packed.length;
+      if (bytes > BLIT_BYTES) {
+        again(RETRY_MS, { ...shown, drawn: k, rest: band.y });
+        return;
+      }
+      const reply = api.host.tryCall('terminal.blit', { key: view.raster, rect: band, packed });
       if (reply.ok && !('status' in reply.value)) {
-        lost ||= partial && restarted(reply);
+        if (partial && restarted(reply)) {
+          rects = bands({ x: 0, y: 0, width, height });
+          partial = false;
+        }
         continue;
       }
       const misses = tick.misses + 1;
       again(reply.ok && 'status' in reply.value ? Math.max(HIDDEN_MS, reply.value.retry_after_ms) : misses > UNKNOWN_RETRIES ? HIDDEN_MS : RETRY_MS, { ...shown, misses });
       return;
     }
-    if (!lost && paused(s) && s.frame !== k) write({ frame: k });
-    again(quiet || paused(s) ? poll : origin + (k + 1) * period - now, { ...shown, drawn: lost ? -1 : k });
+    if (paused(s) && s.frame !== k) write({ frame: k });
+    again(quiet || paused(s) ? poll : origin + (k + 1) * period - now, { ...shown, drawn: k });
   };
 
   api.on('terminal', (input): TerminalPatch | null => {
     const s = read();
     const client = input.client;
     if (client && s.inactive !== (client.active === false)) {
-      write({ inactive: client.active === false });
+      write({ inactive: client.active === false, idle: false });
       if (s.inactive && client.active !== false) restart(true);
     }
     const view: View | null = client ? { columns: client.columns, rows: client.rows, reduced: client.reduced_motion, color: client.graphics !== 'text', colors: client.colors ?? 'truecolor',
       phase: input.presentation?.phase ?? null, surface: input.presentation?.surface ?? null, chat: client.chat ?? null,
       raster: s.view?.raster ?? rasterFor(input.ledger?.thread_id ?? input.presentation?.thread_id ?? `fresh${s.run}`) } : s.view;
     if (JSON.stringify(view) !== JSON.stringify(s.view)) write({ view });
-    if (s.view && view && drawable({ ...s, view }) && (view.columns !== s.view.columns || view.rows !== s.view.rows || JSON.stringify(view.chat) !== JSON.stringify(s.view.chat))) restart(true);
     const prefs = s.prefs;
     if (!prefs || !view) return null;
     if (!drawable({ ...s, view })) return {};
@@ -246,7 +281,7 @@ export default function activate(api: ModAPI) {
     const { selected, query } = remembered();
     return {
       title: 'Theme', subtitle: clip([`Showing: ${showing} · motion ${prefs.speed}`, notice].filter(Boolean).join('\n'), 2000),
-      tabs: TABS, search: true, action: { command: 'scenes', args: 'panel' }, close_args: 'closed', ...selected ? { selected } : {}, ...query ? { query } : {},
+      tabs: TABS, search: true, action: { command: 'theme', args: 'panel' }, close_args: 'closed', ...selected ? { selected } : {}, ...query ? { query } : {},
       items: [
         item({ id: 'syntax', tab: 'scenes', kind: 'action', label: 'Syntax colours…', description: "Codex's own syntax-highlighting theme picker", detail: 'Opens the /theme picker Codex ships; this mod takes over /theme while it is on.' }),
         ...scenes,
@@ -263,7 +298,7 @@ export default function activate(api: ModAPI) {
   const stepsPanel = (prefs: Prefs, terminal: Terminal | null, topic: Topic, notice: string | null): TerminalPanel => {
     const shown = (terminal ? [terminal] : TERMINALS).map(name => stepsFor(prefs, name, topic));
     return {
-      title: terminal ? shown[0].title : LABELS[topic], action: { command: 'scenes', args: `steps ${terminal ?? 'all'} ${topic}` },
+      title: terminal ? shown[0].title : LABELS[topic], action: { command: 'theme', args: `steps ${terminal ?? 'all'} ${topic}` },
       subtitle: clip([...shown.map(entry => terminal ? entry.text : `${entry.title}\n${entry.text}`), notice].filter(Boolean).join('\n\n'), 2000),
       items: [item({ id: 'copy', kind: 'action', label: 'Copy to the clipboard', description: topic === 'shader' ? 'Copies the shader' : 'Copies the lines above; Esc returns to Theme' })],
     };
@@ -307,7 +342,7 @@ export default function activate(api: ModAPI) {
     if (id === 'font') save({ ...prefs, family: fontName(value) });
     return null;
   };
-  api.command('scenes', input => {
+  api.command('theme', input => {
     const raw = String(input ?? '').trim();
     const [, verb, id, value] = raw.match(/^(\S*)\s*(\S*)\s*([\s\S]*)$/)!;
     const prefs = read().prefs ?? load();

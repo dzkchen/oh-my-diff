@@ -45,7 +45,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       for (const [path, reason] of Object.entries(inventory.optional)) {
         process.stderr.write(`Not executed (optional/manual): ${path}: ${reason}\n`);
       }
-      // Import-time lookup of omd-runner: a missing runner fails here once, not in every test file.
       const { runner } = await import('../tests/mod_runner.mjs');
       const engine = join(dirname(runner), 'omd-mod');
       const env = { ...process.env, OMD_TEST_RUNNER: runner, ...(!process.env.OMD_MOD_BIN && existsSync(engine) ? { OMD_MOD_BIN: engine } : {}) };

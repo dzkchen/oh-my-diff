@@ -92,8 +92,8 @@ complete terminal contribution, or `{terminal: null}` to clear it.
   [`api.uiState`](state-and-storage.md#session-ui-state-apiuistate).
 - Other owners refresh at different times when a command returns a view. Commands without `terminal` keep their
   synchronous preview behavior.
-- Moving a dialog from durable state to a command view moves only its transient presentation fields to
-  `api.uiState`; persisted settings, replay and module lifetimes are unchanged.
+- When moving a dialog to a command view, put its temporary presentation fields in `api.uiState`. Keep persisted
+  settings as they are; replay behavior and module lifetimes do not change.
 
 ### `config.describe`
 

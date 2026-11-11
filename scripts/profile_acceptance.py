@@ -9,13 +9,10 @@ import tempfile
 import time
 import tomllib
 
-from scripts import install_support as support, profiles
+from scripts import acceptance_environment, install_support as support, profiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROVIDER_ENV_PREFIXES = ("OPENAI_", "ANTHROPIC_", "GOOGLE_", "GEMINI_", "AZURE_", "AWS_",
-                         "MISTRAL_", "GROQ_", "CEREBRAS_", "DEEPSEEK_", "TOGETHER_",
-                         "OPENROUTER_", "HF_")
 
 
 def expected_defaults(profile="full"):
@@ -28,17 +25,6 @@ def call(arguments, env, parse=True):
     if result.returncode:
         raise RuntimeError(f"command failed: {arguments[:4]}: {(result.stderr or result.stdout)[-1200:]}")
     return json.loads(result.stdout) if parse else result.stdout.strip()
-
-
-def isolated_environment(base, home, upstream, source=None):
-    inherited = os.environ if source is None else source
-    env = {name: value for name, value in inherited.items()
-           if not name.startswith(("CODEX_", "OMD_", *PROVIDER_ENV_PREFIXES))}
-    env.update(HOME=str(home), CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home),
-               TMPDIR=str(base), XDG_CONFIG_HOME=str(base / "xdg-config"),
-               XDG_DATA_HOME=str(base / "xdg-data"), XDG_CACHE_HOME=str(base / "xdg-cache"))
-    env["PATH"] = str(upstream.parent) + os.pathsep + env.get("PATH", "")
-    return env
 
 
 def managed_recovery(base, profile, store, env, command, mode):
@@ -104,7 +90,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         session.write_text('{"type":"preserve-session"}\n')
         shared_hashes = {str(path.relative_to(home)): support.digest(path)
                          for path in (sentinel, auth, session)}
-        env = isolated_environment(base, home, upstream)
+        env = acceptance_environment.isolated_environment(base, home, upstream)
         observations = {}
 
         def command(profile, *args):

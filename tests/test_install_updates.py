@@ -369,7 +369,7 @@ class UpdateSelection(unittest.TestCase):
         self.assertIn("can't start until the authority broker is pinned", broken)
         self.assertIn("Fix      omd-package broker pin", broken)
         self.assertNotIn("Start", broken)
-        start = "Start    open a new terminal, cd into a project, then run codex"
+        start = "Start    open a new terminal, then run codex"
         for extra in ({"path_added_to": str(self.home / ".zshrc")}, {"path_in": str(self.home / ".zshrc")}):
             opened = summary(**extra)
             self.assertIn(start, opened)
@@ -875,6 +875,29 @@ class UpdateSelection(unittest.TestCase):
                 self.module.download("https://example.test/a", expected, target)
             self.assertEqual(len(attempts), 1)
         self.assertFalse(target.exists())
+
+    def test_release_metadata_retries_transient_errors_but_not_missing_files(self):
+        module, attempts = installer(), []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *arguments): return False
+            def read(self, size): return b'{"ok": true}'
+
+        def opened(url, timeout):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise ssl.SSLError("record layer failure")
+            if len(attempts) == 2:
+                raise module.http.client.IncompleteRead(b"")
+            return Response()
+        with patch.object(module, "opened", opened), patch.object(module.time, "sleep"):
+            self.assertEqual(module.fetch_json("https://example.test/m", 100), {"ok": True})
+            self.assertEqual(len(attempts), 3)
+            missing = urllib.error.HTTPError("https://example.test/m", 404, "Not Found", {}, None)
+            with patch.object(module, "opened", side_effect=missing) as refused, self.assertRaises(urllib.error.HTTPError):
+                module.fetch_json("https://example.test/m", 100)
+            self.assertEqual(refused.call_count, 1)
 
     def test_http_errors_name_the_requested_url_not_the_signed_redirect(self):
         signed = "https://objects.githubusercontent.com/asset?X-Amz-Signature=secret"

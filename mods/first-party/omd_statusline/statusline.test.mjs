@@ -76,13 +76,13 @@ test('child tool results do not schedule refreshes without a session', () => {
   assert.ok(lead.calls.some(item => item.operation === 'events.schedule' && item.arguments.key === 'due' && item.arguments.delay_ms === 2000));
 });
 
-test('cost follows the ledger basis: included on the ChatGPT plan, unknown when unpriced', () => {
+test('cost follows the ledger basis: included on the ChatGPT plan, hidden when unpriced', () => {
   const settings = { preset: 'custom', layout: 'provider cost' };
   const plan = host({ 'app.request': args => args.method === 'config/read' ? { config: {} } : { rateLimits: { planType: 'plus' } } });
   const included = [['model_response', response('r1', { cost: { microusd: 0, basis: 'included_subscription' } })]];
   const unpriced = [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]];
   assert.match(lines(view(feed(started(), included), settings))[0], /included/);
-  assert.match(lines(view(feed(settled(plan), unpriced), settings))[0], /unknown/, 'a plan type does not make an unpriced request included');
+  assert.doesNotMatch(lines(view(feed(settled(plan), unpriced), settings))[0], /included|cost unknown/, 'a plan type does not make an unpriced request included');
 });
 
 test('user scripts get session JSON on stdin and only safe styled text reaches the view', () => {
@@ -115,7 +115,7 @@ test('user scripts get session JSON on stdin and only safe styled text reaches t
 
 test('a panel action after the UI state was cleared edits the saved settings and clips long text values', () => {
   const settings = { preset: 'custom', layout: 'model git', thresholds: `context=${'7'.repeat(2040)}` };
-  const edited = call({ event: 'command', name: 'edit', payload: 'panel glyphs ascii', ui_state: null, settings }, host({ 'terminal.panel': () => ({ shown: true }) }));
+  const edited = call({ event: 'command', name: 'statusline', payload: 'panel glyphs ascii', ui_state: null, settings }, host({ 'terminal.panel': () => ({ shown: true }) }));
   assert.deepEqual([edited.ui.draft.layout, edited.ui.draft.glyphs], ['model git', 'ascii']);
   const panel = edited.calls.findLast(item => item.operation === 'terminal.panel').arguments;
   assert.equal(panel.items.find(item => item.id === 'thresholds').value.length, 2000);
@@ -123,7 +123,7 @@ test('a panel action after the UI state was cleared edits the saved settings and
 
 test('/statusline github says when the layout or setting keeps pull request and CI hidden', () => {
   const answer = host({ 'credentials.request': () => ({ status: 'completed' }) });
-  const saved = settings => call({ event: 'command', name: 'edit', payload: 'github', settings }, answer).value.display;
+  const saved = settings => call({ event: 'command', name: 'statusline', payload: 'github', settings }, answer).value.display;
   assert.match(saved({}), /saved.*no pr or ci segment.*detailed preset/);
   assert.match(saved({ preset: 'detailed' }), /refresh now\.$/);
   assert.match(saved({ preset: 'custom', layout: 'model pr' }), /refresh now\.$/);
@@ -187,7 +187,7 @@ test('a failed-mod alert survives any width that fits it and other segments drop
   const state = feed(started(), [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]]);
   const identity = { codex_version: '0.167.0', omd_version: '1', install_profile: 'full', mode: 'omd', mods: { installed: 6, enabled: 5, active: 4, failed: 1 } };
   const narrow = columns => lines(view(state, { preset: 'custom', layout: 'model cost omd' }, { identity, client: { kind: 'terminal', columns, rows: 40 } }))[0];
-  assert.match(narrow(160), /gpt-6\.1-sol · cost unknown · 1 failed · \/omd \(4 mods on\)/);
+  assert.match(narrow(160), /gpt-6\.1-sol · 1 failed · \/omd \(4 mods on\)/);
   assert.match(narrow(30), /^1 failed · \/omd/);
   assert.equal(narrow(20), '1 failed · /omd');
   const busy = rows(view(state, { preset: 'custom', layout: 'model git changes context limits cost tokens cache omd' }, { identity, client: { kind: 'terminal', columns: 400, rows: 40 } })).at(-1).spans;
@@ -208,21 +208,21 @@ test('the editor keeps an unsaved draft on reopen, saves from both tabs, preview
   const answer = host({ 'terminal.panel': () => ({ shown: true }) });
   const panel = output => output.calls.findLast(item => item.operation === 'terminal.panel').arguments;
   const state = started();
-  const edited = call({ event: 'command', name: 'edit', payload: 'panel glyphs ascii', state, ui_state: null }, answer);
-  const reopened = call({ event: 'command', name: 'edit', payload: '', state, ui_state: edited.ui }, answer);
+  const edited = call({ event: 'command', name: 'statusline', payload: 'panel glyphs ascii', state, ui_state: null }, answer);
+  const reopened = call({ event: 'command', name: 'statusline', payload: '', state, ui_state: edited.ui }, answer);
   assert.equal(reopened.ui.draft.glyphs, 'ascii');
   assert.match(panel(reopened).subtitle, /Unsaved changes/);
   assert.deepEqual(panel(reopened).items.filter(item => item.label.startsWith('Save')).map(item => [item.tab, item.label]),
     [['settings', 'Save (unsaved changes)'], ['segments', 'Save (unsaved changes)']]);
-  const clean = call({ event: 'command', name: 'edit', payload: '', state, ui_state: null }, answer);
+  const clean = call({ event: 'command', name: 'statusline', payload: '', state, ui_state: null }, answer);
   assert.doesNotMatch(panel(clean).subtitle, /Unsaved/);
   assert.match(panel(clean).subtitle, /left \(\d+%\)/, 'context shows sample data before any response');
   assert.equal(panel(clean).items.find(item => item.id === 'segment:context').label, 'Context window left');
-  const moved = call({ event: 'command', name: 'edit', payload: 'panel up:context', state, ui_state: clean.ui }, answer);
+  const moved = call({ event: 'command', name: 'statusline', payload: 'panel up:context', state, ui_state: clean.ui }, answer);
   assert.equal(moved.ui.draft.layout, 'model context tier limits cost cache git omd');
-  const later = call({ event: 'command', name: 'edit', payload: 'panel down:omd', state, ui_state: moved.ui }, answer);
+  const later = call({ event: 'command', name: 'statusline', payload: 'panel down:omd', state, ui_state: moved.ui }, answer);
   assert.equal(later.ui.draft.layout, moved.ui.draft.layout);
-  const saved = call({ event: 'command', name: 'edit', payload: 'panel save', state, ui_state: moved.ui }, answer);
+  const saved = call({ event: 'command', name: 'statusline', payload: 'panel save', state, ui_state: moved.ui }, answer);
   assert.deepEqual(saved.calls.find(item => item.operation === 'settings.write').arguments.values, { preset: 'custom', layout: 'model context tier limits cost cache git omd' });
 });
 
@@ -271,7 +271,7 @@ test('the default layout follows the Codex tui.status_line until the layout is c
   assert.equal(plain.state.seed, 'git context omd', 'context is always kept because the stock indicator is hidden');
   assert.equal(lines(view({ ...state, context: { ...state.context, used: 12_000, window: 272_000, at: NOW } }))[0], 'gpt-6.1-sol · ████████ 260k left (100%)');
   assert.equal(lines(view({ ...state, context: { ...state.context, used: 12_000, window: 272_000, at: NOW } }, { preset: 'compact', glyphs: 'ascii', bars: false }))[0], 'gpt-6.1-sol | 260k left (100%)');
-  const opened = call({ event: 'command', name: 'edit', payload: '', state, ui_state: null }, host({ 'terminal.panel': () => ({ shown: true }) }));
+  const opened = call({ event: 'command', name: 'statusline', payload: '', state, ui_state: null }, host({ 'terminal.panel': () => ({ shown: true }) }));
   assert.match(opened.calls.find(item => item.operation === 'terminal.panel').arguments.subtitle, /Layout from your Codex tui\.status_line/);
 });
 

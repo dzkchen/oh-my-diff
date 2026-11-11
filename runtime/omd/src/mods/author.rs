@@ -762,7 +762,7 @@ impl ModHost {
                         ..ModInvokeOptions::default()
                     },
                 )?;
-                ModViewPatch::parse(view.clone())?;
+                ModViewPatch::parse(&view)?;
                 let parsed = ModView::parse(view.clone())?;
                 if kind == "terminal_mount" {
                     return Ok(view);

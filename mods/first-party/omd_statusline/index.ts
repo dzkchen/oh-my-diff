@@ -13,7 +13,7 @@ export default function activate(api: ModAPI) {
   const config = settings(api.settings);
   const configured = scripts(config.scripts);
   const indicator = layout(config, configured.scripts.map(script => script.id)).some(line => line.includes('context'));
-  api.builtins({ surfaces: { disable: ['status_line', ...indicator ? ['context_indicator' as const] : []] }, commands: { replace: { statusline: 'edit' } } });
+  api.builtins({ surfaces: { disable: ['status_line', ...indicator ? ['context_indicator' as const] : []] }, commands: { replace: { statusline: 'statusline' } } });
 
   const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
   const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -413,7 +413,7 @@ export default function activate(api: ModAPI) {
         ...index >= 0 && index < order.length - 1 ? [{ id: `down:${id}`, tab: 'segments', label: `Move later: ${name(id)}`, kind: 'action' as const }] : []];
     };
     return {
-      title: 'Status line', search: true, action: { command: 'edit', args: 'panel' },
+      title: 'Status line', search: true, action: { command: 'statusline', args: 'panel' },
       subtitle: [configured.error ?? state.notice, dirty && 'Unsaved changes: Save keeps them, Discard changes drops them',
         state.draft.preset === 'auto' && data.seed !== null && 'Layout from your Codex tui.status_line',
         `Preview (${state.draft.placement} the composer; sample values where no data has arrived yet):`, ...drawn.length ? drawn : ['Nothing to show']]
@@ -436,7 +436,7 @@ export default function activate(api: ModAPI) {
   };
 
   const HELP = 'usage: /statusline [github|refresh]';
-  api.command('edit', input => {
+  api.command('statusline', input => {
     const [verb = '', ...rest] = String(input ?? '').trim().split(/\s+/).filter(Boolean);
     if (verb === 'github') {
       const listed = api.host.tryCall('credentials.list', null);

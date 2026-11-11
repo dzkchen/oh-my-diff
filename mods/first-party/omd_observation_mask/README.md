@@ -22,7 +22,7 @@ isn't trusted yet stays off.
 
 ## Use it
 
-You don't need to run anything. `/mask` shows how many outputs it hid and in how many batches, about how many tokens
+You don't need to run anything. `/hidden_outputs` shows how many outputs it hid and in how many batches, about how many tokens
 each request no longer resends, how much is waiting for the next batch, and how often something else changed the start
 of the prompt.
 
@@ -32,7 +32,7 @@ The model reads a hidden output with `mod_omd_observation_mask_recall {call_id}`
 ### Hide outputs only when continuing
 
 Set `mode` to `continue` in `/mods` and enable `omd_continue`; OMD+ doesn't enable it, and without it continue mode hides
-nothing. `/mask` says so until a `/continue` has run in the thread. Ordinary requests then keep new outputs in full.
+nothing. `/hidden_outputs` says so until a `/continue` has run in the thread. Ordinary requests then keep new outputs in full.
 A successful `/continue [note]` hides an eligible batch only after the estimated cache lifetime has elapsed.
 `/continue --compact [note]` requests the same masking without a cache estimate. It still obeys `keep_recent`,
 `min_bytes` and `batch_bytes`; it does not call a summarizing model or native `/compact`.
@@ -42,11 +42,12 @@ in this mode. At most 16 unmasked originals from the latest history view are che
 still applies the history eligibility rules. An original that fails the read check stays visible and is skipped on later continuations.
 The model receives guidance to recall a specific missing fact in small pages and verify
 current files and processes before repeating actions. User messages, instructions and tool calls stay in context.
-The placeholders stay identical on later requests; another continuation is needed to hide another batch. Resume
-keeps installed placeholders but drops a continuation that had not reached its first model request.
+The mod sends the same placeholders on later requests; another continuation is needed to hide another batch.
+Resuming a thread preserves stored placeholders, but drops a pending continuation that had not
+reached its first model request.
 
 Cache lifetime is an estimate, not a cache probe. On a ChatGPT plan, with local providers and when the lifetime is
-unknown there is no estimate, so only `/continue --compact` hides outputs, and `/mask` says so. `auto` uses a provider-reported lifetime, retaining it on reads
+unknown there is no estimate, so only `/continue --compact` hides outputs, and `/hidden_outputs` says so. `auto` uses a provider-reported lifetime, retaining it on reads
 for the same provider, route, credential and model. For OpenAI API responses with cache activity it otherwise uses
 30 minutes. OpenAI subscription and unpriced responses, local providers, and unknown lifetimes are skipped.
 An explicit `cache_ttl_minutes` overrides the estimate except for local providers. `720` is OpenAI's 12-hour cache:
@@ -84,12 +85,12 @@ still compact the conversation. This mode does not prepare a summary in the back
 
 Fractional values are rounded down; a negative or non-number value uses the default.
 
-A larger `batch_bytes` breaks the cache less often and makes each break count for more. Use `0` with a provider
+A larger `batch_bytes` changes the cached prefix less often, but removes more output each time it does. Use `0` with a provider
 that doesn't cache prompts.
 
 ## Needs and limits
 
-- It asks to edit the history sent to the model, see tool results and model requests, add a tool and `/mask`, and
+- It asks to edit the history sent to the model, see tool results and model requests, add a tool and `/hidden_outputs`, and
   keep data in thread storage. The capabilities are `history`, `interception`, `middleware`, `tools`, `store` and
   `commands`, `model`, `lifecycle` and `inventory` (see
   [Trust and permissions](../../../docs/trust-and-permissions.md#what-a-mod-can-do)).

@@ -1,9 +1,9 @@
 # omd-output-budget
 
-Keeps large shell and tool results out of the model's context. It's experimental: no install profile stages it. [Experimental plugins](../../../../README.md#experimental-plugins)
+Keeps large shell and tool results out of the model's context. It's experimental, and neither install profile puts it on disk. [Experimental plugins](../../../../README.md#experimental-plugins)
 has the steps to add it.
 
-A result over its budget reaches the model as a bounded excerpt with:
+When a tool result exceeds its byte budget, the component sends the model an excerpt with:
 
 - the command header with its exit status
 - the first and last lines
@@ -32,7 +32,7 @@ interception,tools,store,lifecycle
 
 ## Use it
 
-The component budgets every tool result the model receives, except its own tools' results. Calls made by code-mode
+The component applies its byte limits to every tool result the model receives, except results from its own tools. Calls made by code-mode
 cells get their complete output, and the cell's own result is budgeted instead. A merged batch call passes through
 whole (`omd_tool_absorb` runs each call in it as its own budgeted call).
 

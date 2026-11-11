@@ -1738,13 +1738,13 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
     );
     assert!(
         codex_omd::ModViewPatch::parse(
-            json!({"sites":{"sidebar":{"mode":"wrap","components":[]}}})
+            &json!({"sites":{"sidebar":{"mode":"wrap","components":[]}}})
         )
         .is_err()
     );
     assert!(
         codex_omd::ModViewPatch::parse(
-            json!({"sites":{"sidebar":{"mode":"wrap","components":[{"type":"slot"}]}}})
+            &json!({"sites":{"sidebar":{"mode":"wrap","components":[{"type":"slot"}]}}})
         )
         .is_ok()
     );
@@ -2168,8 +2168,8 @@ fn render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change() 
 #[test]
 fn a_failed_terminal_patch_is_transactional() {
     let mut view = codex_omd::ModView::parse(json!({"title":"Base","sites":{"sidebar":{"components":[{"type":"text","id":"base","label":"Base","text":"base"}]}}})).unwrap();
-    let first = codex_omd::ModViewPatch::parse(json!({"title":"First","sites":{"sidebar":{"components":[{"type":"text","id":"first","label":"First","text":"first"}]}}})).unwrap();
-    let second = codex_omd::ModViewPatch::parse(json!({"title":"Leaked","sites":{"sidebar":{"mode":"wrap","components":[{"type":"text","id":"first","label":"Second","text":"second"},{"type":"slot"}]}}})).unwrap();
+    let first = codex_omd::ModViewPatch::parse(&json!({"title":"First","sites":{"sidebar":{"components":[{"type":"text","id":"first","label":"First","text":"first"}]}}})).unwrap();
+    let second = codex_omd::ModViewPatch::parse(&json!({"title":"Leaked","sites":{"sidebar":{"mode":"wrap","components":[{"type":"text","id":"first","label":"Second","text":"second"},{"type":"slot"}]}}})).unwrap();
     let mut claims = std::collections::BTreeMap::new();
     first
         .apply(&mut view, &mut claims, "first", "idle")
@@ -4323,7 +4323,7 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
     trust(&store, &path, &["commands"]);
     let read = |runtime: &mut ModHost| {
         let generation = runtime.generation();
-        runtime
+        let value = runtime
             .invoke(
                 "fixture",
                 generation,
@@ -4332,10 +4332,11 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
                 Value::Null,
                 ModInvokeOptions::default(),
             )
-            .unwrap()
+            .unwrap();
+        serde_json::from_str::<Value>(value.as_str().unwrap()).unwrap()
     };
     let mut runtime = host(&temp);
-    assert_eq!(read(&mut runtime), json!(r#"{"mode":"a","nullable":null}"#));
+    assert_eq!(read(&mut runtime), json!({"mode":"a","nullable":null}));
     assert_eq!(
         store.selection_status().unwrap()["selections"][0]["settings_origin"],
         json!({"mode":"default","nullable":"default"})
@@ -4347,7 +4348,7 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
     runtime.reload().unwrap();
     assert_eq!(
         read(&mut runtime),
-        json!(r#"{"count":2,"mode":"b","nullable":null}"#)
+        json!({"count":2,"mode":"b","nullable":null})
     );
     assert_eq!(
         store.selection_status().unwrap()["selections"][0]["settings_origin"],
@@ -4358,7 +4359,7 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
     runtime.reload().unwrap();
     assert_eq!(
         read(&mut runtime),
-        json!(r#"{"count":2,"mode":"a","nullable":null}"#)
+        json!({"count":2,"mode":"a","nullable":null})
     );
     let revision = store.configuration().unwrap().revision;
     codex_omd::write_settings(&store, "fixture", &json!({"count":2})).unwrap();

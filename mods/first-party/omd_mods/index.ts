@@ -1,6 +1,6 @@
 import type { Json, ModAPI, PackageCatalogEntry, PackageContributes, PackageRequest, PackageState, TerminalComponent, TerminalIdentity, TerminalPanel, TerminalPanelItem, TerminalPatch } from '../../api.d.ts';
 
-type Review = { request: PackageRequest; label: string; changes: Json; grants: string[]; warning?: string; from: string; generation: number; lines?: string[] };
+type Review = { request: PackageRequest; label: string; changes: Json; added: string[]; grants: string[]; warning?: string; from: string; generation: number; lines?: string[] };
 type Scope = 'user' | 'project';
 const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'required', 'effective', 'pending', 'failed', 'needs_approval', 'blocked', 'compatible', 'conflicts'] as const;
 type Listed = Pick<PackageState, typeof FIELDS[number]> & { own: boolean };
@@ -92,9 +92,10 @@ export default function activate(api: ModAPI) {
   const refresh = (state: Saved, notice: string | null): Saved => {
     const listed = api.host.tryCall('packages.list', { fields: [...FIELDS, 'overrides'] });
     if (!listed.ok) return { ...state, packages: [], notice: `The mod list is unavailable (${listed.error})` };
-    const packages = ordered(listed.value.packages.map(entry => ({ ...Object.fromEntries(FIELDS.map(field => [field, entry[field]])), own: owns(entry) }) as Listed));
+    const packages = unique(ordered(listed.value.packages.map(entry => ({ ...Object.fromEntries(FIELDS.map(field => [field, entry[field]])), own: owns(entry) }) as Listed)));
     return { ...state, packages, generation: listed.value.generation, reloadError: listed.value.reload_error, notice };
   };
+  const unique = (packages: Listed[]) => packages.filter((item, index) => !packages.some((other, at) => at !== index && key(other) === key(item) && (Number(other.enabled) - Number(item.enabled) || index - at) > 0));
   const ordered = (packages: Listed[]) => packages.sort((a, b) => Number(!a.failed) - Number(!b.failed) || compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
   const search = (state: Saved): Saved => {
     const trimmed = ({ id, latest, description, support, versions, installed }: PackageCatalogEntry): PackageCatalogEntry =>
@@ -132,7 +133,7 @@ export default function activate(api: ModAPI) {
     const lines = result.ok && (request.action === 'reset' || request.action === 'save-defaults') ? differences(result.value.changes, item) : undefined;
     if (lines && !lines.length) return { ...state, review: null, notice: 'Nothing to change' };
     return result.ok
-      ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added, warning: result.value.identity_warning ?? undefined, from, generation: state.generation, lines }, notice: null }
+      ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, added: result.value.grants_added, grants: result.value.phrases?.map(phrase => phrase.phrase) ?? result.value.grants_added, warning: result.value.identity_warning ?? undefined, from, generation: state.generation, lines }, notice: null }
       : { ...state, review: null, notice: `${label} is unavailable (${plain(result.error)})` };
   };
   const scoped = (state: Saved, item: Pick<PackageState, 'id' | 'scope'> & ({ own: boolean } | Pick<PackageState, 'overrides'>)) => state.only[key(item)] ?? ('own' in item ? item.own : owns(item)) ? { target: 'terminal' as const } : {};
@@ -232,7 +233,11 @@ export default function activate(api: ModAPI) {
       return { ...state, notice: `${friendly(target.id)} stays on because Oh My Diff needs it; turn it off from a shell with omd mods disable ${target.id}` };
     const request = { id: target.id, ...copy(target) };
     if (verb === 'toggle') return apply(state, { action: target.enabled ? 'disable' : 'enable', ...request, ...scoped(state, target) }, `${target.enabled ? 'Turning off' : 'Turning on'} ${friendly(target.id)}`);
-    if (verb === 'reset' || verb === 'save-defaults') return review(state, { action: verb, ...request }, verb === 'reset' ? `Use saved settings for ${friendly(target.id)}` : `Keep ${friendly(target.id)}'s choices for every terminal`, from, item);
+    if (verb === 'reset' || verb === 'save-defaults') {
+      const label = verb === 'reset' ? `Use saved settings for ${friendly(target.id)}` : `Keep ${friendly(target.id)}'s choices for every terminal`;
+      const next = review(state, { action: verb, ...request }, label, from, item);
+      return next.review && !next.review.warning && !next.review.added.length && !configured(next.review.changes).length ? apply(next, next.review.request, label, next.review.generation) : next;
+    }
     if (verb === 'enable' || verb === 'disable') return apply(state, { action: verb, ...request, ...scoped(state, target) }, `${verb === 'enable' ? 'Turning on' : 'Turning off'} ${friendly(target.id)}`);
     if (REVIEWED.includes(verb)) return review(state, { action: verb as PackageRequest['action'], ...request }, `${verb} ${friendly(target.id)}`, from);
     return { ...state, notice: `Unknown action ${verb}` };
@@ -253,7 +258,7 @@ export default function activate(api: ModAPI) {
     return [...new Set([...Object.keys(plan.codex_config ?? {}), ...(plan.packages ?? []).flatMap(item => Object.keys(item.authority?.to?.codex_config ?? {}))])];
   };
   const reviewText = (review: Review) => {
-    if (review.lines) return [review.label, ...review.lines, review.request.action === 'reset' ? 'This terminal goes back to your saved settings.' : 'Applies to every terminal and future launches.'].join('\n');
+    if (review.lines) return [review.warning && `WARNING: ${review.warning}`, review.label, ...review.lines, review.request.action === 'reset' ? 'This terminal goes back to your saved settings.' : 'Applies to every terminal and future launches.'].filter(Boolean).join('\n');
     const config = configured(review.changes);
     return `${review.warning ? `WARNING: ${review.warning} · ` : ''}${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}${config.length ? ` · Codex config: ${config.join(', ')}` : ''}`;
   };
@@ -263,6 +268,7 @@ export default function activate(api: ModAPI) {
     const listed = api.host.tryCall('commands.list', null);
     const owned = new Map<string, string[]>();
     for (const row of listed.ok ? listed.value.commands : []) if (row.owner && !row.hidden) owned.set(row.owner, [...owned.get(row.owner) ?? [], `/${row.command}`]);
+    for (const [owner, names] of owned) owned.set(owner, names.filter(name => !(name.startsWith(`/${owner}:`) && names.includes(`/${name.slice(owner.length + 2)}`))));
     return owned;
   };
   const extras = (): Map<string, Pick<PackageState, 'maintainer' | 'contributes'>> => {
@@ -305,7 +311,7 @@ export default function activate(api: ModAPI) {
           item.needs_approval ? approval(item) : item.failed && `Why it failed: ${plain(item.failed)}`, item.blocked && `Blocked (quarantined): ${item.blocked}`, !item.compatible && 'Needs a newer Oh My Diff',
           ...item.conflicts.map(conflict => `Conflict: ${plain(conflict)}`)].filter(Boolean).join(' · '), 512) });
     });
-    const settings = shown.map(item => entry({ id: `open:${key(item)}`, tab: 'settings', label: `${friendly(item.id)} ›`, kind: 'action', description: item.description ?? undefined }));
+    const settings = shown.map(item => entry({ id: `open:${key(item)}`, tab: 'settings', label: `${friendly(item.id)} ›`, kind: 'action', description: 'Settings', keywords: item.id }));
     const sources: TerminalPanelItem[] = [
       entry({ id: 'scope', tab: 'directory', label: 'Install for', kind: 'choice', value: state.scope, options: [{ value: 'user', label: 'Me' }, { value: 'project', label: 'This project' }] }),
       entry({ id: 'source', tab: 'directory', label: 'Add from source', kind: 'text', description: 'npm:NAME@VERSION, git+URL#TAG, a folder path or a directory id' }),

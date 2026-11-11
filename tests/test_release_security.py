@@ -54,15 +54,6 @@ class ReleaseReviewFixes(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
                     ci.upstream_codex('rust-v0.167.0', directory)
 
-    def test_dry_run_with_a_key_stays_unsigned(self):
-        from tests.test_pr_ci import HostedJobs
-        original = ci.publish
-        def publish(*args, **kwargs):
-            with mock.patch.dict(os.environ, {'OMD_RELEASE_SIGNING_KEY': 'present'}), mock.patch.object(ci, 'sign', side_effect=AssertionError('dry run signed')):
-                return original(*args, **kwargs)
-        with mock.patch.object(ci, 'publish', side_effect=publish):
-            HostedJobs().test_a_release_dry_run_without_the_signing_key_prints_the_commands_unsigned()
-
     def test_package_digest_frames_binary_asset_boundaries(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

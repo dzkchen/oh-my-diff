@@ -1,7 +1,7 @@
 # Trust and permissions
 
-Read this before you turn on a mod. It says what a mod that's on can do, what the [sandbox](#the-sandbox) stops, and
-what you agree to when you grant a mod more.
+Turning on a mod lets it run with the permissions you approve. Most permissions stay within Codex's sandbox;
+[authority grants](#authority-grants) can let a mod run programs outside it, use the network or answer approvals.
 
 ## Installing doesn't turn a mod on
 
@@ -14,8 +14,8 @@ The curated directory includes supported first-party mods, experimental mods and
 Experimental entries are not fully tested; listing does not guarantee a security review. Check each entry's support
 status and source before trusting it. OMD shows permissions and asks before you turn any mod on.
 
-Trust is bound to a digest (a hash) of the mod's files and the permissions it declares. If either changes, the mod
-stops until you trust it again:
+OMD records a hash of the files and permissions you approved. If either changes, OMD stops the mod until you trust
+it again:
 
 - OMD's own updates are the exception: an update re-trusts the first-party mods it ships, and `omd update`, the
   next `codex` start and `/update` name each permission a mod gained.
@@ -58,10 +58,11 @@ engine:
 - Each mod package gets its own runner processes, never shared with another package.
 - Each runner runs under a macOS sandbox profile that denies by default. The runner may start only itself, can't write
   files and has no network.
-- V8 runs with a 64 MiB heap, and string evaluation (`eval`) and WebAssembly code generation are off. The host kills a
-  runner that uses more than 512 MiB.
-- A callback is one call from the host into a mod's code. Every callback except a render hook runs in a fresh
-  context, so one call can't leave state behind for the next
+- V8 limits its old-generation heap to 64 MiB, with string evaluation (`eval`) and WebAssembly code generation off.
+  The host separately kills a runner whose physical memory footprint exceeds 512 MiB.
+- A callback is one call from the host into a mod's code. By default, callbacks other than render hooks get fresh
+  contexts, so module variables don't survive between calls. A mod that opts into experimental
+  `session_activation_v1` can retain them across session callbacks
   ([callback lifetime](../mods/reference/host-model.md#callback-lifetime)).
 
 Everything a mod does outside its runner, such as reading a workspace file, running a program or drawing a panel, goes
@@ -82,14 +83,13 @@ trust dialog says what each one exposes:
 | `os` | Run the programs its manifest lists without the sandbox, as your user |
 | `approve` | Approve the agent's commands, patches or network requests for you, within a declared scope |
 | `http` | Make network requests to the origins its manifest lists |
-| `fs.external` | Read and write folders outside the workspace that its manifest lists |
-| `mcp` | Connect to the MCP servers (tool servers) its manifest lists |
-| `power` | Keep the Mac awake |
-| `autonomous` | Start turns you didn't type, such as a monitor's result while the thread is idle, up to the queued-turn and turn limits its manifest lists |
+| `fs.external` (experimental) | Read and write folders outside the workspace that its manifest lists |
+| `mcp` (experimental) | Connect to the MCP servers (tool servers) its manifest lists |
+| `power` (experimental) | Keep the Mac awake |
+| `autonomous` (experimental) | Start turns you didn't type, such as a monitor's result while the thread is idle, up to the queued-turn and turn limits its manifest lists |
 
-The manifest declares each grant's scope, such as which programs or origins. Your trust covers exactly that scope,
-so a mod that widens it needs a new trust. The [capabilities reference](../mods/reference/capabilities.md) lists every
-grant.
+The manifest names the programs, HTTP origins or other resources each grant allows. If a mod asks for more access,
+you must approve it again. The [capabilities reference](../mods/reference/capabilities.md) lists every grant.
 
 A mod you allow to run programs outside the sandbox can do anything your user account can. A mod allowed to use the
 network or approve actions can do so without asking you each time. OMD works this way by design, so turn on only
@@ -139,12 +139,13 @@ full.
 Organizations can also install an administrator policy that controls which mods may run. The
 [administrator policy reference](../mods/reference/administrator-policy.md) describes it.
 
+Mods identify themselves by their declared ID. Copies with the same ID share storage and the right to use or manage
+credentials owned by that ID. A project-scoped copy takes precedence over a user-scoped copy. Check source paths
+when a trust preview warns of an existing ID.
+
 ## See also
 
 - [Manage mods](manage-mods.md)
 - [Plugins](../plugins/README.md#turn-on-a-component), to trust the mod component a Codex plugin contains
 - [Troubleshooting](troubleshooting.md), to turn off a misbehaving mod
 - [Security policy](../SECURITY.md)
-
-Mods identify themselves by their declared ID. Copies with the same ID share storage and owned credential authority;
-a project-scoped copy takes precedence over a user-scoped copy. Check source paths when a trust preview warns of an existing ID.

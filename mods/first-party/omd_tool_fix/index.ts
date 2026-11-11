@@ -212,7 +212,7 @@ export default function activate(api: ModAPI) {
     return result;
   });
 
-  api.command('toolfix', () => {
+  api.command('tool_fixes', () => {
     const state = load(api);
     const lines = [
       `Tool-call correction: ${state.corrected} corrected (${state.ran} ran, ${state.failed} failed in the tool, ${state.rejected} rejected by the host) · ${state.json} JSON repairs · ${state.ambiguous} sent back as ambiguous · ${state.unrepaired} left to the tool · ${state.released} repeats passed through`,

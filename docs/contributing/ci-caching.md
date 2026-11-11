@@ -1,7 +1,7 @@
 # CI caching
 
-How the GitHub workflows cache Cargo downloads, the V8 prebuilt and compiled crates. For the checks themselves,
-see [How CI checks a change](ci.md).
+GitHub workflows cache Cargo downloads, the V8 prebuilt and compiled crates. This page explains the cache keys,
+which jobs save them and how restores work. For the checks, see [How CI checks a change](ci.md).
 
 ## Download caches
 
@@ -9,7 +9,7 @@ PR, main-branch, nightly and release jobs share Cargo download and V8 cache keys
 
 - Cargo downloads are keyed by OS, architecture and upstream pin, independently of the patch. Cargo fetches any
   missing patched dependencies itself. Restore also accepts earlier patch-specific snapshots for the same pin.
-  This avoids another multi-gigabyte download snapshot for every patch edit without discarding existing downloads.
+  A patch edit can therefore reuse the downloads for its upstream pin.
 - V8 keys also include the patch manifest, falling back to the same platform and upstream pin. `build.py v8`
   verifies cached files against the pinned checksum before reuse.
 - Only nightly and release jobs save these download caches; PR and main-branch checks restore them.
@@ -33,7 +33,7 @@ Each job uses a local `SCCACHE_DIR`, restored and saved through `actions/cache`,
 The lint/PR cache is capped at 1 GB, native and build at 2 GB each, and core at 3 GB. Keys include job, OS,
 architecture, upstream pin, mise and build configuration, and commit. Restore prefers the same configuration,
 then falls back to the newest cache for that job and OS; sccache validates individual compiler inputs itself.
-A commit-specific key lets new commits save added compiler output instead of freezing a patch-keyed snapshot.
+Each commit gets its own key so later jobs can save newly compiled output.
 GitHub evicts older snapshots under the repository cache budget.
 
 PR native and nightly lint use the same work root and tree name (`/Users/runner/omd/omd-bnightly`), matching `CARGO_*`

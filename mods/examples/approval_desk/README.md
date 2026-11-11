@@ -19,8 +19,8 @@ It's an API `1.0.0` mod that uses only the public mod API, like any outside auth
   - a controlled `input` note
   - a `list` of requests and decisions (`Enter` inspects one)
   - a line with an OSC 8 link, and the inspected request's details
-- Client adapter: `client.mjs` connects with a GUI-shaped renderer (`svg`, `png`, `cells`, pixel pointer) and
-  resumes every loaded thread. It answers `item/commandExecution/requestApproval` and
+- Client adapter: `client.mjs` advertises GUI rendering support (`svg`, `png`, `cells`, pixel pointer), logs views
+  as JSON and resumes every loaded thread. It doesn't draw a graphical window. It answers `item/commandExecution/requestApproval` and
   `item/fileChange/requestApproval` with `APPROVAL_DESK_DECISION` (`decline` by default). It prints one JSON line per
   event: `ready`, `roster`, `desk` (one per view), `approval`, `mirrored`, `resolved`, `unsupported` (one per
   component it can't draw) and `error`.

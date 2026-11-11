@@ -10,10 +10,12 @@ The shell commands OMD installs in `~/.local/bin`, what each is for, and which o
 | `omd-mod` | Repair and administration | You need to change the mod store without running mods |
 | `omd-mod-author` | Mod authors | You create, test, run or package your own mod |
 
-`omd mods` and `omd-package mod` both turn mods on and off. Use `omd mods` for mods you installed, and
-`omd-package mod` for mods that came with your install profile.
+Use `omd mods enable` and `omd mods disable` to turn installed mods on or off, including those from your install
+profile. Administrator-managed mods are controlled by policy. `omd-package mod` does the same for profile mods
+without showing the review prompt.
 
-The installer also adds `omd-contract`, which selects workflow contracts, the completion checks `omd_workflow` runs.
+The installer also adds `omd-contract` to select workflow contracts, which specify the checks `omd_workflow` requires
+before a task can finish.
 `omd-package contract` covers the same steps for most people.
 
 ## `omd`
@@ -47,6 +49,7 @@ Run `omd` with no arguments for a short summary, `omd help --all` for every comm
 | `--scope user\|project` | Install for you (default) or for the current project |
 | `--version V` | Install this version |
 | `--yes` | Don't ask for confirmation |
+| `--details` | Show source and integrity in the confirmation |
 | `--store PATH` | Use another mod store |
 
 ### Mod data
@@ -89,14 +92,15 @@ without `--repo`, fails with `unknown command: COMMAND` and points to `omd help`
 
 ## `omd-package`
 
-Manages the install profile. It prints JSON, except `plugin-mod`, which prints what `omd` prints, and `status`, `activate`, `mod` and `doctor`, which print text unless you pass `--json`.
+Manages the install profile. Most commands print JSON. `status`, `activate`, `mod` and `doctor` print text unless
+you pass `--json`; `plugin-mod` uses the same output format as `omd`.
 
 | Command | What it does |
 | --- | --- |
 | `omd-package status [--json]` | The install profile and its mods |
 | `omd-package activate full\|platform\|direct` | `direct` is the recovery state that runs plain Codex behavior with no mods; naming the installed profile turns its mods back on. To switch between OMD+ and OMD Core, rerun the install command with `--profile` |
 | `omd-package mod enable\|disable ID` | Turn a mod your profile installed on or off for every terminal, without asking. It changes the trusted selection, reloads the mods and restores the previous state if the mod fails to load |
-| `omd-package profiles [--setup] [--model NAME]` | Install and set up the experimental `omd_profiles` mod (`--setup`) or start a session on an account profile; `--help` lists the other flags |
+| `omd-package profiles [--setup] [--model NAME]` | OMD+ only. Install and set up the experimental `omd_profiles` mod (`--setup`) or start a session on an account profile; `--help` lists the other flags |
 | `omd-package mini` | The same as `omd mini` |
 | `omd-package contract list\|status\|plan\|select\|clear [ID@VERSION]` | List, show or select the workflow contract for this repository |
 | `omd-package plugins` | Register the OMD+ plugin marketplace with Codex ([plugins](../plugins/README.md)) |

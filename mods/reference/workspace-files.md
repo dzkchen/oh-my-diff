@@ -12,7 +12,10 @@ Entries are frozen in Mod API `1.0.0` unless marked experimental (see the
 `fs.read` grants `workspace.read` and the `workspace_change` event; `fs.write` grants `workspace.transaction`,
 `workspace.request_rename` and the `workspace_pre_rename` event (see [Capabilities](capabilities.md#capabilities)).
 These operations work only in the session's current local repository, at its canonical path, and the host checks the
-effective read and write permissions for every path.
+effective read and write permissions for every path. When the session directory is `/`, the home directory or a
+directory above it and isn't in a Git work tree, every `workspace.*` operation without `root` fails with
+`workspace_unavailable` (see
+[Session directory and repository](state-and-storage.md#session-directory-and-repository)).
 
 ### Workspace reads and transactions
 
@@ -42,6 +45,7 @@ workspace.transaction {expected, writes?, deletes?, renames?, backup?, root?} â†
 
 | Error | When |
 | --- | --- |
+| `workspace_unavailable` | The session directory is `/`, the home directory or above it, outside a Git work tree |
 | `workspace_path_scope_invalid` | No paths, more than 128, or a repeated path |
 | `workspace_read_permission_denied`, `workspace_write_permission_denied` | The session can't read or write a path |
 | `fs_root_invalid` | `root` isn't a string |
@@ -127,6 +131,7 @@ Each change contains the path's before and after hashes.
 - At most 16 watches per mod by default (`watches_per_mod` in [Host limits](limits.md#host-limits)).
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
+- If the host cannot register the paths with the file watcher, the call fails with `watch_registration_failed`.
 
 Watches end and deliver as described in [Callback delivery](events-and-lifecycle.md#callback-delivery).
 

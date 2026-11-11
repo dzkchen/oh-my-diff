@@ -1915,13 +1915,25 @@ fn install_previews_name_os_access_codex_config_and_exec_environment() {
     let store = root.join("store");
     ModStore::create(store.clone()).unwrap();
     let summary = omd_cli(&store, &["inspect", package.to_str().unwrap()]);
-    for expected in [
-        "os access: {\"programs\":[\"/bin/echo\"],\"network\":false}",
-        "codex config: {\"tools.update_plan.enabled\":true}",
-        "exec environment: FIXTURE_VALUE",
-    ] {
-        assert!(summary.contains(expected), "{expected}\n{summary}");
-    }
+    let json_field = |prefix: &str| {
+        let value = summary
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix(prefix))
+            .unwrap_or_else(|| panic!("missing {prefix}\n{summary}"));
+        serde_json::from_str::<serde_json::Value>(value).unwrap()
+    };
+    assert_eq!(
+        json_field("os access: "),
+        json!({"programs": ["/bin/echo"], "network": false})
+    );
+    assert_eq!(
+        json_field("codex config: "),
+        json!({"tools.update_plan.enabled": true})
+    );
+    assert!(
+        summary.contains("exec environment: FIXTURE_VALUE"),
+        "{summary}"
+    );
 }
 
 #[test]

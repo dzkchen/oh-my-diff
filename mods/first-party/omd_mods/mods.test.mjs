@@ -235,7 +235,8 @@ test('status and failure lines use plain words with a next step, and unknown cod
 test('the list groups mods by state, searches their commands and reopens where it was closed', () => {
   const packages = [logo, mod('omd_usage', { enabled: false, effective: false }), mod('omd_preview', { failed: 'activation failed' })];
   const index = () => ({ packages: [{ id: 'omd_frecency', description: 'Ranks files', latest: '1.0.0', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });
-  const commands = () => ({ commands: [{ command: 'usage', description: '', owner: 'omd_usage', hidden: false, args_hint: null, immediate: false, protected: false }] });
+  const row = command => ({ command, description: '', owner: 'omd_usage', hidden: false, args_hint: null, immediate: false, protected: false });
+  const commands = () => ({ commands: [row('omd_usage:usage'), row('usage')] });
   const opened = invoke('', { packages, 'packages.index': index, 'commands.list': commands });
   const listed = opened.panels[0].items.filter(item => item.tab === 'installed').map(item => [item.id, item.group]);
   assert.deepEqual(listed, [['user:omd_preview', 'Needs attention'], ['user:omd_logo', 'On'], ['user:omd_usage', 'Off'], ['get:omd_frecency', 'Available']]);
@@ -320,23 +321,33 @@ test('a mod with terminal choices keeps editing this terminal after its UI state
   assert.equal(written.pop().target, undefined);
 });
 
-test('reset and save-defaults reviews list what changes and offer no Apply when nothing differs', () => {
+test('reset and save-defaults apply directly without new grants, otherwise review the changes in plain words', () => {
   const own = { ...theme, overrides: { enabled: false, settings: { greeting: 'yo' } } };
   const changes = { target: 'shared', enabled: { before: false, after: true }, settings: [{ key: 'greeting', before: 'hi', after: 'yo' }] };
+  const phrases = [{ capability: 'os', phrase: 'run listed programs unsandboxed', risky: true }, { capability: 'fs.read', phrase: 'read files in this repository', risky: false }];
   for (const [action, note] of [['save-defaults', 'Applies to every terminal and future launches.'], ['reset', 'This terminal goes back to your saved settings.']]) {
-    let request;
-    const previewed = invoke(`mod user:theme do:${action}`, { packages: [own], 'packages.preview': args => { request = args; return { action, id: 'theme', changes, grants_added: [] }; } });
-    assert.deepEqual([request.action, request.scope, request.target], [action, 'user', undefined]);
+    let request, applied;
+    const direct = invoke(`mod user:theme do:${action}`, { packages: [own], 'packages.preview': args => { request = args; return { action, id: 'theme', changes, grants_added: [], phrases: [] }; },
+      'packages.apply': args => { applied = args; return { status: 'applied', generation: 2 }; } });
+    assert.deepEqual([request.action, request.scope, request.target, applied.action], [action, 'user', undefined, action]);
+    assert.equal(direct.panels.length, 0);
+    const warned = invoke(`mod user:theme do:${action}`, { packages: [own], 'packages.preview': () => ({ action, id: 'theme', changes, grants_added: [], phrases: [], identity_warning: 'Mod ID theme is already installed' }) });
+    assert.match(warned.panels[0].subtitle, /Mod ID theme is already installed/);
+    const unphrased = invoke(`mod user:theme do:${action}`, { packages: [own], 'packages.preview': () => ({ action, id: 'theme', changes, grants_added: ['os'] }) });
+    assert.ok(unphrased.panels[0].items.some(item => item.id === 'apply'));
+    const previewed = invoke(`mod user:theme do:${action}`, { packages: [own], 'packages.preview': () => ({ action, id: 'theme', changes, grants_added: ['fs.read', 'os'], phrases }) });
     const subtitle = previewed.panels[0].subtitle;
     for (const line of ['On: off → on', 'Greeting: hi → yo', note]) assert.ok(subtitle.split('\n').includes(line), subtitle);
-    assert.doesNotMatch(subtitle, /no package changes/);
-    let applied;
     invoke('apply', { packages: [own], ui_state: previewed.ui, 'packages.apply': args => { applied = args; return { status: 'applied', generation: 2 }; } });
     assert.equal(applied.action, action);
     const same = invoke(`mod user:theme do:${action}`, { packages: [own], 'packages.preview': () => ({ action, id: 'theme', changes: { target: 'shared', enabled: null, settings: [] }, grants_added: [] }) });
     assert.match(same.panels[0].subtitle, /Nothing to change/);
     assert.ok(!same.panels[0].items.some(item => item.id === 'apply'));
   }
+  const update = invoke('update omd_logo', { 'packages.preview': () => ({ action: 'update', id: 'omd_logo', changes: {}, grants_added: ['fs.read', 'os'], phrases }) });
+  assert.match(update.value.display, /new permissions: run listed programs unsandboxed, read files in this repository/);
+  const raw = invoke('update omd_logo', { 'packages.preview': () => ({ action: 'update', id: 'omd_logo', changes: {}, grants_added: ['os'] }) });
+  assert.match(raw.value.display, /new permissions: os/);
 });
 
 test('a required mod keeps its settings editable and an administrator-managed one shows them read-only', () => {
@@ -402,14 +413,14 @@ test('an id installed in both scopes asks for the scope instead of acting on the
 
 test('a bundled mod installed as a selection is listed once, and the directory marks experimental entries', () => {
   const packages = [logo, mod('omd_usage', { source: 'selection', enabled: false, effective: false, maintainer: 'Oh My Diff',
-    contributes: { commands: [{ name: 'hud', description: 'Usage dialog' }], keys: [{ key: 'alt+a', description: 'Usage dialog' }] } })];
+    contributes: { commands: [{ name: 'usage', description: 'Usage dialog' }], keys: [{ key: 'alt+a', description: 'Usage dialog' }] } })];
   const index = () => ({ packages: [
     { id: 'omd_usage', description: 'Usage', latest: '1.0.0', support: 'supported', installed: null, versions: [{ version: '1.0.0', blocked: null }] },
     { id: 'omd_btw', description: 'Side questions', latest: '1.0.0', support: 'experimental', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });
   const opened = invoke('', { packages, 'packages.index': index });
   const items = opened.panels[0].items;
   assert.deepEqual(items.filter(item => item.id.startsWith('get:')).map(item => [item.id, item.description]), [['get:omd_btw', 'Experimental · Side questions']]);
-  assert.match(items.find(item => item.id === 'user:omd_usage').detail, /^off · every project · Commands: \/hud · Keys: alt\+a · By Oh My Diff$/);
+  assert.match(items.find(item => item.id === 'user:omd_usage').detail, /^off · every project · Commands: \/usage · Keys: alt\+a · By Oh My Diff$/);
   const got = invoke('panel user get:omd_usage', { packages, ui_state: opened.ui, 'packages.index': index });
   assert.match(got.ui.notice, /already installed/);
   assert.ok(!operations(got).includes('packages.preview'));
@@ -463,4 +474,11 @@ test('an install that could not also turn the mod on says why it is still off', 
   const reviewed = invoke('plugin oh-my-diff/omd-anchored-edit', { 'packages.preview': () => ({ action: 'install', id: 'omd_anchored_edit', changes: {}, grants_added: [] }) });
   const applied = invoke('apply', { ui_state: reviewed.ui, 'packages.apply': () => ({ status: 'applied', generation: 2, enabled: false, reason: 'service_provider_missing: needs lsp' }) });
   assert.match(applied.value.display, /installed but still off \(service_provider_missing: needs lsp\)/);
+});
+
+test('a mod installed twice in one scope shows one row, the one that is on', () => {
+  const opened = invoke('', { packages: [mod('omd_theme', { enabled: false, effective: false, source: 'selection' }), mod('omd_theme', { source: 'package' }), logo] });
+  const ids = opened.panels[0].items.map(item => item.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(opened.panels[0].items.find(item => item.id === 'user:omd_theme').value, true);
 });

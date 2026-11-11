@@ -38,9 +38,10 @@ The panel's tabs:
 - All lists your mods as switches, grouped into Needs attention, On, Off and Available, with counts. A mod that's off
   still shows the commands and keys it adds, and experimental mods are marked. Available holds directory mods you
   haven't installed and the mod components of Codex plugins you added.
-- Settings opens one mod's own panel: On first, then its settings. A list of words is edited as comma-separated text
-  (or a JSON list, for entries with commas), and an object or a list of objects as JSON. Changes apply to, below the settings, picks every terminal or only this one. Settings change only on the copy that is on: a user or project copy overridden by
-  the other, or one that is off, shows why instead of its settings.
+- Settings opens one mod's panel, with its On switch followed by its settings. Edit a list of words as
+  comma-separated text (or as a JSON list when an entry contains a comma). Edit objects and lists of objects as JSON.
+  **Changes apply to**, below the settings, chooses every terminal or only this one. Only the active copy's settings
+  can change. A disabled copy, or a user or project copy overridden by another scope, shows the reason instead.
 - Directory installs from a source or updates.
 
 For example, `/mods enable omd_frecency` turns on `omd_frecency` without opening the panel, after you approve
@@ -85,11 +86,13 @@ Trust previews warn when an ID is already installed in another scope: same-ID co
 
 ## Terminal choices and saved settings
 
-Switches and setting edits save for every terminal. In a mod's panel, **Changes apply to** set to **Only this
-terminal** keeps that mod's changes in this terminal until you close it. A mod that already has choices in this
-terminal opens on **Only this terminal** until you pick **Every terminal**. The list marks such a mod "only this
-terminal", and its panel offers **Use saved settings** and **Keep these for every terminal**, which show what changes
-and ask first. A mod the installer keeps on can't be turned off, but its settings can change. An administrator's mod
-shows its settings read-only.
+By default, switches and setting edits save for every terminal. In a mod's panel, set **Changes apply to** to
+**Only this terminal** to keep changes in that terminal until you close it. If the terminal already has choices for
+the mod, its panel opens on **Only this terminal** until you pick **Every terminal**. The list marks it "only this
+terminal".
+
+The panel also offers **Use saved settings** and **Keep these for every terminal**. Each previews its changes and
+asks before applying them. A mod the installer keeps on can't be turned off from the panel, but you can change its
+settings. An administrator's mod shows its settings read-only.
 
 When user and project copies have the same mod ID, settings edits apply to the selected copy and its schema.
