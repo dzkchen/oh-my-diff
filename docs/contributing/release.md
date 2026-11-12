@@ -2,7 +2,8 @@
 
 The maintainer prepares a release pull request, merges it, then pushes a tag to publish. The tag workflow can reuse
 a successful release dry run on the same commit. Nightly prereleases publish automatically; see
-[How CI checks a change](ci.md#nightly-builds).
+[How CI checks a change](ci.md#nightly-builds). To try unreleased changes, don't cut a release:
+[run your checkout](runtime.md#run-your-checkout).
 
 ## Before you start
 

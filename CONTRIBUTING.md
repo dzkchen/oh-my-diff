@@ -52,6 +52,10 @@ For native work, `mise run dev:setup NAME` prepares source and V8. Use `mise run
 the mod engine and runner, or `mise run dev:build NAME` for the terminal app. Reuse the same scratch tree while
 editing to retain incremental builds. The runtime guide explains when to create a fresh one after source changes.
 
+To try your checkout in a real session, run `mise run dev:run NAME`. It builds the host from your checkout, starts
+it on your checkout's first-party mods in a separate mod store and reloads a mod when you save it. No release or
+installed OMD at that version is needed; see [Run your checkout](docs/contributing/runtime.md#run-your-checkout).
+
 ## Check your change
 
 Start with the checks selected from your diff:

@@ -29,8 +29,8 @@ intentionally unselected or exactly reused native job may be skipped. `main` req
 
 `scripts/pr_ci.py` selects the native job. A pull request skips it only when every change is in Markdown, `docs/`,
 mod examples, first-party packages, plugins, or the Python and Node `tests/`. Anything else selects it, including
-unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Every `runtime/` change
-selects it, Markdown copies included, to detect patch drift.
+unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Every change in the
+`runtime/omd/` and `runtime/native/` mirrors selects it, Markdown included, to detect patch drift.
 
 For a pull request, the selection compares the merge commit with its first parent. A main push compares against
 the commit before the push, including every pushed commit. The merge queue supplies its base commit. The

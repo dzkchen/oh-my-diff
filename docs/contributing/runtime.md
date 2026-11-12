@@ -35,8 +35,10 @@ it again preserves the existing tree and reuses downloads whose checksums match.
 use `python3 .github/scripts/build.py setup NAME` to skip the V8 download.
 
 Reuse the same name for repeated edits: Cargo keeps that tree's incremental output. `setup` does not refresh an
-existing tree after you switch branches, change the upstream pin or pull a new patch. Finish and `sync` your native
-edits first, then use a new name for different sources. Keep each tree and target exclusive to one active build.
+existing tree after you switch branches or pull a new patch. `mise run dev:refresh NAME` does: it replaces the
+tree's patch with your checkout's in place, so the next build recompiles only the crates whose files changed. It
+leaves a tree alone when the tree has native edits that are in no patch, so `sync` your edits first. After a change
+to the upstream pin, use a new name. Keep each tree and target exclusive to one active build.
 
 - The build target is `/private/tmp/omd-bNAME/target`. Set `OMD_WORK_ROOT` to use another directory instead of
   `/private/tmp`.
@@ -70,11 +72,48 @@ mise run dev:build NAME
 ```
 
 `dev:check` takes one or more Cargo package names and does not compile tests. `dev:build` requires V8 and builds
-`codex`, `omd-runner` and `codex-code-mode-host` together in `/private/tmp/omd-bNAME/target/debug`.
+`codex`, `omd-runner`, `codex-code-mode-host` and `omd-mod` together in `/private/tmp/omd-bNAME/target/debug`.
 Both tasks print the log path, elapsed time, a summary and the exit status. Logs are `logs/dev-check.log` and
 `logs/dev-build.log` under the scratch tree and are overwritten on each run. Cargo also writes an HTML timing
 report to `target/cargo-timings/cargo-timing.html`; the log records its path. Compare repeated builds in the
 same tree before changing compiler flags or cache settings.
+
+## Run your checkout
+
+To try a branch, a pull request or `main` in a real session, run it from your checkout. You don't need a release
+or an installed OMD at that version:
+
+```sh
+mise run dev:run NAME
+mise run dev:run NAME --enable omd_claude_cli -- --model gpt-6.1-terra
+```
+
+`dev:run` sets up the tree if it's missing, refreshes its patch as `dev:refresh` does, builds what changed and
+starts that `codex` on the first-party mods in your checkout. Arguments after `--` go to `codex`. The first build
+of a tree compiles everything; later runs take seconds unless Rust changed.
+
+- The session uses its own mod store, `/private/tmp/omd-bNAME/store`, so your installed OMD and its mods are
+  untouched. It shares your Codex sign-in, `CODEX_HOME` and state database.
+- The store holds a copy of each first-party mod's shipped files in `sources/`, as an installation does. Every
+  mod is trusted. The profile's default mods except `omd_update` start on; turn others on with `--enable ID` or in
+  `/mods`. Your choices persist between runs, and a mod your checkout no longer has is removed from the store.
+- Save a mod file and the session loads it at the next turn, without a restart. A `mod.json` error or a missing file
+  keeps the last copy, with the reason in `/private/tmp/omd-bNAME/logs/dev-run-mods.log`; other load errors, such as
+  a TypeScript error, show in the session.
+- A native edit in the tree needs a restart: quit and run `dev:run` again.
+
+To test someone's pull request, check it out in a separate worktree, so your own branch and uncommitted work stay
+put, and run it there:
+
+```sh
+git worktree add ../omd-pr-NUMBER && cd ../omd-pr-NUMBER && gh pr checkout NUMBER
+mise run dev:run NAME
+```
+
+`dev:run` runs the pull request's `build.py`, `mise.toml` and build scripts, and trusts every first-party mod with
+every capability it declares, in a session that uses your Codex sign-in. Run only pull requests whose `scripts/`,
+`.github/scripts/`, `mise.toml` and mods you have read. For one that changes the state database, set `CODEX_HOME` to
+a separate folder with your `auth.json` linked in, so a migration doesn't reach your everyday Codex state.
 
 For mod and SDK tests, build just the mod engine and runner:
 
@@ -227,7 +266,9 @@ design.
 | `cargo NAME LOG ARGS` | Runs cargo in the tree, full log to `LOG` |
 | `cargo --skip-runner NAME LOG ARGS` | Skips runner preparation for host-independent tests |
 | `dev-check NAME CRATE [CRATE...]` | Checks selected crates without test targets; log and timing report |
-| `dev-build NAME` | Builds the debug app, runner and code-mode host; log and timing report |
+| `dev-build NAME` | Builds the debug app, runner, code-mode host and mod engine; log and timing report |
+| `dev-refresh NAME` | Replaces an unedited tree's patch with the checkout's, in place |
+| `dev-run NAME [--enable ID] [-- ARGS]` | Refreshes and builds the tree, then runs it on the checkout's first-party mods and reloads them as they change |
 | `dev-mods NAME` | Builds only the debug mod engine and runner; log and timing report |
 | `storage` | Lists each scratch tree's target disk usage |
 | `clean NAME [NAME...]` | Deletes only the selected targets; preserves sources and logs |
