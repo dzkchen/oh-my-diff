@@ -10,27 +10,40 @@ struct Tool {
 }
 
 impl ToolContributor for Mods {
+    fn prepare_for_step<'a>(
+        &'a self,
+        input: codex_extension_api::StepPreparationInput<'a>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            if let Some(owner) = clients::for_store(input.turn_store) {
+                input.step_store.insert_arc(owner);
+            }
+        })
+    }
+
     fn tools(
         &self,
         _: &ExtensionData,
         thread: &ExtensionData,
     ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
+        let selected = clients::for_store(thread);
+        let this = selected.as_deref().unwrap_or(self);
         let Some(lead) = thread.get::<Lead>().filter(|lead| lead.owner == "lead") else {
             return Vec::new();
         };
-        let Ok(runtime) = self.runtime.lock() else {
+        let Ok(runtime) = this.runtime.lock() else {
             return Vec::new();
         };
-        self.tool_executors(lead, runtime.tools())
+        this.tool_executors(lead, runtime.tools())
     }
 
     fn tools_for_step(
         &self,
         _: &ExtensionData,
         thread: &ExtensionData,
-        turn_store: &ExtensionData,
+        step_store: &ExtensionData,
     ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
-        let selected = clients::for_store(turn_store);
+        let selected = clients::for_store(step_store).or_else(|| clients::for_store(thread));
         let this = selected.as_deref().unwrap_or(self);
         let Some(lead) = thread.get::<Lead>().filter(|lead| lead.owner == "lead") else {
             return Vec::new();
