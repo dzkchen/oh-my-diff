@@ -105,7 +105,8 @@ commit or merged pull request that also changed `runtime/` or `mods/api.d.ts` (`
 as one from `git pull`, counts each change it brought in on its own). Those mods wait for the next release. The run
 publishes nothing, and still passes, when no mod is new, the release isn't tagged yet, `main` hosts a different mod
 API, or `mods/api.d.ts` changed since the tag (run it by hand with `api_reviewed` once you have checked no bundled mod
-uses the change). When a mod an earlier bundle shipped can no longer be shipped, the run fails: cut a release.
+uses the change). When a mod an earlier bundle shipped can no longer be shipped, the run fails: cut a release. The
+run's summary lists what shipped and each held mod with its reason, and the run warns when anything waits.
 
 To publish by hand, for example to exclude a mod:
 

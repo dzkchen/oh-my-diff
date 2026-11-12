@@ -2,6 +2,7 @@
 import argparse
 import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -187,19 +188,21 @@ def directory(version, features, listed, first_party):
     return chosen
 
 
-NEEDS = ("needs_host", "needs_manifest", "needs_api", "needs_runtime")
+NEEDS = {"needs_host": "needs host features the release lacks", "needs_manifest": "uses manifest entries the release rejects",
+         "needs_api": "calls host operations that changed", "needs_runtime": "changed together with host code"}
 
 
 def automatic(exclude=()):
     planned = plan(exclude)
-    held = set().union(*(planned[need].keys() for need in NEEDS))
+    held = {identifier: {need: planned[need][identifier] for need in NEEDS if identifier in planned[need]}
+            for identifier in set().union(*(planned[need].keys() for need in NEEDS))}
     if not held:
-        return planned
-    if shipped := sorted(held & set(planned["shipped"])):
+        return planned | {"held": {}}
+    if shipped := sorted(held.keys() & set(planned["shipped"])):
         raise ValueError(f"mods shipped in an earlier bundle no longer suit OMD {planned['omd']}; cut a release instead: {', '.join(shipped)}")
     bundle = [identifier for identifier in planned["bundle"] if identifier not in held]
     return planned | {need: {} for need in NEEDS} | {
-        "bundle": bundle, "new": [identifier for identifier in planned["new"] if identifier not in held],
+        "held": dict(sorted(held.items())), "bundle": bundle, "new": [identifier for identifier in planned["new"] if identifier not in held],
         "added": [identifier for identifier in planned["added"] if identifier not in held],
         "excluded": sorted({*planned["excluded"], *held}), "commits": history(planned["omd"], bundle)}
 
@@ -218,7 +221,8 @@ def build(output, commit, exclude=(), api_reviewed=False, auto=False):
                 "by hand with api_reviewed after checking no bundled mod uses the change, or cut a release"}
     if not planned["new"]:
         if auto:
-            return {"published": False, "omd": planned["omd"], "reason": "nothing new to ship", "excluded": planned["excluded"]}
+            return {"published": False, "omd": planned["omd"], "reason": "nothing new to ship", "excluded": planned["excluded"],
+                    "held": planned.get("held", {})}
         raise ValueError(f"no first-party mod changed since OMD {planned['omd']} or its last mod bundle")
     if planned["needs_host"]:
         raise ValueError(f"these mods need host features OMD {planned['omd']} lacks; they wait for a release: {planned['needs_host']}")
@@ -261,7 +265,19 @@ def build(output, commit, exclude=(), api_reviewed=False, auto=False):
              "Installed by `omd update` or **Update mods** in `/update`, and automatically when automatic updates are on.",
              "`omd update rollback` undoes it.", "", *(f"- {line}" for line in planned["commits"][:30])]
     (output / "notes.md").write_text("\n".join(lines) + "\n")
-    return manifest | {"new": planned["new"], "added": planned["added"], "needs_release": planned["needs_release"]}
+    return manifest | {"new": planned["new"], "added": planned["added"], "needs_release": planned["needs_release"],
+                       "held": planned.get("held", {})}
+
+
+def report(result):
+    shipped = f"Bundle `mods-{result['omd']}-{result['serial']}` ships {', '.join(result['new'])}." if "serial" in result else \
+        f"Nothing published for OMD {result['omd']}: {result['reason']}."
+    held = [f"- `{identifier}`: " + "; ".join(f"{NEEDS[need]} ({', '.join(map(str, details))})" for need, details in needs.items())
+            for identifier, needs in result.get("held", {}).items()]
+    waiting = bool(held) or result.get("reason", "nothing new to ship") != "nothing new to ship"
+    return "\n".join([shipped, *(["", "Held for the next release. Mods changed together with host code can ship sooner from a "
+                                  "manual Mods run with `api_reviewed` once you have checked they work on the release:", *held]
+                                 if held else [])]) + "\n", waiting
 
 
 def main():
@@ -281,6 +297,12 @@ def main():
     result = plan(args.exclude) if args.command == "plan" else build(args.output.resolve(), args.commit, args.exclude,
                                                                       args.api_reviewed, args.auto)
     print(json.dumps(result, indent=2))
+    if args.command == "build" and (summary := os.environ.get("GITHUB_STEP_SUMMARY")):
+        text, waiting = report(result)
+        with open(summary, "a") as written:
+            written.write(text)
+        if waiting:
+            print("::warning title=Mod changes wait for the next release::" + text.replace("%", "%25").replace("\n", "%0A"))
 
 
 if __name__ == "__main__":

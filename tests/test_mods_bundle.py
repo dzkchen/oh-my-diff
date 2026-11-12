@@ -128,6 +128,10 @@ class Plan(unittest.TestCase):
             mods_bundle.build(Path("/nonexistent"), "c" * 40)
         planned = self.plan(lock(a="a1", b="b1"), {}, features=(), manifests=manifests, log=log, auto=True)
         self.assertEqual((planned["bundle"], planned["excluded"], planned["needs_runtime"]), (["a"], ["b"], {}))
+        text, waiting = mods_bundle.report(planned | {"serial": 1})
+        self.assertTrue(waiting)
+        self.assertIn("ships a.", text)
+        self.assertIn("- `b`: changed together with host code (abc1234)", text)
 
     def test_a_pull_merge_counts_each_change_it_brought_in_on_its_own(self):
         def log(args):
