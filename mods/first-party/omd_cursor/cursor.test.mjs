@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { pendingSettlements, usageReport } from './index.ts';
+import { accountRoute, pendingSettlements, usageReport } from './index.ts';
 import { Router, planHeaders } from './transport.mjs';
 import { callback } from '../../../tests/mod_runner.mjs';
 
@@ -523,12 +523,34 @@ test('each Cursor account runs on its own key and reports its plan usage as a ra
   await new Promise(resolve => setTimeout(resolve, 300));
   const headers = {};
   await call([user('again')], { thread: 'w2', slug: `${model}.work`, headers });
-  assert.deepEqual([headers['x-cursor-limit-name'], headers['x-cursor-primary-used-percent'], headers['x-cursor-primary-window-minutes'], headers['x-cursor-primary-reset-at']],
-    ['Cursor', '62.5', '43200', '1761868800']);
+  assert.deepEqual([headers['x-cursor-work-limit-name'], headers['x-cursor-work-primary-used-percent'], headers['x-cursor-work-primary-window-minutes'], headers['x-cursor-work-primary-reset-at']],
+    ['Cursor (work)', '62.5', '43200', '1761868800']);
+  assert.equal(headers['x-cursor-primary-used-percent'], undefined);
   const other = {};
   await call([user('again')], { thread: 'd2', headers: other });
   assert.equal(other['x-cursor-primary-used-percent'], undefined);
   assert.deepEqual(planHeaders({ unavailable: 'http_403' }), {});
+});
+
+test('Cursor publishes each account route status and keeps its usage through a rate-limit update', () => {
+  const accounts = [{ name: 'default', expires: 9e12, secret: 'p1' }, { name: 'work', expires: 1, secret: 'p2' }];
+  const state = { sdk: '1.0.35', data: '/data', published: true, accounts, models: [{ slug: 'cursor-auto' }, { slug: 'cursor-auto.work' }] };
+  const usage = [{ label: 'billing cycle', used_percent: 62.5, window_minutes: 43200, resets_at: 1761868800000 }];
+  const listed = [{ name: 'cursor', status: { checked_at: 1, installed: true, signed_in: true, models: [], usage } }, { name: 'cursor-work', status: null }];
+  const host = call => call.operation === 'credentials.list' ? [{ id: 'p1', kind: 'secret', status: 'ready' }, { id: 'p2', kind: 'secret', status: 'ready' }]
+    : call.operation === 'routes.list' ? listed : {};
+  const probed = modEvent('timer', { key: 'probe' }, state, host).calls.filter(call => call.operation === 'routes.status').map(call => call.arguments);
+  assert.deepEqual(probed, [
+    { route: 'cursor', installed: true, signed_in: true, version: '1.0.35', models: ['cursor-auto'], usage },
+    { route: 'cursor-work', installed: true, signed_in: false, version: '1.0.35', models: ['cursor-auto.work'], detail: 'the API key expired; run /cursor setup work' }]);
+  const fresh = modEvent('timer', { key: 'probe' }, { ...state, probed_at: Date.now() }, call => call.operation === 'routes.list'
+    ? listed.map(route => ({ ...route, status: { checked_at: Date.now() } })) : host(call));
+  assert.deepEqual(fresh.calls.map(call => call.operation), ['routes.list', 'events.schedule']);
+  const limit = (limitId, usedPercent) => ({ method: 'account/rateLimits/updated', params: { rateLimits: { limitId, primary: { usedPercent, windowDurationMins: 43200, resetsAt: 1761868800 } } } });
+  const updated = modEvent('app_notification', limit('cursor', 70), state, host).calls.filter(call => call.operation === 'routes.status');
+  assert.deepEqual(updated.map(call => call.arguments), [{ installed: true, signed_in: true, models: [], usage: [{ ...usage[0], used_percent: 70 }], route: 'cursor' }]);
+  assert.deepEqual(modEvent('app_notification', limit('other', 70), state, host).calls.filter(call => call.operation === 'routes.status'), []);
+  assert.equal(accountRoute('work'), 'cursor-work');
 });
 
 test('Cursor transport survives aborted uploads and yields the port to a transport with a new key or route', async t => {

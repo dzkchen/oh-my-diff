@@ -204,9 +204,10 @@
     "operations:providers.unregister": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.unregister'"},"decision":"coordination.providers"},
     "operations:receipts.submit": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"api.host.call('receipts.submit'"},"decision":"coordination.contracts"},
     "operations:routes.add": {"status":"frozen","experimental_fields":["model","effort"],"reason":"`model` and `effort` (routes_add_model_v1) were added after 1.0.0.","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('routes.add'"},"decision":"coordination.packages"},
+    "operations:routes.status": {"status":"experimental","reason":"Added after 1.0.0 (route_status_v1) so provider mods publish per-route install, sign-in, model and usage status."},
     "operations:routes.models": {"status":"experimental","reason":"Added after 1.0.0 (routes_add_model_v1) to list the ChatGPT models routes.add accepts."},
     "operations:routes.write": {"status":"experimental","reason":"Added after 1.0.0 for mod-owned provider routes; experimental."},
-    "operations:routes.list": {"status":"frozen","experimental_fields":["data"],"reason":"Route `data` (route_write_v1) was added after 1.0.0.","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('routes.list'"},"decision":"coordination.lead_route"},
+    "operations:routes.list": {"status":"frozen","experimental_fields":["data","status"],"reason":"Route `data` (route_write_v1) and `status` (route_status_v1) were added after 1.0.0.","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('routes.list'"},"decision":"coordination.lead_route"},
     "operations:routes.select": {"status":"frozen","consumer":{"path":"mods/examples/profile_switcher/index.ts","snippet":"api.host.tryCall('routes.select'"},"decision":"coordination.credentials"},
     "operations:session.info": {"status":"frozen","experimental_fields":["process_id","omd_version"],"reason":"`process_id` and `omd_version` were added after 1.0.0.","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},
     "operations:sessions.list": {"status":"frozen","consumer":{"path":"mods/examples/scoped_data/index.ts","snippet":"api.host.tryCall('sessions.list'"},"decision":"shared.session_index"},
@@ -463,8 +464,8 @@
       "id": "coordination.providers",
       "group": "coordination",
       "decision": "Local model providers",
-      "observe": "`routes.list` shows the provider route once ready",
-      "alter": "none",
+      "observe": "`routes.list` shows the provider route once ready, with the latest status its provider mod published",
+      "alter": "`routes.status` publishes a route's install, sign-in, model and usage status for every reader in this process",
       "replace": null,
       "timing": "start, resume and turn start",
       "ownership": "mod: registers a granted local provider; host: the grant, loopback address, readiness handshake and accounting",
@@ -479,7 +480,8 @@
         "operations": [
           "providers.models",
           "providers.register",
-          "providers.unregister"
+          "providers.unregister",
+          "routes.status"
         ]
       }
     },

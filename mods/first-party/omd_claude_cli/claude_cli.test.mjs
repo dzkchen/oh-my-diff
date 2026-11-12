@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { CLI_MINIMUM, cliSupported, translateRequest, responseEvents } from './index.ts';
 import { discover, publishable } from './setup.mjs';
-import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withCachedHistory, withoutCliContext } from './transport.mjs';
+import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, limitHeaders, runClaude, upstreamFailure, withCachedHistory, withoutCliContext } from './transport.mjs';
 
 const CLI_VERSION = `${CLI_MINIMUM} (Claude Code)`;
 
@@ -688,7 +688,8 @@ function modEvent(event, payload, state, answer, name) {
   const calls = [];
   const output = callback({ virtual_time_ms: clock, source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings: {}, package: { id: manifest.id }, state, event, payload, name }, call => {
     calls.push(call);
-    return answer(call);
+    const value = answer(call);
+    return call.operation === 'routes.list' && !Array.isArray(value) ? [] : value;
   });
   assert.equal(output.error, undefined, output.error);
   return { state: output.state, calls, value: output.value };
@@ -736,6 +737,9 @@ test('login runs as a background process that says the sign-in link once and rep
   assert.equal(channel('login', { billing: 'api', account: 'work' }, null).calls.find(call => call.operation === 'process.start').arguments.session, session);
   assert.deepEqual(start, { name: 'node', path: '/bin/node', sha256: 'a', sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
   assert.deepEqual([argv[0], argv[1], JSON.parse(argv[3]), argv[4]], ['--input-type=module', '-e', ['auth', 'login', '--console'], '/store/routes/claude/accounts/work']);
+  const cached = modEvent('channel', { channel: 'omd_claude_cli/login', data: { billing: 'subscription', account: 'crew' } }, null,
+    answer('', true, undefined, [{ id: 'omd_claude_cli', path: '/store/package-cache/omd_claude_cli/0123abcd' }]));
+  assert.equal(cached.calls.find(call => call.operation === 'process.start').arguments.arguments[4], '/store/routes/claude/accounts/crew');
   const root = mkdtempSync(join(tmpdir(), 'omd-claude-login-'));
   try {
     writeFileSync(join(root, 'claude'), '#!/bin/sh\necho "$1|$ANTHROPIC_API_KEY|$CLAUDE_SECURESTORAGE_CONFIG_DIR|$CLAUDE_CODE_OAUTH_TOKEN|$CLAUDE_CONFIG_DIR|$KEEP"\n', { mode: 0o755 });
@@ -800,6 +804,7 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
   const accounts = [{ name: 'default', billing: 'subscription', config_dir: null, models: 3 }, { name: 'work', billing: 'api', config_dir: '/accounts/work', models: 2 }];
   const signedIn = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', email: 'me@example.com' });
   const listed = modEvent('command', '', { accounts, models: [], published: true }, call => {
+    if (call.operation !== 'exec.run') return {};
     assert.deepEqual(JSON.parse(call.arguments.argv[2]), ['', '/accounts/work']);
     return { exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [signedIn, null] }), stderr: '' };
   }, 'claude').value.display;
@@ -814,6 +819,37 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
   assert.deepEqual(login('login').calls[0].arguments, { channel: 'login', data: { billing: 'subscription', account: 'default' } });
   assert.equal(login('login Work').calls.length, 0);
   assert.deepEqual(login('remove work', { accounts }).calls[0].arguments, { channel: 'remove', data: { account: 'work' } });
+});
+
+test('each account publishes its route status, and its own rate-limit family refreshes the usage', () => {
+  const accounts = [{ name: 'default', billing: 'subscription', config_dir: null, models: 1 }, { name: 'work', billing: 'subscription', config_dir: '/accounts/work', models: 1 }];
+  const models = [{ slug: 'claude-opus-5-5' }, { slug: 'claude-opus-5-5.work' }];
+  const signedIn = JSON.stringify({ loggedIn: true, apiProvider: 'firstParty', authMethod: 'claude.ai', subscriptionType: 'max' });
+  const probed = modEvent('command', '', { accounts, models, published: true }, call => call.operation === 'exec.run'
+    ? { exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [signedIn, null] }), stderr: '' } : {}, 'claude');
+  assert.deepEqual(probed.calls.filter(call => call.operation === 'routes.status').map(call => call.arguments), [
+    { route: 'claude', installed: true, signed_in: true, version: CLI_VERSION, models: ['claude-opus-5-5'] },
+    { route: 'claude-work', installed: true, signed_in: false, version: CLI_VERSION, models: ['claude-opus-5-5.work'], detail: 'not signed in; run /claude login work' }]);
+  assert.equal(probed.state.probed_at, clock, 'the probe time is kept apart from the status checked_at a usage republish refreshes');
+  const timed = modEvent('command', '', { accounts, models, published: true }, call => call.operation === 'exec.run' ? { exit_code: 0, stdout: '{}', stderr: '' } : {}, 'claude');
+  assert.equal(timed.calls.find(call => call.operation === 'exec.run').arguments.timeout_ms, 25_000, 'the probe run outlasts its version and per-account sign-in checks');
+  const missing = modEvent('command', '', { accounts: [accounts[0]], models, published: true }, call => call.operation === 'exec.run'
+    ? { exit_code: 0, stdout: JSON.stringify({ version: null, auth: [null] }), stderr: '' } : {}, 'claude');
+  const [absent] = missing.calls.filter(call => call.operation === 'routes.status').map(call => call.arguments);
+  assert.deepEqual([absent.installed, absent.signed_in], [false, false]);
+  assert.match(absent.detail, /Claude CLI was not found/);
+  const current = { installed: true, signed_in: true, version: CLI_VERSION, models: ['claude-opus-5-5.work'], usage: null, detail: null, checked_at: 5 };
+  const routes = [{ name: 'claude-work', status: current }];
+  const limits = { limitId: 'claude_work', primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1_900_000_000 }, secondary: { usedPercent: 7, windowDurationMins: 10080 } };
+  const updated = modEvent('app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: limits } }, { accounts, models }, call => call.operation === 'routes.list' ? routes : {});
+  assert.deepEqual(updated.calls.filter(call => call.operation === 'routes.status').map(call => call.arguments), [{ route: 'claude-work', installed: true, signed_in: true, version: CLI_VERSION,
+    models: ['claude-opus-5-5.work'], usage: [{ label: '5h', used_percent: 42, window_minutes: 300, resets_at: 1_900_000_000_000 }, { label: '7d', used_percent: 7, window_minutes: 10080, resets_at: null }] }], 'a republish sends no null fields');
+  const other = modEvent('app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: { ...limits, limitId: 'claude' } } }, { accounts, models }, call => call.operation === 'routes.list' ? [] : {});
+  assert.equal(other.calls.filter(call => call.operation === 'routes.status').length, 0, 'an account never probed keeps no usage-only status');
+  assert.deepEqual(Object.keys(limitHeaders({ 'anthropic-ratelimit-unified-5h-utilization': '0.5' }, 'note', 'work')).sort(),
+    ['x-claude-work-limit-name', 'x-claude-work-primary-used-percent', 'x-claude-work-primary-window-minutes', 'x-omd-provider-note']);
+  assert.equal(limitHeaders({}, 'note')['x-claude-limit-name'], 'Claude');
+  assert.equal(limitHeaders({}, 'note', 'work')['x-claude-work-limit-name'], 'Claude (work)');
 });
 
 test('a tool whose schema is a top-level union reaches Claude as one object schema', () => {

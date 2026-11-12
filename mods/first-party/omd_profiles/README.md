@@ -33,6 +33,12 @@ The meter shows the current thread's account and its last reported usage:
 
 When another account is selected, the meter shows `/new → NAME`. A failed selection leaves the current thread usable.
 
+`/profile` and `/profile list` also show each account's route status as its provider mod last reported it: signed in
+or why it can't be used, how many models it serves, its usage windows when the meter hasn't seen them, and when it was
+checked. Claude and Cursor accounts report through their mods. This mod reports its own API-key and ChatGPT profiles
+signed in while their sign-in is stored. Local Ollama and the built-in Codex account report no status, so their rows
+show none.
+
 | Command | What it does |
 | --- | --- |
 | `/profile` | Open account management: select, reconnect, remove or add an account |

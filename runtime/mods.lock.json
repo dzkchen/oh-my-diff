@@ -129,18 +129,19 @@
         "events",
         "packages",
         "inventory",
-        "store"
+        "store",
+        "threads"
       ],
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "ae8b9427a7dfef0b85cf8dfd1a08ffaa5504fac59fa483098bc7f7d82a93f88a",
-        "mod.json": "d1fe1b52156e1a467905e70c6339155629b600086ae0f1bc7d797e0bd7c9c240",
+        "index.ts": "269a813287c1b813b158a01fa99dec8fe1989915f6895700d0fee2ea75c5d28e",
+        "mod.json": "93897193b7b228deda753619657cb8d5b1217e55d2f8ba6f03ab455656ac77ff",
         "setup.mjs": "37f0b1dc81b0b51bf4349ecfd77207c5b55fb187f80e666817b3d5ebf770020c",
-        "transport.mjs": "4f85584f8e53141d39e8520baf1b6864d571f18c25140b27389699a547903e33"
+        "transport.mjs": "23ddf80c9b4dbaf354010b51da15e38ceeb47e4094144ab7843775b273e77f34"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "bac6ca9c692f8506d205e4bbeaa8a1b0f4d5b4603ebcc93645bf18a4add47d06",
+      "package_sha256": "a6943d01e905358d5654a1dea2b1cf2f9f26e9d10454d20ec10f6c0bdb5e99c1",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.3"
     },
@@ -172,19 +173,20 @@
         "events",
         "packages",
         "inventory",
+        "threads",
         "credentials",
         "store"
       ],
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "665d79af2c07e6031d43544edac25f2389bcd8b53ee1c8c88b9584be8f834329",
-        "mod.json": "041d4da7f1e9bb3e0d2f6764c4de475139f79c29670e6bf9157a84540485c0fa",
+        "index.ts": "6b38d308121d55ea68eec3dd3f7d67d74da8d79a2a253276e94c197b21dbaa71",
+        "mod.json": "f240f388015ccd6e0028475e8c72b3c3bbaba193372b3ffabf59b59877f5bd81",
         "setup.mjs": "f5000fdab138b690618fbacf2e1aa1f851df311179b284026156f23c8b67eecb",
-        "transport.mjs": "1558a539b2816947bbc1e49dd492f151ec896dfff816d2555be3a80f07230abf"
+        "transport.mjs": "1bbd3e827c4714c160fe09b3908d57b503cb42e84634c96d3e7c8858e0003ffe"
       },
       "id": "omd_cursor",
-      "package_sha256": "0cce0e33ca66eafe4da099603b9ac0214f42fb0dfa04e8b489ae5120b18219db",
+      "package_sha256": "35fa690ecf58dc8e44571a0e3ab7f9d0ce7931bcdd0df7f4644339ffda3aa2a4",
       "source": "mods/first-party/omd_cursor",
       "version": "1.0.1"
     },
@@ -674,14 +676,14 @@
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "db38f7b61f0af8ccd71735471ff1cd67015d3b4439b854b0cf835f59265529e1",
+        "index.ts": "81c98b806a276dda1a6d8471b442c87449f1a80febb80b3828f7152edaa49f4e",
         "mod.json": "3f3f0c134722746e71f96762399fc3f498334ffae13fef330f4a31dd93cb6bee",
         "profiles.ts": "055218534d017dc89da265abc6d5a0e21253a781367ce329f3a7d8c5ebd532e4",
         "router.mjs": "8af36400c295812c48a26998e709161bb66973e4592a200be033d7542dbe5449",
         "setup.mjs": "4d990d7f41c51cdbaefac9c7160536c52533cb96308dfc7677649df31ae6db3b"
       },
       "id": "omd_profiles",
-      "package_sha256": "80342ab46c01d1e026c138853fef8d7fe8a34d0b0c8bb3b02084b102fa40d8af",
+      "package_sha256": "bbf3ca573ec905d77eab7ad4171013e18743265a7ea8acdf89976a89c35c77c1",
       "source": "mods/first-party/omd_profiles",
       "version": "1.0.2"
     },
@@ -774,11 +776,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "277152366c8f13e59c4261304ddf22459f71e53f74f68b2eb0097bd6f947d99d",
+        "index.ts": "525bdd907853baf4fef104402d7ab11f616b27bf212ea1cc2be4e7fba252838d",
         "mod.json": "b1c05b702ec402b115faac885c6f986072c4e59a5c3a931a31b7533283e1e436"
       },
       "id": "omd_subagent_router",
-      "package_sha256": "d3f456072f2144197ed24e2e7519dff3a3ff3a850f47b274ee9f7217fc5e8506",
+      "package_sha256": "fd0e41ea050667aecd0747753e653ebd42d28f4fe07bf77af72802cdaaa476ce",
       "source": "mods/first-party/omd_subagent_router",
       "version": "1.0.1"
     },

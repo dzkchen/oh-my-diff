@@ -81994,10 +81994,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7896c0bfd6122fafb9c9887f9d65c1a9f658ff43
+index 0000000000000000000000000000000000000000..d3bc26b4a81a1d384c10a79d16d03f7f8cced107
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,3093 @@
+@@ -0,0 +1,3094 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -82015,6 +82015,7 @@ index 0000000000000000000000000000000000000000..7896c0bfd6122fafb9c9887f9d65c1a9
 +mod peering;
 +mod persisted;
 +mod roles;
++mod route_status;
 +pub(crate) mod services;
 +mod snapshots;
 +mod tools;
@@ -101938,10 +101939,10 @@ index 0000000000000000000000000000000000000000..c1cde7db1547ed5a37e2ab6a8f0dc8e7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9f0ff35cbfa56bcdbf204a56cbe2db668d7e8e1f
+index 0000000000000000000000000000000000000000..1edec67beb2db39ba51f24e721a02d21fb047fb8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,903 @@
+@@ -0,0 +1,908 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::ModInvokeOptions;
@@ -102019,6 +102020,7 @@ index 0000000000000000000000000000000000000000..9f0ff35cbfa56bcdbf204a56cbe2db66
 +                        | "model.complete"
 +                        | "model.fork"
 +                        | "routes.list"
++                        | "routes.status"
 +                        | "session.info"
 +                        | "tools.list"
 +                        | "turns.activity"
@@ -102047,7 +102049,8 @@ index 0000000000000000000000000000000000000000..9f0ff35cbfa56bcdbf204a56cbe2db66
 +    json!({"name": route.name, "model": route.model, "provider": route.provider,
 +        "reasoning": route.reasoning_effort, "roles": route.roles,
 +        "billing": accounting::billing(Some(&route.rates)),
-+        "tools": route.tools, "available": available, "credential": route.credential})
++        "tools": route.tools, "available": available, "credential": route.credential,
++        "status": super::route_status::latest(route)})
 +}
 +
 +async fn authority(lead: &Lead, call: Option<&ToolCall<'_>>) -> Result<WorkspaceAuthority, String> {
@@ -102573,6 +102576,9 @@ index 0000000000000000000000000000000000000000..9f0ff35cbfa56bcdbf204a56cbe2db66
 +                })
 +                .collect::<Vec<_>>()
 +        )),
++        "routes.status" => {
++            super::route_status::publish(&host.route_config().0, caller.id, request.arguments)
++        }
 +        "ledger.settle" => {
 +            let arguments = &request.arguments;
 +            let (Some(request_id), Some(microusd), Some(source)) = (
@@ -103686,12 +103692,184 @@ index 0000000000000000000000000000000000000000..f4ec1db7bc05c39f15521baa37c8e6d1
 +        model.unwrap_or_default()
 +    ))
 +}
+diff --git a/codex-rs/ext/omd/src/mods/route_status.rs b/codex-rs/ext/omd/src/mods/route_status.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ab137ae0ae7249559f09233845fcf28f0d74c4ea
+--- /dev/null
++++ b/codex-rs/ext/omd/src/mods/route_status.rs
+@@ -0,0 +1,108 @@
++use serde::Deserialize;
++use serde::Serialize;
++use serde_json::Value;
++use serde_json::json;
++use std::collections::BTreeMap;
++use std::sync::Mutex;
++
++const TEXT_BYTES: usize = 256;
++const NAME_BYTES: usize = 128;
++const MODELS: usize = 64;
++const WINDOWS: usize = 4;
++
++#[derive(Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++struct Window {
++    label: String,
++    used_percent: f64,
++    #[serde(default)]
++    window_minutes: Option<u64>,
++    #[serde(default)]
++    resets_at: Option<u64>,
++}
++
++#[derive(Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++struct Status {
++    route: String,
++    installed: bool,
++    signed_in: bool,
++    #[serde(default)]
++    version: Option<String>,
++    #[serde(default)]
++    models: Option<Vec<String>>,
++    #[serde(default)]
++    usage: Option<Vec<Window>>,
++    #[serde(default)]
++    detail: Option<String>,
++}
++
++static PUBLISHED: Mutex<BTreeMap<String, (String, Value)>> = Mutex::new(BTreeMap::new());
++
++fn invalid(status: &Status) -> bool {
++    let long = |text: &str, max: usize| text.is_empty() || text.len() > max;
++    status.version.as_deref().is_some_and(|v| long(v, NAME_BYTES))
++        || status.detail.as_deref().is_some_and(|d| long(d, TEXT_BYTES))
++        || status.models.as_ref().is_some_and(|models| {
++            models.len() > MODELS || models.iter().any(|m| long(m, NAME_BYTES))
++        })
++        || status.usage.as_ref().is_some_and(|usage| {
++            usage.len() > WINDOWS
++                || usage.iter().any(|w| {
++                    long(&w.label, NAME_BYTES) || !(0.0..=100.0).contains(&w.used_percent)
++                })
++        })
++}
++
++pub(super) fn publish(
++    config: &crate::config::HostConfig,
++    mod_id: &str,
++    arguments: Value,
++) -> Result<Value, String> {
++    let status: Status =
++        serde_json::from_value(arguments).map_err(|_| "route_status_invalid".to_string())?;
++    if invalid(&status) {
++        return Err("route_status_invalid".into());
++    }
++    let route = config
++        .routes
++        .iter()
++        .find(|route| route.name == status.route)
++        .ok_or_else(|| format!("route_not_configured: {}", status.route))?;
++    if !config
++        .services
++        .iter()
++        .any(|grant| grant.provides(mod_id, &route.provider))
++    {
++        return Err(format!("route_status_not_provider: {}", status.route));
++    }
++    let checked_at = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map_or(0, |elapsed| elapsed.as_millis() as u64);
++    let mut value = serde_json::to_value(&status).map_err(|error| error.to_string())?;
++    value["checked_at"] = json!(checked_at);
++    if let Some(object) = value.as_object_mut() {
++        object.remove("route");
++    }
++    let mut published = PUBLISHED.lock().map_err(|_| "route_status_poisoned")?;
++    published.retain(|name, _| config.routes.iter().any(|route| &route.name == name));
++    published.insert(status.route.clone(), (route.provider.clone(), value));
++    Ok(json!({"route": status.route, "checked_at": checked_at}))
++}
++
++pub(super) fn latest(route: &crate::config::Route) -> Value {
++    PUBLISHED
++        .lock()
++        .ok()
++        .and_then(|published| {
++            published
++                .get(&route.name)
++                .filter(|(provider, _)| provider == &route.provider)
++                .map(|(_, value)| value.clone())
++        })
++        .unwrap_or(Value::Null)
++}
++
++#[cfg(test)]
++#[path = "route_status_tests.rs"]
++mod tests;
+diff --git a/codex-rs/ext/omd/src/mods/route_status_tests.rs b/codex-rs/ext/omd/src/mods/route_status_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d15304ce82d55eccc8da90ae5c2a6c5bc833a378
+--- /dev/null
++++ b/codex-rs/ext/omd/src/mods/route_status_tests.rs
+@@ -0,0 +1,52 @@
++use super::*;
++use crate::config::HostConfig;
++
++fn config() -> HostConfig {
++    let route = |name: &str, provider: &str| {
++        json!({"name": name, "roles": ["lead"], "provider": provider, "model": name,
++            "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:9/v1/responses",
++            "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0, "output_microusd_per_million": 0,
++                "reservation_microusd": 0, "max_output_tokens": 10, "input_token_ceiling": 100, "included_subscription": true}})
++    };
++    serde_json::from_value(json!({"schema": 1,
++        "routes": [route("status-work", "fixture"), route("status-other", "elsewhere")],
++        "services": [{"id": "fixture", "mod_id": "fixture_mod", "program": "/bin/true",
++            "program_sha256": "0".repeat(64), "route": route("status-work", "fixture")}]}))
++    .unwrap()
++}
++
++#[test]
++fn only_the_provider_mod_publishes_bounded_status() {
++    let config = config();
++    let work = config.routes.iter().find(|r| r.name == "status-work").unwrap();
++    assert_eq!(latest(work), Value::Null);
++    let published = publish(&config, "fixture_mod", json!({"route": "status-work", "installed": true,
++        "signed_in": false, "models": ["a"], "usage": [{"label": "5h", "used_percent": 42.5, "resets_at": 1}]}))
++    .unwrap();
++    let status = latest(work);
++    assert_eq!(status["checked_at"], published["checked_at"]);
++    assert_eq!(status["signed_in"], false);
++    assert_eq!(status["usage"][0]["used_percent"], 42.5);
++    assert_eq!(status.get("route"), None);
++
++    assert_eq!(
++        publish(&config, "other_mod", json!({"route": "status-work", "installed": true, "signed_in": true})),
++        Err("route_status_not_provider: status-work".into())
++    );
++    assert_eq!(
++        publish(&config, "fixture_mod", json!({"route": "status-other", "installed": true, "signed_in": true})),
++        Err("route_status_not_provider: status-other".into())
++    );
++    assert_eq!(
++        publish(&config, "fixture_mod", json!({"route": "missing", "installed": true, "signed_in": true})),
++        Err("route_not_configured: missing".into())
++    );
++    for invalid in [
++        json!({"route": "status-work", "installed": true}),
++        json!({"route": "status-work", "installed": true, "signed_in": true, "usage": [{"label": "5h", "used_percent": 101}]}),
++        json!({"route": "status-work", "installed": true, "signed_in": true, "detail": "x".repeat(257)}),
++        json!({"route": "status-work", "installed": true, "signed_in": true, "extra": 1}),
++    ] {
++        assert_eq!(publish(&config, "fixture_mod", invalid), Err("route_status_invalid".into()));
++    }
++}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0fb29a96be70d3c9487b14193eabcdeac8208ebd
+index 0000000000000000000000000000000000000000..80174548a26a8ca58cc1a8a572619b18ff9fd946
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1167 @@
+@@ -0,0 +1,1171 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -103771,6 +103949,10 @@ index 0000000000000000000000000000000000000000..0fb29a96be70d3c9487b14193eabcdea
 +}
 +
 +impl Grant {
++    pub(crate) fn provides(&self, mod_id: &str, provider: &str) -> bool {
++        self.mod_id == mod_id && self.route.as_ref().is_some_and(|route| route.provider == provider)
++    }
++
 +    pub(crate) fn billed_rates(&self, provider: &str) -> Option<&crate::accounting::Rates> {
 +        self.route
 +            .as_ref()
@@ -131264,10 +131446,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..45581127cceb6f28703acbe93e6d945d152a7bfd
+index 0000000000000000000000000000000000000000..e424798b7ce4d5ae770e88ba1ed3d9e7451ea944
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7670 @@
+@@ -0,0 +1,7672 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -131683,6 +131865,7 @@ index 0000000000000000000000000000000000000000..45581127cceb6f28703acbe93e6d945d
 +    "terminal_welcome_hidden_v1",
 +    "routes_add_self_v1",
 +    "routes_add_model_v1",
++    "route_status_v1",
 +    "package_needs_approval_v1",
 +    "package_contributes_v1",
 +    "plugin_components_v1",
@@ -131713,6 +131896,7 @@ index 0000000000000000000000000000000000000000..45581127cceb6f28703acbe93e6d945d
 +    "sessions.read",
 +    "sessions.snapshot",
 +    "routes.list",
++    "routes.status",
 +    "task.status",
 +    "task.complete",
 +    "receipts.submit",
@@ -140159,10 +140343,10 @@ index 0000000000000000000000000000000000000000..052d25b4c15575e0dad9c8dc04378bed
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ed9122dc7b67cfe9f83b717d6354575638ab7bfd
+index 0000000000000000000000000000000000000000..2d48478b4b0cfaff7db8fd68a761c00a51018df9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,561 @@
+@@ -0,0 +1,562 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -140222,6 +140406,7 @@ index 0000000000000000000000000000000000000000..ed9122dc7b67cfe9f83b717d63545756
 +                Ok("sessions")
 +            }
 +            "routes.list"
++            | "routes.status"
 +            | "providers.register"
 +            | "providers.unregister"
 +            | "providers.models"
@@ -144038,10 +144223,10 @@ index 0000000000000000000000000000000000000000..2578643ad1a53470dfcda2331596e5bc
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..e77e3ebb5fae43c4d29415d40259a38c8c8d7ea6
+index 0000000000000000000000000000000000000000..c3b737f6f35a3a6763dd02dee022328dd404f4a7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,233 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -144076,99 +144261,100 @@ index 0000000000000000000000000000000000000000..e77e3ebb5fae43c4d29415d40259a38c
 +    "sessions.list": {"arguments":{"type":"object","properties":{"since":{"type":"string"},"until":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"sessions":{"type":"array","items":{"$ref":"#/$defs/24"}},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]},"revision":{"type":"string"},"scan_truncated":{"type":"boolean"},"unavailable":{"type":"number"},"projection":{"type":"string"}},"required":["sessions","cursor","revision","scan_truncated","unavailable","projection"]}},
 +    "sessions.read": {"arguments":{"type":"object","properties":{"session_id":{"type":"string"},"revision":{"type":"string"},"handle":{"type":"string"},"cursor":{"type":"number"},"max_bytes":{"type":"number"}},"required":["session_id","revision","handle"]},"result":{"type":"object","properties":{"session":{"$ref":"#/$defs/24"},"records":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/25"},{"type":"object","properties":{"kind":{"const":"message"},"role":{"anyOf":[{"const":"user"},{"const":"assistant"}]},"text":{"type":"string"},"truncated":{"type":"boolean"},"redacted":{"type":"boolean"}},"required":["kind","role","text","truncated","redacted"]}]},{"allOf":[{"$ref":"#/$defs/25"},{"$ref":"#/$defs/26"},{"$ref":"#/$defs/27"}]},{"allOf":[{"$ref":"#/$defs/25"},{"$ref":"#/$defs/26"},{"type":"object","properties":{"arguments":{"type":"string"}},"required":["arguments"]},{"$ref":"#/$defs/28"}]},{"allOf":[{"$ref":"#/$defs/25"},{"$ref":"#/$defs/29"},{"$ref":"#/$defs/27"}]},{"allOf":[{"$ref":"#/$defs/25"},{"$ref":"#/$defs/29"},{"type":"object","properties":{"output":{"type":"string"}},"required":["output"]},{"$ref":"#/$defs/28"}]}]}},"cursor":{"anyOf":[{"type":"null"},{"type":"number"}]},"bytes":{"type":"number"},"projection":{"type":"string"},"projection_truncated":{"type":"boolean"}},"required":["session","records","cursor","bytes","projection","projection_truncated"]}},
 +    "sessions.snapshot": {"arguments":{"type":"object","properties":{"call_ids":{"type":"array","items":{"type":"string"}}},"required":[]},"result":{"type":"object","properties":{"evidence":{"$ref":"#/$defs/1"},"provenance":{"$ref":"#/$defs/30"}},"required":["evidence","provenance"]}},
-+    "routes.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/33"}}},
-+    "routes.add": {"arguments":{"type":"object","properties":{"mod":{"type":"string"},"model":{"type":"string"},"effort":{"type":"string"}},"required":[]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]}},
++    "routes.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/38"}}},
++    "routes.add": {"arguments":{"type":"object","properties":{"mod":{"type":"string"},"model":{"type":"string"},"effort":{"type":"string"}},"required":[]},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]}},
 +    "routes.models": {"arguments":{"type":"object","properties":{"mod":{"type":"string"}},"required":[]},"result":{"type":"array","items":{"type":"object","properties":{"model":{"type":"string"},"display_name":{"type":"string"},"efforts":{"type":"array","items":{"type":"string"}},"default_effort":{"type":"string"},"context_window":{"type":"number"}},"required":["model","display_name","efforts","default_effort","context_window"]}}},
-+    "routes.write": {"arguments":{"type":"object","properties":{"routes":{"type":"array","items":{"$ref":"#/$defs/36"}},"services":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"credentials":{"type":"array","items":{"type":"string"}},"route":{"$ref":"#/$defs/36"}},"required":["id"]}}},"required":["routes"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"routes":{"type":"array","items":{"type":"string"}},"services":{"type":"array","items":{"type":"string"}},"unchanged":{"const":true}},"required":["routes","services"]}]}},
++    "routes.write": {"arguments":{"type":"object","properties":{"routes":{"type":"array","items":{"$ref":"#/$defs/41"}},"services":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"credentials":{"type":"array","items":{"type":"string"}},"route":{"$ref":"#/$defs/41"}},"required":["id"]}}},"required":["routes"]},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"type":"object","properties":{"routes":{"type":"array","items":{"type":"string"}},"services":{"type":"array","items":{"type":"string"}},"unchanged":{"const":true}},"required":["routes","services"]}]}},
 +    "task.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"ledger":{"type":"object","properties":{"thread_id":{"type":"string"},"cwd":{"type":"string"},"cost":{}},"required":["thread_id","cwd","cost"]},"limits":{},"worker_limits":{}},"required":["ledger","limits","worker_limits"]}},
-+    "task.complete": {"arguments":{"type":"object","properties":{"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"}},"required":["candidate_sha256"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"const":"completed"},"receipts":{"$ref":"#/$defs/42"}},"required":["status","receipts"]},{"type":"object","properties":{"status":{"const":"refused"},"missing":{"$ref":"#/$defs/20"}},"required":["status","missing"]},{"type":"object","properties":{"status":{"const":"refused"},"reason":{"const":"unresolved_blocking_findings"},"outstanding_findings":{"type":"array","items":{"type":"string"}}},"required":["status","reason","outstanding_findings"]}]}},
-+    "receipts.submit": {"arguments":{"type":"object","properties":{"kind":{"type":"string"},"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"outcome":{"anyOf":[{"const":"fail"},{"const":"pass"}]},"evidence":{"$ref":"#/$defs/1"},"agent":{"type":"string"},"execution":{"anyOf":[{"const":false},{"const":true}]},"findings":{"$ref":"#/$defs/40"},"resolves":{"type":"array","items":{"type":"string"}}},"required":["kind","candidate_sha256","outcome","evidence"]},"result":{"$ref":"#/$defs/41"}},
-+    "contract.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"none"},{"const":"active"},{"const":"unavailable"}]},"active":{"anyOf":[{"type":"null"},{"type":"object","properties":{"schema":{"const":2},"id":{"type":"string"},"version":{"type":"number"},"description":{"type":"string"},"assurance":{"type":"string"},"gates":{"type":"object","properties":{"complete":{"$ref":"#/$defs/20"},"integrate":{"$ref":"#/$defs/20"}},"required":[]},"restrict":{"type":"array","items":{"type":"string"}}},"required":["schema","id","version","description","assurance","gates"]}]},"provenance":{},"receipts":{"$ref":"#/$defs/42"},"finding_ledger":{"type":"object","properties":{},"required":[],"additionalProperties":{"type":"object","properties":{"finding":{"$ref":"#/$defs/39"},"reported_candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"reported_producer":{"$ref":"#/$defs/38"},"report_receipt_index":{"type":"number"},"resolution":{"anyOf":[{"type":"null"},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"producer":{"$ref":"#/$defs/38"},"receipt_index":{"type":"number"}},"required":["candidate_sha256","producer","receipt_index"]}]}},"required":["finding","reported_candidate_sha256","acceptance_sha256","reported_producer","report_receipt_index","resolution"]}},"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/46"}},"required":["status","active","provenance","receipts","finding_ledger","restrictions","scoped_restrictions"]}},
-+    "contract.restrict": {"arguments":{"type":"object","properties":{"operations":{"type":"array","items":{"type":"string"}},"scoped":{"$ref":"#/$defs/46"},"reason":{"type":"string"}},"required":["reason"]},"result":{"type":"object","properties":{"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/46"}},"required":["restrictions","scoped_restrictions"]}},
-+    "contract.select": {"arguments":{"type":"object","properties":{"contract":{"type":"string"}},"required":["contract"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"selected":{},"applies":{"const":"next_session"}},"required":["selected","applies"]}]}},
++    "task.complete": {"arguments":{"type":"object","properties":{"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"}},"required":["candidate_sha256"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"const":"completed"},"receipts":{"$ref":"#/$defs/47"}},"required":["status","receipts"]},{"type":"object","properties":{"status":{"const":"refused"},"missing":{"$ref":"#/$defs/20"}},"required":["status","missing"]},{"type":"object","properties":{"status":{"const":"refused"},"reason":{"const":"unresolved_blocking_findings"},"outstanding_findings":{"type":"array","items":{"type":"string"}}},"required":["status","reason","outstanding_findings"]}]}},
++    "receipts.submit": {"arguments":{"type":"object","properties":{"kind":{"type":"string"},"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"outcome":{"anyOf":[{"const":"fail"},{"const":"pass"}]},"evidence":{"$ref":"#/$defs/1"},"agent":{"type":"string"},"execution":{"anyOf":[{"const":false},{"const":true}]},"findings":{"$ref":"#/$defs/45"},"resolves":{"type":"array","items":{"type":"string"}}},"required":["kind","candidate_sha256","outcome","evidence"]},"result":{"$ref":"#/$defs/46"}},
++    "contract.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"none"},{"const":"active"},{"const":"unavailable"}]},"active":{"anyOf":[{"type":"null"},{"type":"object","properties":{"schema":{"const":2},"id":{"type":"string"},"version":{"type":"number"},"description":{"type":"string"},"assurance":{"type":"string"},"gates":{"type":"object","properties":{"complete":{"$ref":"#/$defs/20"},"integrate":{"$ref":"#/$defs/20"}},"required":[]},"restrict":{"type":"array","items":{"type":"string"}}},"required":["schema","id","version","description","assurance","gates"]}]},"provenance":{},"receipts":{"$ref":"#/$defs/47"},"finding_ledger":{"type":"object","properties":{},"required":[],"additionalProperties":{"type":"object","properties":{"finding":{"$ref":"#/$defs/44"},"reported_candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"reported_producer":{"$ref":"#/$defs/43"},"report_receipt_index":{"type":"number"},"resolution":{"anyOf":[{"type":"null"},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"producer":{"$ref":"#/$defs/43"},"receipt_index":{"type":"number"}},"required":["candidate_sha256","producer","receipt_index"]}]}},"required":["finding","reported_candidate_sha256","acceptance_sha256","reported_producer","report_receipt_index","resolution"]}},"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/51"}},"required":["status","active","provenance","receipts","finding_ledger","restrictions","scoped_restrictions"]}},
++    "contract.restrict": {"arguments":{"type":"object","properties":{"operations":{"type":"array","items":{"type":"string"}},"scoped":{"$ref":"#/$defs/51"},"reason":{"type":"string"}},"required":["reason"]},"result":{"type":"object","properties":{"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/51"}},"required":["restrictions","scoped_restrictions"]}},
++    "contract.select": {"arguments":{"type":"object","properties":{"contract":{"type":"string"}},"required":["contract"]},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"type":"object","properties":{"selected":{},"applies":{"const":"next_session"}},"required":["selected","applies"]}]}},
 +    "agents.spawn": {"arguments":{"type":"object","properties":{"role":{"type":"string"},"route":{"type":"string"},"prompt":{"type":"string"},"definition":{"type":"string"},"workspace":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"tools":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/1"},"snapshot":{"$ref":"#/$defs/1"},"parent_history":{"anyOf":[{"const":false},{"const":true}]},"resolution_context":{"type":"object","properties":{"acceptance_sha256":{"type":"string"},"findings":{"type":"array","items":{"type":"string"}}},"required":["acceptance_sha256","findings"]},"model":{"type":"string"},"hold_failure":{"anyOf":[{"const":false},{"const":true}]}},"required":["prompt"]},"result":{"type":"object","properties":{"handle":{"type":"string"},"route":{"type":"string"},"permissions":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"parent_history":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/30"}]}},"required":["handle","route","permissions"]}},
 +    "agents.message": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"message":{"type":"string"}},"required":["handle","message"]},"result":{"type":"object","properties":{"delivered":{"type":"boolean"}},"required":["delivered"]}},
 +    "agents.cancel": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"deliver":{"anyOf":[{"const":false},{"const":true}]}},"required":["handle"]},"result":{"type":"object","properties":{"cancelled":{"type":"boolean"},"delivered":{"anyOf":[{"const":false},{"const":true},{"const":"pending"}]}},"required":["cancelled","delivered"]}},
-+    "agents.result": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"consume":{"anyOf":[{"const":false},{"const":true}]},"claim":{"anyOf":[{"const":false},{"const":true}]}},"required":["handle"]},"result":{"$ref":"#/$defs/53"}},
-+    "agents.wait": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"consume":{"anyOf":[{"const":false},{"const":true}]}},"required":["handle"]},"result":{"$ref":"#/$defs/53"}},
++    "agents.result": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"consume":{"anyOf":[{"const":false},{"const":true}]},"claim":{"anyOf":[{"const":false},{"const":true}]}},"required":["handle"]},"result":{"$ref":"#/$defs/58"}},
++    "agents.wait": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"consume":{"anyOf":[{"const":false},{"const":true}]}},"required":["handle"]},"result":{"$ref":"#/$defs/58"}},
 +    "agents.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"handle":{"type":"string"},"finished":{"type":"boolean"},"consumed":{"type":"boolean"}},"required":["handle","finished","consumed"]}}},
-+    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"billing":{"anyOf":[{"type":"null"},{"const":"included_subscription"},{"const":"explicit_paid_api_grant"},{"const":"provider_billed"}]},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/50"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
++    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"billing":{"anyOf":[{"type":"null"},{"const":"included_subscription"},{"const":"explicit_paid_api_grant"},{"const":"provider_billed"}]},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/55"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
 +    "peers.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"package":{"type":"string"}},"required":[]}]},"result":{"type":"object","properties":{"session":{"type":"string"},"peers":{"type":"array","items":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"},"repository":{"type":"string"},"same_project":{"type":"boolean"}},"required":["session","package","repository","same_project"]}}},"required":["session","peers"]}},
 +    "peers.send": {"arguments":{"type":"object","properties":{"to":{"type":"string"},"package":{"type":"string"},"data":{},"correlation":{"type":"string"},"ttl_ms":{"type":"number"}},"required":["to","data"]},"result":{"type":"object","properties":{"id":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"closed"},{"const":"expired"},{"const":"queued"},{"const":"delivered"},{"const":"refused"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"at_ms":{"type":"number"},"by":{"type":"object","properties":{"session":{"type":"string"},"package":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["session","package"]},"correlation":{"anyOf":[{"type":"null"},{"type":"string"}]},"to":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"}},"required":["session","package"]}},"required":["id","status"]}},
 +    "power.hold": {"arguments":{"type":"object","properties":{"reason":{"type":"string"},"lid_closed":{"anyOf":[{"const":false},{"const":true}]},"max_duration_ms":{"type":"number"},"lease":{"type":"string"}},"required":["reason","max_duration_ms"]},"result":{"type":"object","properties":{"lease":{"type":"string"},"lid_closed":{"type":"boolean"}},"required":["lease","lid_closed"]}},
 +    "power.release": {"arguments":{"type":"object","properties":{"lease":{"type":"string"}},"required":["lease"]},"result":{"type":"object","properties":{"released":{"type":"boolean"}},"required":["released"]}},
 +    "turns.queue": {"arguments":{"type":"object","properties":{"prompt":{"type":"string"},"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"deadline_ms":{"type":"number"}},"required":["prompt","key"]},"result":{"type":"object","properties":{"key":{"type":"string"},"status":{"anyOf":[{"const":"queued"},{"const":"duplicate"}]},"paused":{"anyOf":[{"const":false},{"const":true}]}},"required":["key","status"]}},
 +    "turns.queued": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"paused":{"type":"boolean"},"started":{"type":"number"},"spent_microusd":{"type":"number"},"entries":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"event":{"type":"string"},"queued_at_ms":{"type":"number"},"deadline_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["key","priority","event","queued_at_ms","deadline_ms"]}}},"required":["paused","started","spent_microusd","entries"]}},
-+    "turns.dequeue": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/54"}},
++    "turns.dequeue": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/59"}},
 +    "process.which": {"arguments":{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"sandbox":{"const":"none"}},"required":["names"]},"result":{"type":"object","properties":{"found":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"path":{"type":"string"},"sha256":{"type":"string"}},"required":["name","path","sha256"]}}},"required":["found"]}},
-+    "process.start": {"arguments":{"type":"object","properties":{"session":{"type":"string"},"name":{"type":"string"},"path":{"type":"string"},"sha256":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"environment":{"$ref":"#/$defs/10"},"framing":{"anyOf":[{"const":"raw"},{"const":"content-length"},{"const":"ndjson"}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"notify":{"type":"array","items":{"anyOf":[{"const":"output"},{"const":"exit"}]}},"sandbox":{"const":"none"},"raster":{"type":"string"},"keys":{"type":"string"},"pixels":{"anyOf":[{"const":false},{"const":true}]},"stdin":{"const":"null"}},"required":["session","name","path","sha256"]},"result":{"$ref":"#/$defs/55"}},
++    "process.start": {"arguments":{"type":"object","properties":{"session":{"type":"string"},"name":{"type":"string"},"path":{"type":"string"},"sha256":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"environment":{"$ref":"#/$defs/10"},"framing":{"anyOf":[{"const":"raw"},{"const":"content-length"},{"const":"ndjson"}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"notify":{"type":"array","items":{"anyOf":[{"const":"output"},{"const":"exit"}]}},"sandbox":{"const":"none"},"raster":{"type":"string"},"keys":{"type":"string"},"pixels":{"anyOf":[{"const":false},{"const":true}]},"stdin":{"const":"null"}},"required":["session","name","path","sha256"]},"result":{"$ref":"#/$defs/60"}},
 +    "process.exchange": {"arguments":{"type":"object","properties":{"session":{"type":"string"},"send":{"type":"array","items":{}},"wait_ms":{"type":"number"}},"required":["session"]},"result":{"type":"object","properties":{"session":{"type":"string"},"messages":{"type":"array","items":{}},"running":{"const":true}},"required":["session","messages","running"]}},
-+    "process.status": {"arguments":{"$ref":"#/$defs/56"},"result":{"type":"object","properties":{"session":{"type":"string"},"running":{"const":true},"idle_ms":{"type":"number"}},"required":["session","running","idle_ms"]}},
-+    "process.stop": {"arguments":{"$ref":"#/$defs/56"},"result":{"$ref":"#/$defs/57"}},
-+    "providers.register": {"arguments":{"$ref":"#/$defs/58"},"result":{}},
++    "process.status": {"arguments":{"$ref":"#/$defs/61"},"result":{"type":"object","properties":{"session":{"type":"string"},"running":{"const":true},"idle_ms":{"type":"number"}},"required":["session","running","idle_ms"]}},
++    "process.stop": {"arguments":{"$ref":"#/$defs/61"},"result":{"$ref":"#/$defs/62"}},
++    "providers.register": {"arguments":{"$ref":"#/$defs/63"},"result":{}},
 +    "providers.models": {"arguments":{"type":"object","properties":{"provider":{"type":"string"},"name":{"type":"string"},"models":{"type":"array","items":{"type":"object","properties":{"slug":{"type":"string"},"display":{"type":"string"},"context_window":{"type":"number"},"efforts":{"type":"array","items":{"type":"string"}},"default_effort":{"type":"string"}},"required":["slug","display","context_window","efforts"]}}},"required":["provider","models"]},"result":{"type":"object","properties":{"provider":{"type":"string"},"models":{"type":"number"}},"required":["provider","models"]}},
 +    "providers.unregister": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
 +    "sidecars.invoke": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"input":{}},"required":["id","input"]},"result":{"type":"object","properties":{"provider":{"type":"string"},"program_sha256":{"type":"string"},"source_hashes":{"$ref":"#/$defs/0"},"result":{},"untrusted":{"const":true}},"required":["provider","program_sha256","source_hashes","result","untrusted"]}},
-+    "sidecars.start": {"arguments":{"$ref":"#/$defs/58"},"result":{}},
++    "sidecars.start": {"arguments":{"$ref":"#/$defs/63"},"result":{}},
 +    "sidecars.status": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{"type":"object","properties":{"id":{"type":"string"},"running":{"type":"boolean"},"started_at_ms":{"type":"number"}},"required":["id","running","started_at_ms"]}},
 +    "sidecars.stop": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
-+    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/34"}]}},
++    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/39"}]}},
 +    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},
 +    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"power"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
-+    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"},"git":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/59"}},
-+    "workspace.unwatch": {"arguments":{"anyOf":[{"$ref":"#/$defs/59"},{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}]},"result":{"$ref":"#/$defs/57"}},
++    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"},"git":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/64"}},
++    "workspace.unwatch": {"arguments":{"anyOf":[{"$ref":"#/$defs/64"},{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}]},"result":{"$ref":"#/$defs/62"}},
 +    "events.publish": {"arguments":{"type":"object","properties":{"channel":{"type":"string"},"data":{},"correlation":{"type":"string"}},"required":["channel","data"]},"result":{"type":"object","properties":{"delivered":{"type":"number"},"dropped":{"type":"number"}},"required":["delivered","dropped"]}},
 +    "events.schedule": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"delay_ms":{"type":"number"},"data":{"$ref":"#/$defs/32"}},"required":["key","delay_ms"]},"result":{"type":"object","properties":{"key":{"type":"string"},"delay_ms":{"type":"number"}},"required":["key","delay_ms"]}},
 +    "events.cancel": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"type":"object","properties":{"cancelled":{"type":"boolean"}},"required":["cancelled"]}},
 +    "tools.define": {"arguments":{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"parameters":{},"label":{"type":"string"}},"required":["name","description","parameters"]},"result":{"type":"object","properties":{"name":{"type":"string"},"effective_at":{"const":"next_request"}},"required":["name","effective_at"]}},
-+    "tools.undefine": {"arguments":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"result":{"$ref":"#/$defs/54"}},
++    "tools.undefine": {"arguments":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"result":{"$ref":"#/$defs/59"}},
 +    "tools.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"tools":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"kind":{"anyOf":[{"const":"mcp"},{"const":"builtin"},{"const":"extension"},{"const":"dynamic"}]},"server":{"anyOf":[{"type":"null"},{"type":"string"}]},"original":{"type":"object","properties":{"description":{"type":"string"},"parameters":{},"freeform":{"type":"boolean"}},"required":["description","parameters","freeform"]},"effective":{"anyOf":[{"type":"null"},{"type":"object","properties":{"description":{"type":"string"},"parameters":{},"deferred":{"type":"boolean"}},"required":["description","parameters","deferred"]}]}},"required":["name","kind","server","original","effective"]}}},"required":["thread_id","tools"]}},
-+    "tools.invoke": {"arguments":{"$ref":"#/$defs/60"},"result":{"type":"object","properties":{"call_id":{"type":"string"},"output":{"type":"string"},"success":{"type":"boolean"},"truncated":{"type":"boolean"}},"required":["call_id","output","success","truncated"]}},
-+    "tools.check": {"arguments":{"$ref":"#/$defs/60"},"result":{"type":"object","properties":{"decision":{"anyOf":[{"const":"allow"},{"const":"ask"},{"const":"deny"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"authority":{"anyOf":[{"const":"host"},{"const":"mod"}]}},"required":["decision","reason","authority"]}},
++    "tools.invoke": {"arguments":{"$ref":"#/$defs/65"},"result":{"type":"object","properties":{"call_id":{"type":"string"},"output":{"type":"string"},"success":{"type":"boolean"},"truncated":{"type":"boolean"}},"required":["call_id","output","success","truncated"]}},
++    "tools.check": {"arguments":{"$ref":"#/$defs/65"},"result":{"type":"object","properties":{"decision":{"anyOf":[{"const":"allow"},{"const":"ask"},{"const":"deny"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"authority":{"anyOf":[{"const":"host"},{"const":"mod"}]}},"required":["decision","reason","authority"]}},
 +    "tools.original": {"arguments":{"type":"object","properties":{"call_id":{"type":"string"}},"required":["call_id"]},"result":{"type":"object","properties":{"reference":{"$ref":"#/$defs/1"},"sha256":{"type":"string"},"bytes":{"type":"number"}},"required":["reference","sha256","bytes"]}},
-+    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/62"}}},
-+    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/62"}]}},"required":["status","profile"]}},
++    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/67"}}},
++    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/67"}]}},"required":["status","profile"]}},
 +    "models.context_window": {"arguments":{"type":"object","properties":{"model":{"type":"string"},"tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["model"]},"result":{"type":"object","properties":{"model":{"type":"string"},"tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"max":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["model","tokens","max"]}},
-+    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"},{"const":"new_threads"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/33"},"effective_at":{"anyOf":[{"const":"next_request"},{"const":"new_thread"}]}},"required":["route","effective_at"]}},
-+    "turns.activity": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"thread_id":{"type":"string"},"turn_id":{"type":"string"},"last":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"turns":{"type":"array","items":{"type":"object","properties":{"turn_id":{"type":"string"},"started_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"ended_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"error"},{"const":"unknown"},{"const":"completed"},{"const":"interrupted"},{"const":"running"},{"const":"aborted"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/50"},"unrecorded_end":{"type":"boolean"},"tool_calls":{"type":"array","items":{"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"started_at":{"type":"string"},"finished_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"type":"null"},{"type":"string"}]},"output_replaced":{"type":"object","properties":{"mod":{"type":"string"},"original_sha256":{"type":"string"},"replacement_sha256":{"type":"string"}},"required":["mod","original_sha256","replacement_sha256"]}},"required":["call_id","tool","started_at","finished_at","outcome"]}},"processes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"anyOf":[{"const":"exec"},{"const":"managed"}]},"command":{"type":"string"},"running":{"anyOf":[{"type":"null"},{"const":false},{"const":true}]},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["id","kind","command","running","exit_code"]}},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"before":{"anyOf":[{"type":"null"},{"type":"string"}]},"after":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"external"},{"const":"exec"},{"const":"tool"},{"const":"transaction"},{"const":"rescan"}]}},"required":["path","before","after","source"]}},"truncated":{"type":"boolean"}},"required":["turn_id","started_at","ended_at","outcome","reason","error","unrecorded_end","tool_calls","processes","files","truncated"]}},"recording":{"type":"boolean"}},"required":["turns","recording"]}},
++    "routes.status": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"installed":{"type":"boolean"},"signed_in":{"type":"boolean"},"version":{"type":"string"},"models":{"type":"array","items":{"type":"string"}},"usage":{"$ref":"#/$defs/34"},"detail":{"type":"string"}},"required":["route","installed","signed_in"]},"result":{"type":"object","properties":{"route":{"type":"string"},"checked_at":{"type":"number"}},"required":["route","checked_at"]}},
++    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"},{"const":"new_threads"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/38"},"effective_at":{"anyOf":[{"const":"next_request"},{"const":"new_thread"}]}},"required":["route","effective_at"]}},
++    "turns.activity": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"thread_id":{"type":"string"},"turn_id":{"type":"string"},"last":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"turns":{"type":"array","items":{"type":"object","properties":{"turn_id":{"type":"string"},"started_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"ended_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"error"},{"const":"unknown"},{"const":"completed"},{"const":"interrupted"},{"const":"running"},{"const":"aborted"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/55"},"unrecorded_end":{"type":"boolean"},"tool_calls":{"type":"array","items":{"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"started_at":{"type":"string"},"finished_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"type":"null"},{"type":"string"}]},"output_replaced":{"type":"object","properties":{"mod":{"type":"string"},"original_sha256":{"type":"string"},"replacement_sha256":{"type":"string"}},"required":["mod","original_sha256","replacement_sha256"]}},"required":["call_id","tool","started_at","finished_at","outcome"]}},"processes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"anyOf":[{"const":"exec"},{"const":"managed"}]},"command":{"type":"string"},"running":{"anyOf":[{"type":"null"},{"const":false},{"const":true}]},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["id","kind","command","running","exit_code"]}},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"before":{"anyOf":[{"type":"null"},{"type":"string"}]},"after":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"external"},{"const":"exec"},{"const":"tool"},{"const":"transaction"},{"const":"rescan"}]}},"required":["path","before","after","source"]}},"truncated":{"type":"boolean"}},"required":["turn_id","started_at","ended_at","outcome","reason","error","unrecorded_end","tool_calls","processes","files","truncated"]}},"recording":{"type":"boolean"}},"required":["turns","recording"]}},
 +    "turns.abort": {"arguments":{"type":"object","properties":{"turn_id":{"type":"string"}},"required":["turn_id"]},"result":{"type":"object","properties":{"accepted":{"type":"boolean"}},"required":["accepted"]}},
 +    "terminal.selection": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"text":{"anyOf":[{"type":"null"},{"type":"string"}]},"truncated":{"type":"boolean"}},"required":["text","truncated"]}},
 +    "terminal.copy": {"arguments":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"pending"},{"const":"confirmed"},{"const":"unconfirmed"},{"const":"busy"}]}},"required":["status"]}},
 +    "terminal.notify": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}},"required":["title"]},"result":{"type":"object","properties":{"delivered":{"type":"boolean"},"method":{"anyOf":[{"const":"none"},{"const":"osc9"},{"const":"osc99"},{"const":"osc777"},{"const":"bel"}]},"reason":{"type":"string"}},"required":["delivered","method"]}},
 +    "terminal.show_thread": {"arguments":{"type":"object","properties":{"thread_id":{"type":"string"}},"required":["thread_id"]},"result":{"type":"object","properties":{"shown":{"type":"boolean"}},"required":["shown"]}},
-+    "commands.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"commands":{"type":"array","items":{"$ref":"#/$defs/63"}}},"required":["commands"]}},
-+    "commands.describe": {"arguments":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]},"result":{"$ref":"#/$defs/63"}},
-+    "commands.invoke": {"arguments":{"$ref":"#/$defs/64"},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"command":{"type":"string"},"result":{}},"required":["command","result"]}]}},
++    "commands.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"commands":{"type":"array","items":{"$ref":"#/$defs/68"}}},"required":["commands"]}},
++    "commands.describe": {"arguments":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]},"result":{"$ref":"#/$defs/68"}},
++    "commands.invoke": {"arguments":{"$ref":"#/$defs/69"},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"type":"object","properties":{"command":{"type":"string"},"result":{}},"required":["command","result"]}]}},
 +    "config.describe": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"rows":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"label":{"type":"string"},"value":{},"source":{"type":"string"},"version":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"mod"},{"const":"codex"}]},"editable":{"type":"boolean"},"managed":{"type":"boolean"},"secret":{"type":"boolean"},"hidden":{"type":"boolean"},"type":{"type":"string"},"enum":{"anyOf":[{"type":"null"},{"type":"array","items":{}}]}},"required":["key","label","value","source","version","scope","editable","managed","secret","hidden"]}}},"required":["rows"]}},
-+    "config.set": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"value":{},"expected":{"$ref":"#/$defs/32"}},"required":["key","value"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"key":{"type":"string"},"effective":{}},"required":["key","effective"]}]}},
++    "config.set": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"value":{},"expected":{"$ref":"#/$defs/32"}},"required":["key","value"]},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"type":"object","properties":{"key":{"type":"string"},"effective":{}},"required":["key","effective"]}]}},
 +    "sessions.ports": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"ports":{"type":"array","items":{"type":"object","properties":{"port":{"type":"number"},"pid":{"type":"number"},"address":{"type":"string"}},"required":["port","pid","address"]}}},"required":["ports"]}},
-+    "terminal.import_file": {"arguments":{"type":"object","properties":{"path":{"type":"string"},"max_bytes":{"type":"number"},"lifetime":{"anyOf":[{"const":"thread"},{"const":"package"}]}},"required":["path"]},"result":{"anyOf":[{"$ref":"#/$defs/1"},{"$ref":"#/$defs/34"}]}},
++    "terminal.import_file": {"arguments":{"type":"object","properties":{"path":{"type":"string"},"max_bytes":{"type":"number"},"lifetime":{"anyOf":[{"const":"thread"},{"const":"package"}]}},"required":["path"]},"result":{"anyOf":[{"$ref":"#/$defs/1"},{"$ref":"#/$defs/39"}]}},
 +    "terminal.image_sample": {"arguments":{"type":"object","properties":{"resource":{"$ref":"#/$defs/1"},"columns":{"type":"number"},"rows":{"type":"number"}},"required":["resource","columns","rows"]},"result":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"},"rgba":{"type":"array","items":{"type":"number"}}},"required":["width","height","rgba"]}},
-+    "composer.read": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"selection":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/65"}]},"revision":{"type":"number"},"attachments":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"image"},"label":{"type":"string"},"owner":{"type":"string"},"resource":{"$ref":"#/$defs/2"},"width":{"type":"number"},"height":{"type":"number"}},"required":["id","kind","label","owner","resource"]}},"suggestion":{"anyOf":[{"type":"null"},{"type":"object","properties":{"owner":{"type":"string"},"id":{"type":"string"}},"required":["owner","id"]}]}},"required":["text","cursor","selection","revision","attachments","suggestion"]}},
-+    "composer.write": {"arguments":{"type":"object","properties":{"revision":{"type":"number"},"edit":{"anyOf":[{"type":"object","properties":{"kind":{"anyOf":[{"const":"fill"},{"const":"append"},{"const":"insert"}]},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"const":"splice"},"text":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"}},"required":["kind","text","start","end"]}]},"cursor":{"type":"number"},"selection":{"$ref":"#/$defs/65"},"attach":{"type":"array","items":{"type":"object","properties":{"image":{"$ref":"#/$defs/1"}},"required":["image"]}},"detach":{"type":"array","items":{"type":"string"}}},"required":["revision"]},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"revision":{"type":"number"}},"required":["text","cursor","revision"]}},
++    "composer.read": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"selection":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/70"}]},"revision":{"type":"number"},"attachments":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"image"},"label":{"type":"string"},"owner":{"type":"string"},"resource":{"$ref":"#/$defs/2"},"width":{"type":"number"},"height":{"type":"number"}},"required":["id","kind","label","owner","resource"]}},"suggestion":{"anyOf":[{"type":"null"},{"type":"object","properties":{"owner":{"type":"string"},"id":{"type":"string"}},"required":["owner","id"]}]}},"required":["text","cursor","selection","revision","attachments","suggestion"]}},
++    "composer.write": {"arguments":{"type":"object","properties":{"revision":{"type":"number"},"edit":{"anyOf":[{"type":"object","properties":{"kind":{"anyOf":[{"const":"fill"},{"const":"append"},{"const":"insert"}]},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"const":"splice"},"text":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"}},"required":["kind","text","start","end"]}]},"cursor":{"type":"number"},"selection":{"$ref":"#/$defs/70"},"attach":{"type":"array","items":{"type":"object","properties":{"image":{"$ref":"#/$defs/1"}},"required":["image"]}},"detach":{"type":"array","items":{"type":"string"}}},"required":["revision"]},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"revision":{"type":"number"}},"required":["text","cursor","revision"]}},
 +    "composer.suggest": {"arguments":{"anyOf":[{"type":"object","properties":{"revision":{"type":"number"},"id":{"type":"string"},"text":{"type":"string"}},"required":["revision","id","text"]},{"type":"object","properties":{"clear":{"const":true}},"required":["clear"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]},{"type":"object","properties":{"cleared":{"const":true}},"required":["cleared"]}]}},
-+    "prompts.consent": {"arguments":{"type":"object","properties":{"text":{"type":"string"},"attachments":{"$ref":"#/$defs/66"}},"required":["text"]},"result":{"type":"object","properties":{"consent":{"type":"string"},"sha256":{"type":"string"}},"required":["consent","sha256"]}},
-+    "prompts.submit": {"arguments":{"type":"object","properties":{"consent":{"type":"string"},"text":{"type":"string"},"attachments":{"$ref":"#/$defs/66"},"mode":{"anyOf":[{"const":"turn"},{"const":"steer"}]},"client_id":{"type":"string"}},"required":["consent","text","mode"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"anyOf":[{"const":"started"},{"const":"steered"}]},"client_id":{"type":"string"}},"required":["status","client_id"]},{"type":"object","properties":{"status":{"const":"not_submitted"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
-+    "prompts.status": {"arguments":{"$ref":"#/$defs/67"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
-+    "prompts.revoke": {"arguments":{"$ref":"#/$defs/67"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
++    "prompts.consent": {"arguments":{"type":"object","properties":{"text":{"type":"string"},"attachments":{"$ref":"#/$defs/71"}},"required":["text"]},"result":{"type":"object","properties":{"consent":{"type":"string"},"sha256":{"type":"string"}},"required":["consent","sha256"]}},
++    "prompts.submit": {"arguments":{"type":"object","properties":{"consent":{"type":"string"},"text":{"type":"string"},"attachments":{"$ref":"#/$defs/71"},"mode":{"anyOf":[{"const":"turn"},{"const":"steer"}]},"client_id":{"type":"string"}},"required":["consent","text","mode"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"anyOf":[{"const":"started"},{"const":"steered"}]},"client_id":{"type":"string"}},"required":["status","client_id"]},{"type":"object","properties":{"status":{"const":"not_submitted"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
++    "prompts.status": {"arguments":{"$ref":"#/$defs/72"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
++    "prompts.revoke": {"arguments":{"$ref":"#/$defs/72"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
 +    "builtins.invoke": {"arguments":{"type":"object","properties":{"action":{"type":"string","format":"dotted-string"}},"required":["action"]},"result":{"type":"object","properties":{"invoked":{"type":"boolean"}},"required":["invoked"]}},
 +    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"required"},{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"needs_approval"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"maintainer"},{"const":"contributes"},{"const":"inherited_enabled"},{"const":"inherited_settings"},{"const":"overrides"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"managed"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"required":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"needs_approval":{"type":"boolean"},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"maintainer":{"anyOf":[{"type":"null"},{"type":"string"}]},"contributes":{"type":"object","properties":{"commands":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"}},"required":["name","description"]}},"keys":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"description":{"type":"string"}},"required":["key","description"]}}},"required":["commands","keys"]},"inherited_enabled":{"type":"boolean"},"inherited_settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}},"overrides":{"type":"object","properties":{"enabled":{"anyOf":[{"const":false},{"const":true}]},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","required","effective","pending","failed","needs_approval","api","compatible","grants","conflicts","settings_schema","maintainer","contributes","inherited_enabled","inherited_settings","overrides","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
 +    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}},"total":{"type":"number"},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["index","packages","total","cursor"]}},
-+    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}},"phrases":{"type":"array","items":{"type":"object","properties":{"capability":{"type":"string"},"phrase":{"type":"string"},"risky":{"type":"boolean"}},"required":["capability","phrase","risky"]}},"identity_warning":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["action","id","changes","grants_added"]}},
-+    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"},"enabled":{"anyOf":[{"const":false},{"const":true}]},"reason":{"type":"string"}},"required":["status","generation"]}]}},
++    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}},"phrases":{"type":"array","items":{"type":"object","properties":{"capability":{"type":"string"},"phrase":{"type":"string"},"risky":{"type":"boolean"}},"required":["capability","phrase","risky"]}},"identity_warning":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["action","id","changes","grants_added"]}},
++    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"},"enabled":{"anyOf":[{"const":false},{"const":true}]},"reason":{"type":"string"}},"required":["status","generation"]}]}},
 +    "plugins.components": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"components":{"type":"array","items":{"type":"object","properties":{"plugin":{"type":"string"},"marketplace":{"type":"string"},"version":{"type":"string"},"id":{"anyOf":[{"type":"null"},{"type":"string"}]},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"sha256":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"}},"required":["plugin","marketplace","version","id","description","sha256","error","installed","enabled"]}}},"required":["components"]}},
 +    "packages.reload": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"generation":{"type":"number"},"failed":{"type":"array","items":{"type":"string"}},"applies":{"const":"next_boundary"}},"required":["generation","failed","applies"]}},
 +    "settings.write": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"values":{"type":"object","properties":{},"required":[],"additionalProperties":{}},"target":{"anyOf":[{"const":"shared"},{"const":"terminal"}]},"reset":{"type":"array","items":{"type":"string"}}},"required":["values"]},"result":{"type":"object","properties":{"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]}},
-+    "terminal.open": {"arguments":{"anyOf":[{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"number"},"editor":{"const":true}},"required":["path","editor"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"opened":{"const":true}},"required":["opened"]}]}},
-+    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/77"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
++    "terminal.open": {"arguments":{"anyOf":[{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"number"},"editor":{"const":true}},"required":["path","editor"]}]},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"type":"object","properties":{"opened":{"const":true}},"required":["opened"]}]}},
++    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/82"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
 +    "terminal.pane": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"anyOf":[{"const":"open"},{"const":"close"},{"const":"focus"},{"const":"reveal"}]},"id":{"type":"string"}},"required":["action","id"]},{"type":"object","properties":{"action":{"const":"scroll"},"id":{"type":"string"},"offset":{"type":"number"}},"required":["action","id","offset"]}]},"result":{"type":"object","properties":{"applied":{"const":true}},"required":["applied"]}},
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
-+    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/77"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/64"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
++    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/83"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/83"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/82"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/83"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/83"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/69"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
-+    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/79"},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/80"},{"$ref":"#/$defs/80"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/79"},"packed":{"type":"string"}},"required":["key","rect","packed"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
-+    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"},"files":{"$ref":"#/$defs/0"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/55"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"files":{"$ref":"#/$defs/0"}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
-+    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/83"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/92"}},
-+    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/83"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/92"}},
++    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/84"},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/85"},{"$ref":"#/$defs/85"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/84"},"packed":{"type":"string"}},"required":["key","rect","packed"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
++    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"},"files":{"$ref":"#/$defs/0"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/39"},{"$ref":"#/$defs/60"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"files":{"$ref":"#/$defs/0"}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
++    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/88"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/97"}},
++    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/88"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/97"}},
 +    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"omd_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
@@ -144207,66 +144393,71 @@ index 0000000000000000000000000000000000000000..e77e3ebb5fae43c4d29415d40259a38c
 +    "30": {"type":"object","properties":{"sha256":{"type":"string"},"bytes":{"type":"number"},"items":{"type":"number"},"revision":{"type":"number"}},"required":["sha256","bytes","items","revision"]},
 +    "31": {"anyOf":[{"const":"included_subscription"},{"const":"explicit_paid_api_grant"},{"const":"provider_billed"}]},
 +    "32": {"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}}]},
-+    "33": {"type":"object","properties":{"name":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"reasoning":{"type":"string"},"roles":{"type":"array","items":{"anyOf":[{"const":"worker"},{"const":"lead"}]}},"billing":{"$ref":"#/$defs/31"},"tools":{"type":"array","items":{"type":"string"}},"available":{"type":"boolean"},"credential":{"anyOf":[{"type":"null"},{"type":"string"}]},"data":{"$ref":"#/$defs/32"}},"required":["name","model","provider","reasoning","roles","billing","tools","available","credential"]},
-+    "34": {"type":"object","properties":{"status":{"const":"declined"}},"required":["status"]},
-+    "35": {"type":"object","properties":{"input_microusd_per_million":{"type":"number"},"cached_microusd_per_million":{"type":"number"},"cache_write_microusd_per_million":{"type":"number"},"output_microusd_per_million":{"type":"number"},"reservation_microusd":{"type":"number"},"max_output_tokens":{"type":"number"},"input_token_ceiling":{"type":"number"},"included_subscription":{"type":"boolean"},"external_subscription":{"anyOf":[{"const":false},{"const":true}]},"provider_billed":{"anyOf":[{"const":false},{"const":true}]}},"required":["input_microusd_per_million","cached_microusd_per_million","output_microusd_per_million","reservation_microusd","max_output_tokens","input_token_ceiling","included_subscription"]},
-+    "36": {"type":"object","properties":{"name":{"type":"string"},"roles":{"type":"array","prefixItems":[{"const":"lead"}],"minItems":1,"maxItems":1},"provider":{"type":"string"},"model":{"type":"string"},"reasoning_effort":{"type":"string"},"responses_url":{"type":"string"},"rates":{"$ref":"#/$defs/35"},"mods":{"type":"array","items":{"type":"string"}},"tools":{"type":"array","items":{"type":"string"}},"data":{"$ref":"#/$defs/32"}},"required":["name","roles","provider","model","reasoning_effort","responses_url","rates"]},
-+    "37": {"anyOf":[{"const":"host"},{"const":"lead"},{"const":"agent"},{"const":"integration"}]},
-+    "38": {"type":"object","properties":{"kind":{"$ref":"#/$defs/37"},"handle":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["kind","handle"]},
-+    "39": {"type":"object","properties":{"fingerprint":{"type":"string"},"severity":{"anyOf":[{"const":"warning"},{"const":"advice"},{"const":"blocking"}]},"summary":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}}},"required":["fingerprint","severity","summary","paths"]},
-+    "40": {"type":"array","items":{"$ref":"#/$defs/39"}},
-+    "41": {"type":"object","properties":{"kind":{"type":"string"},"candidate_sha256":{"type":"string"},"acceptance_sha256":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"fail"},{"const":"pass"}]},"evidence":{"$ref":"#/$defs/1"},"producer":{"$ref":"#/$defs/38"},"findings":{"$ref":"#/$defs/40"},"resolves":{"type":"array","items":{"type":"string"}},"submitted_by":{"type":"string"},"at":{"type":"number"}},"required":["kind","candidate_sha256","acceptance_sha256","outcome","evidence","producer","findings","submitted_by","at"]},
-+    "42": {"type":"array","items":{"$ref":"#/$defs/41"}},
-+    "43": {"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true}]},
-+    "44": {"type":"object","properties":{},"required":[],"additionalProperties":{"$ref":"#/$defs/43"}},
-+    "45": {"type":"object","properties":{"operation":{"type":"string"},"when":{"$ref":"#/$defs/44"}},"required":["operation","when"]},
-+    "46": {"type":"array","items":{"$ref":"#/$defs/45"}},
-+    "47": {"type":"object","properties":{"status":{"const":"running"}},"required":["status"]},
-+    "48": {"anyOf":[{"const":"transport"},{"const":"unknown"},{"const":"rate_limit"},{"const":"authorization"},{"const":"sandbox"},{"const":"allowance"},{"const":"invalid_request"}]},
-+    "49": {"type":"object","properties":{"category":{"$ref":"#/$defs/48"},"code":{},"message":{"type":"string"}},"required":["category","code","message"]},
-+    "50": {"anyOf":[{"type":"null"},{"$ref":"#/$defs/49"}]},
-+    "51": {"type":"object","properties":{"status":{"const":"failed"},"error":{"type":"string"},"failure":{"$ref":"#/$defs/50"},"delivered":{"anyOf":[{"const":true},{"const":"pending"}]}},"required":["status","error"]},
-+    "52": {"type":"object","properties":{"status":{"const":"completed"},"text":{"type":"string"},"consumed":{"type":"boolean"},"evidence":{"$ref":"#/$defs/1"},"candidate_sha256":{"type":"string"},"changed_paths":{"type":"array","items":{"type":"string"}},"delivered":{"anyOf":[{"const":true},{"const":"pending"}]}},"required":["status","text","consumed","evidence"]},
-+    "53": {"anyOf":[{"$ref":"#/$defs/47"},{"$ref":"#/$defs/51"},{"$ref":"#/$defs/52"}]},
-+    "54": {"type":"object","properties":{"removed":{"type":"boolean"}},"required":["removed"]},
-+    "55": {"type":"object","properties":{"session":{"type":"string"},"running":{"const":true}},"required":["session","running"]},
-+    "56": {"type":"object","properties":{"session":{"type":"string"}},"required":["session"]},
-+    "57": {"type":"object","properties":{"stopped":{"type":"boolean"}},"required":["stopped"]},
-+    "58": {"type":"object","properties":{"id":{"type":"string"},"secrets":{"type":"array","items":{"type":"string"}}},"required":["id"]},
-+    "59": {"type":"object","properties":{"watch_id":{"type":"string"}},"required":["watch_id"]},
-+    "60": {"type":"object","properties":{"tool":{"type":"string"},"arguments":{}},"required":["tool","arguments"]},
-+    "61": {"anyOf":[{"const":"secret"},{"const":"provider"},{"const":"chatgpt"},{"const":"api_key"}]},
-+    "62": {"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"kind":{"$ref":"#/$defs/61"},"provider":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"anyOf":[{"type":"null"},{"type":"string"}]},"status":{"anyOf":[{"const":"ready"},{"const":"not_enrolled"}]},"default":{"type":"boolean"}},"required":["id","label","kind","provider","origin","status","default"]},
-+    "63": {"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"hidden":{"type":"boolean"},"args_hint":{"anyOf":[{"type":"null"},{"type":"string"}]},"immediate":{"type":"boolean"},"protected":{"type":"boolean"}},"required":["command","description","owner","hidden","args_hint","immediate","protected"]},
-+    "64": {"type":"object","properties":{"command":{"type":"string"},"args":{"type":"string"}},"required":["command"]},
-+    "65": {"type":"object","properties":{"start":{"type":"number"},"end":{"type":"number"}},"required":["start","end"]},
-+    "66": {"type":"array","items":{"$ref":"#/$defs/1"}},
-+    "67": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
-+    "68": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"reset"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"},{"const":"save-defaults"}]},
-+    "69": {"type":"object","properties":{"kind":{"const":"plugin"},"plugin":{"type":"string"},"marketplace":{"type":"string"}},"required":["kind","plugin"]},
-+    "70": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
-+    "71": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
-+    "72": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
-+    "73": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
-+    "74": {"anyOf":[{"$ref":"#/$defs/69"},{"$ref":"#/$defs/70"},{"$ref":"#/$defs/71"},{"$ref":"#/$defs/72"},{"$ref":"#/$defs/73"}]},
-+    "75": {"type":"object","properties":{"action":{"$ref":"#/$defs/68"},"id":{"type":"string"},"source":{"$ref":"#/$defs/74"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"target":{"anyOf":[{"const":"shared"},{"const":"terminal"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"enable":{"anyOf":[{"const":false},{"const":true}]}},"required":["action"]},
-+    "76": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
-+    "77": {"type":"array","items":{"$ref":"#/$defs/76"}},
-+    "78": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
-+    "79": {"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},
-+    "80": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
-+    "81": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
-+    "82": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
-+    "83": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/81"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/82"}},"required":["prompt"]},
-+    "84": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
-+    "85": {"type":"array","items":{"$ref":"#/$defs/84"}},
-+    "86": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
-+    "87": {"type":"array","items":{"$ref":"#/$defs/86"}},
-+    "88": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
-+    "89": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
-+    "90": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/89"}},"required":["microusd","basis"]},
-+    "91": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
-+    "92": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/85"},"tool_calls":{"$ref":"#/$defs/87"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/88"},"cost":{"$ref":"#/$defs/90"},"timing":{"$ref":"#/$defs/91"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
++    "33": {"type":"object","properties":{"label":{"type":"string"},"used_percent":{"type":"number"},"window_minutes":{"anyOf":[{"type":"null"},{"type":"number"}]},"resets_at":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["label","used_percent"]},
++    "34": {"type":"array","items":{"$ref":"#/$defs/33"}},
++    "35": {"anyOf":[{"type":"null"},{"$ref":"#/$defs/34"}]},
++    "36": {"type":"object","properties":{"installed":{"type":"boolean"},"signed_in":{"type":"boolean"},"version":{"anyOf":[{"type":"null"},{"type":"string"}]},"models":{"anyOf":[{"type":"null"},{"type":"array","items":{"type":"string"}}]},"usage":{"$ref":"#/$defs/35"},"detail":{"anyOf":[{"type":"null"},{"type":"string"}]},"checked_at":{"type":"number"}},"required":["installed","signed_in","checked_at"]},
++    "37": {"anyOf":[{"type":"null"},{"$ref":"#/$defs/36"}]},
++    "38": {"type":"object","properties":{"name":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"reasoning":{"type":"string"},"roles":{"type":"array","items":{"anyOf":[{"const":"worker"},{"const":"lead"}]}},"billing":{"$ref":"#/$defs/31"},"tools":{"type":"array","items":{"type":"string"}},"available":{"type":"boolean"},"credential":{"anyOf":[{"type":"null"},{"type":"string"}]},"data":{"$ref":"#/$defs/32"},"status":{"$ref":"#/$defs/37"}},"required":["name","model","provider","reasoning","roles","billing","tools","available","credential"]},
++    "39": {"type":"object","properties":{"status":{"const":"declined"}},"required":["status"]},
++    "40": {"type":"object","properties":{"input_microusd_per_million":{"type":"number"},"cached_microusd_per_million":{"type":"number"},"cache_write_microusd_per_million":{"type":"number"},"output_microusd_per_million":{"type":"number"},"reservation_microusd":{"type":"number"},"max_output_tokens":{"type":"number"},"input_token_ceiling":{"type":"number"},"included_subscription":{"type":"boolean"},"external_subscription":{"anyOf":[{"const":false},{"const":true}]},"provider_billed":{"anyOf":[{"const":false},{"const":true}]}},"required":["input_microusd_per_million","cached_microusd_per_million","output_microusd_per_million","reservation_microusd","max_output_tokens","input_token_ceiling","included_subscription"]},
++    "41": {"type":"object","properties":{"name":{"type":"string"},"roles":{"type":"array","prefixItems":[{"const":"lead"}],"minItems":1,"maxItems":1},"provider":{"type":"string"},"model":{"type":"string"},"reasoning_effort":{"type":"string"},"responses_url":{"type":"string"},"rates":{"$ref":"#/$defs/40"},"mods":{"type":"array","items":{"type":"string"}},"tools":{"type":"array","items":{"type":"string"}},"data":{"$ref":"#/$defs/32"}},"required":["name","roles","provider","model","reasoning_effort","responses_url","rates"]},
++    "42": {"anyOf":[{"const":"host"},{"const":"lead"},{"const":"agent"},{"const":"integration"}]},
++    "43": {"type":"object","properties":{"kind":{"$ref":"#/$defs/42"},"handle":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["kind","handle"]},
++    "44": {"type":"object","properties":{"fingerprint":{"type":"string"},"severity":{"anyOf":[{"const":"warning"},{"const":"advice"},{"const":"blocking"}]},"summary":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}}},"required":["fingerprint","severity","summary","paths"]},
++    "45": {"type":"array","items":{"$ref":"#/$defs/44"}},
++    "46": {"type":"object","properties":{"kind":{"type":"string"},"candidate_sha256":{"type":"string"},"acceptance_sha256":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"fail"},{"const":"pass"}]},"evidence":{"$ref":"#/$defs/1"},"producer":{"$ref":"#/$defs/43"},"findings":{"$ref":"#/$defs/45"},"resolves":{"type":"array","items":{"type":"string"}},"submitted_by":{"type":"string"},"at":{"type":"number"}},"required":["kind","candidate_sha256","acceptance_sha256","outcome","evidence","producer","findings","submitted_by","at"]},
++    "47": {"type":"array","items":{"$ref":"#/$defs/46"}},
++    "48": {"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true}]},
++    "49": {"type":"object","properties":{},"required":[],"additionalProperties":{"$ref":"#/$defs/48"}},
++    "50": {"type":"object","properties":{"operation":{"type":"string"},"when":{"$ref":"#/$defs/49"}},"required":["operation","when"]},
++    "51": {"type":"array","items":{"$ref":"#/$defs/50"}},
++    "52": {"type":"object","properties":{"status":{"const":"running"}},"required":["status"]},
++    "53": {"anyOf":[{"const":"transport"},{"const":"unknown"},{"const":"rate_limit"},{"const":"authorization"},{"const":"sandbox"},{"const":"allowance"},{"const":"invalid_request"}]},
++    "54": {"type":"object","properties":{"category":{"$ref":"#/$defs/53"},"code":{},"message":{"type":"string"}},"required":["category","code","message"]},
++    "55": {"anyOf":[{"type":"null"},{"$ref":"#/$defs/54"}]},
++    "56": {"type":"object","properties":{"status":{"const":"failed"},"error":{"type":"string"},"failure":{"$ref":"#/$defs/55"},"delivered":{"anyOf":[{"const":true},{"const":"pending"}]}},"required":["status","error"]},
++    "57": {"type":"object","properties":{"status":{"const":"completed"},"text":{"type":"string"},"consumed":{"type":"boolean"},"evidence":{"$ref":"#/$defs/1"},"candidate_sha256":{"type":"string"},"changed_paths":{"type":"array","items":{"type":"string"}},"delivered":{"anyOf":[{"const":true},{"const":"pending"}]}},"required":["status","text","consumed","evidence"]},
++    "58": {"anyOf":[{"$ref":"#/$defs/52"},{"$ref":"#/$defs/56"},{"$ref":"#/$defs/57"}]},
++    "59": {"type":"object","properties":{"removed":{"type":"boolean"}},"required":["removed"]},
++    "60": {"type":"object","properties":{"session":{"type":"string"},"running":{"const":true}},"required":["session","running"]},
++    "61": {"type":"object","properties":{"session":{"type":"string"}},"required":["session"]},
++    "62": {"type":"object","properties":{"stopped":{"type":"boolean"}},"required":["stopped"]},
++    "63": {"type":"object","properties":{"id":{"type":"string"},"secrets":{"type":"array","items":{"type":"string"}}},"required":["id"]},
++    "64": {"type":"object","properties":{"watch_id":{"type":"string"}},"required":["watch_id"]},
++    "65": {"type":"object","properties":{"tool":{"type":"string"},"arguments":{}},"required":["tool","arguments"]},
++    "66": {"anyOf":[{"const":"secret"},{"const":"provider"},{"const":"chatgpt"},{"const":"api_key"}]},
++    "67": {"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"kind":{"$ref":"#/$defs/66"},"provider":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"anyOf":[{"type":"null"},{"type":"string"}]},"status":{"anyOf":[{"const":"ready"},{"const":"not_enrolled"}]},"default":{"type":"boolean"}},"required":["id","label","kind","provider","origin","status","default"]},
++    "68": {"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"hidden":{"type":"boolean"},"args_hint":{"anyOf":[{"type":"null"},{"type":"string"}]},"immediate":{"type":"boolean"},"protected":{"type":"boolean"}},"required":["command","description","owner","hidden","args_hint","immediate","protected"]},
++    "69": {"type":"object","properties":{"command":{"type":"string"},"args":{"type":"string"}},"required":["command"]},
++    "70": {"type":"object","properties":{"start":{"type":"number"},"end":{"type":"number"}},"required":["start","end"]},
++    "71": {"type":"array","items":{"$ref":"#/$defs/1"}},
++    "72": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
++    "73": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"reset"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"},{"const":"save-defaults"}]},
++    "74": {"type":"object","properties":{"kind":{"const":"plugin"},"plugin":{"type":"string"},"marketplace":{"type":"string"}},"required":["kind","plugin"]},
++    "75": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
++    "76": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
++    "77": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
++    "78": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
++    "79": {"anyOf":[{"$ref":"#/$defs/74"},{"$ref":"#/$defs/75"},{"$ref":"#/$defs/76"},{"$ref":"#/$defs/77"},{"$ref":"#/$defs/78"}]},
++    "80": {"type":"object","properties":{"action":{"$ref":"#/$defs/73"},"id":{"type":"string"},"source":{"$ref":"#/$defs/79"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"target":{"anyOf":[{"const":"shared"},{"const":"terminal"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"enable":{"anyOf":[{"const":false},{"const":true}]}},"required":["action"]},
++    "81": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
++    "82": {"type":"array","items":{"$ref":"#/$defs/81"}},
++    "83": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
++    "84": {"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},
++    "85": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
++    "86": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
++    "87": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
++    "88": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/86"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/87"}},"required":["prompt"]},
++    "89": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
++    "90": {"type":"array","items":{"$ref":"#/$defs/89"}},
++    "91": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
++    "92": {"type":"array","items":{"$ref":"#/$defs/91"}},
++    "93": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
++    "94": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
++    "95": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/94"}},"required":["microusd","basis"]},
++    "96": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
++    "97": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/90"},"tool_calls":{"$ref":"#/$defs/92"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/93"},"cost":{"$ref":"#/$defs/95"},"timing":{"$ref":"#/$defs/96"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
 +  }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_validation.rs b/codex-rs/omd/src/mods/operation_validation.rs
@@ -205475,10 +205666,10 @@ index 0000000000000000000000000000000000000000..a1d4f8b2d92f6def27cd380740c5e54b
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..126febffd98200c278aaca5d591c529d646a48db
+index 0000000000000000000000000000000000000000..aee114252bfd33a143ac7f9fe1e90c03a384f72a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1280 @@
+@@ -0,0 +1,1281 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -206645,6 +206836,7 @@ index 0000000000000000000000000000000000000000..126febffd98200c278aaca5d591c529d
 +        }
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
 +        "model.complete" | "model.fork" | "session.info" | "tools.list" | "routes.list"
++        | "routes.status"
 +        | "turns.abort" | "events.schedule" | "events.cancel" => {
 +            let thread = scope
 +                .thread

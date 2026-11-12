@@ -200,14 +200,15 @@ class Turn {
   }
 }
 
-export function planHeaders(plan) {
+export function planHeaders(plan, account = 'default') {
   const spent = Number(plan?.plan_usage?.totalSpend);
   const included = Number(plan?.plan_usage?.includedSpend);
   if (!Number.isFinite(spent) || !(included > 0)) return {};
   const [start, end] = [Number(plan.billing_cycle_start), Number(plan.billing_cycle_end)];
-  return { 'x-cursor-limit-name': 'Cursor', 'x-cursor-primary-used-percent': String(Math.round(spent / included * 10000) / 100),
-    ...start > 0 && end > start ? { 'x-cursor-primary-window-minutes': String(Math.round((end - start) / 60_000)) } : {},
-    ...end > 0 ? { 'x-cursor-primary-reset-at': String(Math.round(end / 1000)) } : {} };
+  const family = account === 'default' ? 'cursor' : `cursor-${account}`;
+  return { [`x-${family}-limit-name`]: account === 'default' ? 'Cursor' : `Cursor (${account})`, [`x-${family}-primary-used-percent`]: String(Math.round(spent / included * 10000) / 100),
+    ...start > 0 && end > start ? { [`x-${family}-primary-window-minutes`]: String(Math.round((end - start) / 60_000)) } : {},
+    ...end > 0 ? { [`x-${family}-primary-reset-at`]: String(Math.round(end / 1000)) } : {} };
 }
 
 export class Router {
@@ -623,7 +624,7 @@ export async function serve(routePath) {
     active++;
     response.on('close', () => { if (!response.writableFinished) controller.abort(); });
     const router = routers.get(entry.account);
-    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...planHeaders(router.plan) });
+    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...planHeaders(router.plan, router.account.name) });
     const send = event => response.write(`data: ${JSON.stringify(event)}\n\n`);
     try {
       const { key, turn } = router.resume(payload) ?? await router.start(payload, entry, String(request.headers['thread-id'] ?? ''));

@@ -75,6 +75,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "model.complete"
                         | "model.fork"
                         | "routes.list"
+                        | "routes.status"
                         | "session.info"
                         | "tools.list"
                         | "turns.activity"
@@ -103,7 +104,8 @@ pub(super) fn route_info(host: &Host, route: &config::Route) -> Value {
     json!({"name": route.name, "model": route.model, "provider": route.provider,
         "reasoning": route.reasoning_effort, "roles": route.roles,
         "billing": accounting::billing(Some(&route.rates)),
-        "tools": route.tools, "available": available, "credential": route.credential})
+        "tools": route.tools, "available": available, "credential": route.credential,
+        "status": super::route_status::latest(route)})
 }
 
 async fn authority(lead: &Lead, call: Option<&ToolCall<'_>>) -> Result<WorkspaceAuthority, String> {
@@ -629,6 +631,9 @@ async fn run(
                 })
                 .collect::<Vec<_>>()
         )),
+        "routes.status" => {
+            super::route_status::publish(&host.route_config().0, caller.id, request.arguments)
+        }
         "ledger.settle" => {
             let arguments = &request.arguments;
             let (Some(request_id), Some(microusd), Some(source)) = (

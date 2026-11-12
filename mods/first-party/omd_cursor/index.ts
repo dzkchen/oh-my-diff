@@ -1,10 +1,12 @@
-import type { Json, ModAPI, ProviderModel } from '../../api.d.ts';
+import type { Json, ModAPI, ProviderModel, RouteStatus, RouteUsageWindow } from '../../api.d.ts';
 
 const service = 'cursor';
 const provider = 'omd_cursor';
 const session = 'cursor_setup';
 const settleKey = 'settle';
 const setupKey = 'setup';
+const probeKey = 'probe';
+const PROBE_MS = 10 * 60_000;
 const setupWindow = 30 * 60_000;
 // The shared log only grows; its newest rows fit one host result with room for the settle calls.
 const LOG_TAIL_BYTES = 32_768;
@@ -22,6 +24,15 @@ const plain = (value: unknown): value is Row => value !== null && typeof value =
 function lines(text: string): Row[] {
   return text.split('\n').flatMap(line => { try { const row = JSON.parse(line); return row && typeof row === 'object' ? [row] : []; } catch { return []; } });
 }
+
+export const accountRoute = (name: string) => name === 'default' ? 'cursor' : `cursor-${name}`;
+export const usageWindows = (limits: Row): RouteUsageWindow[] => {
+  const slot = limits.primary;
+  if (typeof slot?.usedPercent !== 'number') return [];
+  return [{ label: 'billing cycle', used_percent: Math.min(100, Math.max(0, slot.usedPercent)),
+    window_minutes: typeof slot.windowDurationMins === 'number' ? slot.windowDurationMins : null,
+    resets_at: typeof slot.resetsAt === 'number' ? (slot.resetsAt < 1e12 ? slot.resetsAt * 1000 : slot.resetsAt) : null }];
+};
 
 const cents = (value: number) => `${value.toFixed(2)}¢`;
 
@@ -89,6 +100,40 @@ export default function activate(api: ModAPI): void {
     api.state.set({ ...saved(), published });
     return published;
   };
+  const statuses = () => {
+    const listed = api.host.tryCall('routes.list', null);
+    return new Map<string, RouteStatus | null>(listed.ok && Array.isArray(listed.value) ? listed.value.map(route => [route.name, route.status ?? null]) : []);
+  };
+  const report = () => {
+    const state = saved();
+    const accounts = (state.accounts ?? []) as Row[];
+    const profiles = api.host.tryCall('credentials.list', null);
+    if (!accounts.length || !profiles.ok) return;
+    const ready = new Set(profiles.value.filter(profile => profile.kind === 'secret' && profile.status === 'ready').map(profile => profile.id));
+    const slugs = (Array.isArray(state.models) ? state.models as Row[] : []).map(model => String(model.slug));
+    const known = statuses();
+    const installed = typeof state.sdk === 'string';
+    api.state.set({ ...state, probed_at: Date.now() });
+    for (const account of accounts) {
+      const route = accountRoute(account.name);
+      const setup = `run /cursor setup${account.name === 'default' ? '' : ` ${account.name}`}`;
+      const expired = typeof account.expires === 'number' && account.expires < Date.now();
+      const signed = ready.has(account.secret) && !expired;
+      const models = slugs.filter(slug => account.name === 'default'
+        ? !accounts.some(other => other.name !== 'default' && slug.endsWith(`.${other.name}`)) : slug.endsWith(`.${account.name}`));
+      const usage = known.get(route)?.usage;
+      const detail = !installed ? `the Cursor SDK is not installed; ${setup}` : expired ? `the API key expired; ${setup}`
+        : !signed ? `no API key is stored; ${setup}` : state.published !== true ? 'the provider did not start; restart OMD+ and run /cursor' : null;
+      api.host.tryCall('routes.status', { route, installed, signed_in: signed, ...installed ? { version: String(state.sdk).slice(0, 128) } : {},
+        ...models.length && models.length <= 64 ? { models } : {}, ...usage ? { usage } : {}, ...detail ? { detail: detail.slice(0, 256) } : {} });
+    }
+  };
+  const refresh = () => {
+    const accounts = (saved().accounts ?? []) as Row[];
+    const known = statuses();
+    if ((saved().probed_at ?? 0) > Date.now() - PROBE_MS && accounts.every(account => known.get(accountRoute(account.name)))) return;
+    report();
+  };
   const tail = (path: string) => {
     const run = api.host.tryCall('exec.run', { program: '/usr/bin/tail', argv: ['-c', String(LOG_TAIL_BYTES), path], timeout_ms: LOG_TAIL_TIMEOUT_MS });
     return run.ok && run.value.exit_code === 0 ? run.value.stdout : null;
@@ -144,7 +189,9 @@ export default function activate(api: ModAPI): void {
     let done: Row;
     try { done = JSON.parse(result); } catch { return void say('Cursor setup returned an unreadable result; run /cursor setup again', true); }
     api.state.set({ ...saved(), ...done });
-    if (!ensure(true)) return void say('Cursor setup finished, but the provider did not start; restart OMD+ and run /cursor', true);
+    const started = ensure(true);
+    report();
+    if (!started) return void say('Cursor setup finished, but the provider did not start; restart OMD+ and run /cursor', true);
     const account = (done.accounts as Row[]).find(item => item.name === run.account);
     say(`Cursor account ${run.account} is ready${account?.account ? ` for ${account.account}` : ''}; pick its models with /model or switch with /profile`);
   });
@@ -152,7 +199,7 @@ export default function activate(api: ModAPI): void {
     const name = String((data as Row | null)?.account ?? 'default');
     if (channel === `${api.package.id}/removed`) {
       api.state.set({ ...saved(), ...(data as Row).result });
-      if ((data as Row).result.accounts.length) return void ensure(true);
+      if ((data as Row).result.accounts.length) { ensure(true); return void report(); }
       api.host.tryCall('providers.unregister', { id: service });
       return void api.state.set({ ...saved(), published: false });
     }
@@ -176,6 +223,17 @@ export default function activate(api: ModAPI): void {
       api.state.set({ ...saved(), setup: null });
     }
     ensure();
+    api.host.tryCall('events.schedule', { key: probeKey, delay_ms: 1000 });
+  });
+  api.on('app_notification', ({ method, params }) => {
+    const limits = method === 'account/rateLimits/updated' ? (params as Row | null)?.rateLimits ?? {} : {};
+    const account = ((saved().accounts ?? []) as Row[]).find(item => accountRoute(item.name).replace(/-/g, '_') === limits.limitId);
+    const route = account ? accountRoute(account.name) : null;
+    const current = route ? statuses().get(route) : null;
+    const usage = usageWindows(limits);
+    if (!route || !current || !usage.length) return;
+    const { installed, signed_in, version, models, detail } = current;
+    api.host.tryCall('routes.status', { route, installed, signed_in, usage, ...version ? { version } : {}, ...models ? { models } : {}, ...detail ? { detail } : {} });
   });
   api.on('resume', () => { ensure(); });
   api.on('turn_start', () => {
@@ -186,6 +244,10 @@ export default function activate(api: ModAPI): void {
   });
   api.on('timer', ({ key }) => {
     if (key === settleKey) settle(true);
+    if (key === probeKey) {
+      refresh();
+      api.host.tryCall('events.schedule', { key: probeKey, delay_ms: PROBE_MS });
+    }
     if (key === setupKey && plain(saved().setup)) {
       api.host.tryCall('process.stop', { session });
       api.state.set({ ...saved(), setup: null });
@@ -220,6 +282,7 @@ export default function activate(api: ModAPI): void {
     if (action === 'usage') return { display: usageReport(tail(`${state.data}/usage.jsonl`) ?? '') };
     const models = Array.isArray(state.models) ? state.models as ProviderModel[] : [];
     const accounts = (state.accounts ?? []) as Row[];
+    report();
     return { display: [
       `Cursor SDK ${state.sdk}`,
       ...accounts.map(account => {

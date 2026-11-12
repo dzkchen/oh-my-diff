@@ -1,8 +1,19 @@
-import type { Json, ModAPI, ProviderModel } from '../../api.d.ts';
+import type { Json, ModAPI, ProviderModel, RouteStatus, RouteUsageWindow } from '../../api.d.ts';
 
 const service = 'claude_cli';
 const provider = 'omd_claude_cli';
 const loginWindow = 30 * 60_000;
+const PROBE_MS = 10 * 60_000;
+const WINDOW_LABELS: Record<number, string> = { 300: '5h', 10080: '7d' };
+const utf8 = new TextEncoder();
+const clip = (text: string, max: number) => text.slice(0, utf8.encodeInto(text, new Uint8Array(max)).read);
+export const accountRoute = (name: string) => name === 'default' ? 'claude' : `claude-${name}`;
+export const usageWindows = (limits: Record<string, any>): RouteUsageWindow[] => ['primary', 'secondary'].map(slot => limits[slot])
+  .filter(slot => typeof slot?.usedPercent === 'number').map(slot => {
+    const minutes = typeof slot.windowDurationMins === 'number' ? slot.windowDurationMins : null;
+    return { label: minutes === null ? 'window' : WINDOW_LABELS[minutes] ?? `${minutes} min`, used_percent: Math.min(100, Math.max(0, slot.usedPercent)),
+      window_minutes: minutes, resets_at: typeof slot.resetsAt === 'number' ? (slot.resetsAt < 1e12 ? slot.resetsAt * 1000 : slot.resetsAt) : null };
+  });
 export const CLI_MINIMUM = '2.1.307';
 export const cliSupported = (version: string | null | undefined) => {
   const [major, minor, patch] = /^(\d+)\.(\d+)\.(\d+) \(Claude Code\)$/.exec(version?.trim() ?? '')?.slice(1).map(Number) ?? [];
@@ -22,9 +33,9 @@ const nodeError = (error: string) => error.startsWith('exec_program_unavailable'
 const ansi = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const cliEnvSource = `const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !${CLI_ENV_OVERRIDE}.test(name)));`;
 const probe = `const { spawnSync } = await import('node:child_process');
-const run = (argv, dir) => { ${cliEnvSource} if (dir) env.CLAUDE_CONFIG_DIR = dir;
-  return spawnSync('claude', argv, { encoding: 'utf8', timeout: 10000, env }); };
-const version = run(['--version']);
+const run = (argv, dir, timeout = 10000) => { ${cliEnvSource} if (dir) env.CLAUDE_CONFIG_DIR = dir;
+  return spawnSync('claude', argv, { encoding: 'utf8', timeout, env }); };
+const version = run(['--version'], '', 4000);
 const auth = JSON.parse(process.argv[2]).map(dir => version.status === 0 ? run(['auth', 'status'], dir) : null);
 console.log(JSON.stringify({ version: version.status === 0 ? version.stdout.trim() : null, auth: auth.map(run => run?.status === 0 ? run.stdout : null) }));`;
 const loginScript = `const { spawn } = await import('node:child_process');
@@ -304,10 +315,41 @@ export default function activate(api: ModAPI): void {
     return published;
   };
   const cli = (dirs: string[]): Row => {
-    const run = api.host.tryCall('exec.run', { program: 'node', argv: ['--input-type=module', '-', JSON.stringify(dirs)], stdin: probe, sandbox: 'none' });
+    const run = api.host.tryCall('exec.run', { program: 'node', argv: ['--input-type=module', '-', JSON.stringify(dirs)], stdin: probe, sandbox: 'none',
+      timeout_ms: Math.min(120_000, 5_000 + 10_000 * dirs.length) });
     if (!run.ok) return { error: nodeError(run.error) };
     if (run.value.exit_code !== 0) return { error: `node exited ${run.value.exit_code}: ${run.value.stderr.trim()}` };
     try { return JSON.parse(run.value.stdout); } catch { return { error: 'unreadable probe output' }; }
+  };
+  const statuses = () => {
+    const listed = api.host.tryCall('routes.list', null);
+    return new Map<string, RouteStatus | null>(listed.ok ? listed.value.map(route => [route.name, route.status ?? null]) : []);
+  };
+  const report = (accounts: Row[], probed: Row) => {
+    const unusable = probed.error ?? cliProblem(probed.version);
+    const slugs = ((saved().models ?? []) as Row[]).map(model => String(model.slug));
+    const known = statuses();
+    api.state.set({ ...saved(), probed_at: Date.now() });
+    accounts.forEach((account, index) => {
+      let status: Row = {};
+      try { status = JSON.parse(probed.auth?.[index] ?? '{}'); } catch {}
+      const signed = signedIn(status, account.billing);
+      const route = accountRoute(account.name);
+      const usage = known.get(route)?.usage;
+      const models = slugs.filter(slug => account.name === 'default'
+        ? !accounts.some(other => other.name !== 'default' && slug.endsWith(`.${other.name}`)) : slug.endsWith(`.${account.name}`));
+      const detail = unusable ?? (signed ? null : `not signed in; run ${loginCommand(account.billing, account.name)}`);
+      api.host.tryCall('routes.status', { route, installed: !probed.error && !!probed.version, signed_in: signed,
+        ...probed.version ? { version: clip(String(probed.version).trim(), 128) } : {}, ...models.length && models.length <= 64 ? { models } : {},
+        ...usage ? { usage } : {}, ...detail ? { detail: clip(detail, 256) } : {} });
+    });
+  };
+  const refresh = (force = false) => {
+    const accounts = (saved().accounts ?? []) as Row[];
+    const known = statuses();
+    const fresh = (saved().probed_at ?? 0) > Date.now() - PROBE_MS && accounts.every(account => known.get(accountRoute(account.name)));
+    if (!accounts.length || !force && fresh) return;
+    report(accounts, cli(accounts.map(account => account.config_dir ?? '')));
   };
   const say = (text: string, error = false) =>
     api.host.tryCall('terminal.notice', { text, kind: error ? 'error' : 'info', placement: 'transcript' });
@@ -334,6 +376,7 @@ export default function activate(api: ModAPI): void {
     const result = setup(mod, [String(login.account), String(login.billing), String(login.dir ?? '')]);
     if (typeof result === 'string') return say(`Claude setup failed: ${result}${last ? `; the login printed: ${last}` : ''}`, true);
     if (!adopt(result)) return say('Claude setup finished, but the provider did not start; restart OMD+ and run /claude', true);
+    refresh(true);
     const account = (result.accounts as Row[]).find(item => item.name === login.account);
     say(`Claude account ${login.account}${account?.email ? ` (${account.email})` : ''} is ready on ${login.billing === 'api' ? 'Console API credits' : 'your subscription'}; pick its models with /model or switch with /profile`);
   };
@@ -361,6 +404,22 @@ export default function activate(api: ModAPI): void {
   });
   api.on('start', () => {
     ensure();
+    api.host.tryCall('events.schedule', { key: 'probe', delay_ms: 1000 });
+  });
+  api.on('timer', ({ key }) => {
+    if (key !== 'probe') return;
+    refresh();
+    api.host.tryCall('events.schedule', { key: 'probe', delay_ms: PROBE_MS });
+  });
+  api.on('app_notification', ({ method, params }) => {
+    const limits = method === 'account/rateLimits/updated' ? (params as Row | null)?.rateLimits ?? {} : {};
+    const account = ((saved().accounts ?? []) as Row[]).find(item => accountRoute(item.name).replace(/-/g, '_') === limits.limitId);
+    const route = account ? accountRoute(account.name) : null;
+    const current = route ? statuses().get(route) : null;
+    const usage = usageWindows(limits);
+    if (!route || !current || !usage.length) return;
+    const { installed, signed_in, version, models, detail } = current;
+    api.host.tryCall('routes.status', { route, installed, signed_in, usage, ...version ? { version } : {}, ...models ? { models } : {}, ...detail ? { detail } : {} });
   });
   api.on('resume', () => { ensure(); });
   api.on('turn_start', () => {
@@ -374,6 +433,7 @@ export default function activate(api: ModAPI): void {
       const result = setup(mod, [name, 'remove']);
       if (typeof result === 'string') return void say(`Claude account ${name} was not removed: ${result}`, true);
       adopt(result);
+      refresh(true);
       return void say(`Removed Claude account ${name}${result.signed_out === null ? '; your Claude Code login is kept' : result.signed_out ? ' and signed it out' : '; signing it out failed, so its Keychain item may remain'}`);
     }
     if (channel !== `${api.package.id}/login`) return;
@@ -385,7 +445,7 @@ export default function activate(api: ModAPI): void {
     const found = api.host.tryCall('process.which', { names: ['node'], sandbox: 'none' });
     const node = found.ok ? found.value.found[0] : null;
     if (!node) return void say(`Claude login did not start: ${found.ok ? NODE_MISSING : found.error}`, true);
-    const dir = mod && `${mod.replace(/\/sources\/[^/]+\/?$/, '')}/routes/claude/accounts/${account}`;
+    const dir = mod && `${mod.replace(/\/(?:sources\/[^/]+|package-cache\/[^/]+\/[^/]+)\/?$/, '')}/routes/claude/accounts/${account}`;
     const checked = cli([dir]);
     const unusable = checked.error ?? cliProblem(checked.version);
     if (unusable) return void say(`Claude login did not start: ${unusable}`, true);
@@ -427,7 +487,9 @@ export default function activate(api: ModAPI): void {
     }
     if (action) return { display: usage };
     const accounts = (saved().accounts ?? []) as Row[];
-    const { version, auth, error } = cli(accounts.map(account => account.config_dir ?? ''));
+    const probed = cli(accounts.map(account => account.config_dir ?? ''));
+    const { version, auth, error } = probed;
+    if (accounts.length) report(accounts, probed);
     const { models, published } = saved();
     const wrong = !error && version ? cliProblem(version) : null;
     const login = (index: number) => {

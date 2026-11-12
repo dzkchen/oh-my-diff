@@ -43,7 +43,7 @@ needs a grant.
 ## Choosing a route
 
 - [`routes.list`](#routeslist) returns the routes visible to the calling mod, plus `data` on the caller's own routes
-  ([route writes](#route-writes-route_write_v1)).
+  ([route writes](#route-writes-route_write_v1)) and each route's provider-published [status](#route-status-route_status_v1).
 - [`routes.select`](#routesselect) applies a lead route to the next request, the thread or future new threads.
 - The `routing` replacement returns `{route}` to choose a configured lead route at thread start.
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
@@ -63,13 +63,45 @@ routes.list null → RouteInfo[]
 ```
 
 `routes.list` (capability `model`) takes no arguments and returns the routes visible to the calling mod. Each
-`RouteInfo` is `{name, model, provider, reasoning, roles, billing, tools, available, credential, data?}`; `billing` is
-`included_subscription`, `explicit_paid_api_grant` or `provider_billed`, and `data` is experimental.
+`RouteInfo` is `{name, model, provider, reasoning, roles, billing, tools, available, credential, data?, status?}`; `billing` is
+`included_subscription`, `explicit_paid_api_grant` or `provider_billed`, and `data` and `status` are experimental.
 
 This call from the `coordination` example picks the worker routes on the user's subscription:
 
 ```ts
 const routes = api.host.call('routes.list', null).filter(route => route.available && route.roles.includes('worker') && route.billing === 'included_subscription');
+```
+
+### Route status (`route_status_v1`)
+
+Experimental (added after 1.0.0). Each `RouteInfo` from `routes.list` has `status`: the latest status the route's
+provider mod published in this OMD process, or `null` before it publishes one.
+
+```text
+routes.status {route, installed, signed_in, version?, models?, usage?, detail?} → {route, checked_at}
+```
+
+`routes.status` (capability `model`) publishes a route's status. Only a mod with a host-approved provider grant in
+`host.json` (`services[].route.provider`) for the route's provider may call it, so a provider mod reports on its own
+routes and no other mod can. The host keeps the latest status per route in memory, stamps `checked_at` (Unix
+milliseconds) and returns it to every mod that can see the route. A restart forgets it; the provider mod probes again.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `installed` | boolean | The provider's client or runtime is present |
+| `signed_in` | boolean | The route's account is signed in |
+| `version` | string, at most 128 bytes | The client version |
+| `models` | up to 64 strings of at most 128 bytes | Models the account can use now |
+| `usage` | up to 4 `{label, used_percent, window_minutes?, resets_at?}` | Usage windows; `used_percent` is 0 to 100 and `resets_at` is Unix milliseconds |
+| `detail` | string, at most 256 bytes | Why the route is not usable, in words a person can act on |
+
+Readers decide how old a status may be from `checked_at`. A field the provider can't measure is left out; it is never
+guessed. `route_status_invalid` reports a missing or out-of-range field, `route_not_configured: ROUTE` an unknown
+route and `route_status_not_provider: ROUTE` a caller without that provider's grant.
+
+```ts
+api.host.call('routes.status', { route: 'claude-work', installed: true, signed_in: true, models: ['claude-sonnet-5-5.work'] });
+const ready = api.host.call('routes.list', null).filter(route => route.status?.signed_in);
 ```
 
 ## `routes.select`

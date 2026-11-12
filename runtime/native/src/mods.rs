@@ -15,6 +15,7 @@ mod operations;
 mod peering;
 mod persisted;
 mod roles;
+mod route_status;
 pub(crate) mod services;
 mod snapshots;
 mod tools;

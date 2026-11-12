@@ -38,8 +38,15 @@ its own Keychain item. Each account gets its own route (a model setup in `host.j
 request runs under the account the model belongs to. A model other than an account's default is billed on the shared
 rate. That's the plan, or provider billing if any account uses Console API credits.
 
-`/status` shows the plan's 5-hour and weekly limits with reset times, and which billing source is in use. An expired
-login or a model your account lacks is refused with a message naming `/claude login`.
+`/status` shows the plan's 5-hour and weekly limits with reset times, and which billing source is in use. Each account
+has its own row (`Claude`, `Claude (work)`). An expired login or a model your account lacks is refused with a message
+naming `/claude login`.
+
+Each account's route (`claude`, `claude-NAME`) publishes its status: whether the CLI is installed and supported, whether
+the account is signed in, its models, its latest 5-hour and weekly usage, and why it can't be used. `/profile` shows
+it and the subagent router skips an account that isn't usable. The mod checks a second after start and then every 10
+minutes while the last check is older than that, after `/claude`, and after a login or removal. The version check
+stops after 4 s and each sign-in check after 10 s.
 
 OMD never switches between plan limits and API credits on its own. The choice is stored and changes only when you run
 `/claude login` or `/claude login api` again.

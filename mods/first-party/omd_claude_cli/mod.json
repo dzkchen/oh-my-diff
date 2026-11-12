@@ -9,7 +9,7 @@
     "commands": [{ "name": "claude", "description": "Sign in to Claude accounts or see their status, then pick Claude models in /model" }]
   },
   "license": "MIT",
-  "subscriptions": { "channels": ["omd_claude_cli/login", "omd_claude_cli/remove"] },
+  "subscriptions": { "channels": ["omd_claude_cli/login", "omd_claude_cli/remove"], "app": ["account/rateLimits/updated"] },
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party/omd_claude_cli"
@@ -24,7 +24,8 @@
     "events",
     "packages",
     "inventory",
-    "store"
+    "store",
+    "threads"
   ],
   "os_access": {
     "programs": [
@@ -46,8 +47,11 @@
       "process_streams_v1",
       "ui_controls_v1",
       "events_v1",
-      "package_controls_v1"
-    ]
+      "package_controls_v1",
+      "timers_v1",
+      "app_v1"
+    ],
+    "optional_features": ["route_status_v1"]
   },
   "settings_schema": {
     "type": "object",

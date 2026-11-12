@@ -57,6 +57,7 @@ impl ModHostCall {
                 Ok("sessions")
             }
             "routes.list"
+            | "routes.status"
             | "providers.register"
             | "providers.unregister"
             | "providers.models"

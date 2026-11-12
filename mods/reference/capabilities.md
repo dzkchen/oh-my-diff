@@ -26,7 +26,7 @@ These capabilities allow processes, workspace files, models, agents, stored data
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
 | `network` | `exec.run`, `process.start` and `terminal.pty` with `network: "loopback"` |
 | `unix_sockets` (experimental) | `exec.run` `unix_sockets` |
-| `model` | `routes.list`, `routes.select`, `models.context_window`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
+| `model` | `routes.list`, `routes.select`, `routes.status`, `models.context_window`, `providers.*`, `ledger.settle`, the `routing` and `model_response` events |
 | `agents` | `agents.*` (including `agents.inventory`), `api.agent`, `agent_offers` and `agent_spawn` interceptors, `model.complete`, `model.fork` (also needs `sessions` and `sessions_tools`), `routes.add` and `routes.models` for the mod itself, `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.snapshot`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
@@ -191,7 +191,8 @@ it needs and its registry status. An operation marked experimental may change in
 | `receipts.submit` | `contracts` | frozen |
 | `routes.add` | `agents` for the mod itself; `packages` for another mod | frozen; experimental fields: `model`, `effort` |
 | `routes.models` | `agents` for the mod itself; `packages` for another mod | experimental |
-| `routes.list` | `model` | frozen; experimental fields: `data` |
+| `routes.list` | `model` | frozen; experimental fields: `data`, `status` |
+| `routes.status` | `model` | experimental |
 | `routes.select` | `model` | frozen |
 | `routes.write` | `packages` | experimental |
 | `session.info` | `inventory` | frozen; experimental fields: `process_id`, `omd_version` |

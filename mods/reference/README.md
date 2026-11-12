@@ -72,7 +72,7 @@ The pages are grouped by area. A heading that ends with a name in parentheses, s
 
 | Page | Covers |
 | --- | --- |
-| [Routes](routes.md) | Route fields, `routes.list`, `routes.select`, `routes.add`, reloading and writing routes, grant files, provider billing, the ledger, sidecars, service launch snapshots, request helpers, provider services |
+| [Routes](routes.md) | Route fields, `routes.list`, route status, `routes.select`, `routes.add`, reloading and writing routes, grant files, provider billing, the ledger, sidecars, service launch snapshots, request helpers, provider services |
 | [Model requests and streams](model-requests.md) | `model_request`, `response_stream`, synthetic responses, `model_response` |
 | [One-shot model calls and forks](model-calls.md) | `model.complete`, `model.fork`, prompt cache marks |
 | [Final-request policy](final-request-policy.md) | `model_send`, declared request policies, coverage |

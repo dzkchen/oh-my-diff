@@ -1,9 +1,9 @@
-import type { Json, ModAPI, TerminalPanelItem, TerminalSpan } from '../../api.d.ts';
+import type { Json, ModAPI, RouteStatus, TerminalPanelItem, TerminalSpan } from '../../api.d.ts';
 import { NAME, PROVIDER, URLS, loopback, modelFor, origin, profileEntry, profilesOf, routeFor, serviceFor, type Profile } from './profiles.ts';
 
 type Window = { minutes: number | null; used: number; resets: number | null };
 type Quota = { windows: Window[]; at: number };
-type Account = { name: string; provider: string; model: string; effort: string; billing: string; available: boolean; profile: Profile | null };
+type Account = { name: string; provider: string; model: string; effort: string; billing: string; available: boolean; profile: Profile | null; status?: RouteStatus | null };
 type Listed = { model: string; displayName: string; hidden?: boolean; modelProvider?: string | null };
 type Saved = { accounts: Account[]; mod?: string; provider?: string; watch?: { provider: string; known: string[]; polls: number } | null; current: string | null; notice: string | null; pending: string | null; pending_process?: string; ours: boolean; seen: { profile: string; windows: string } | null; quota: Record<string, Quota> };
 
@@ -49,7 +49,7 @@ export default function activate(api: ModAPI) {
     if (!routes.ok || !Array.isArray(routes.value)) return;
     const accounts = routes.value.filter(route => route.roles.includes('lead') && (route.provider !== PROVIDER || route.data))
       .map(route => ({ name: route.name, provider: route.provider, model: route.model, effort: route.reasoning, billing: route.billing, available: route.available,
-        profile: route.provider === PROVIDER ? profilesOf([route])[0] : null }));
+        profile: route.provider === PROVIDER ? profilesOf([route])[0] : null, status: route.status ?? null }));
     const { provider, model, process_id } = api.session();
     const { current } = saved();
     const prefix = PROVIDERS[provider]?.prefix;
@@ -100,8 +100,25 @@ export default function activate(api: ModAPI) {
     if (route) api.state.set({ ...saved(), current: route.name, ours: true } as unknown as Json);
     return route ? { route: route.name } : null;
   });
+  const publish = () => {
+    const owned = saved().accounts.filter(account => account.profile && account.profile.kind !== 'ollama');
+    if (!owned.length) return;
+    const credentials = api.host.tryCall('credentials.list', null);
+    if (!credentials.ok) return;
+    const ready = new Set(credentials.value.filter(item => item.status === 'ready').map(item => item.id));
+    for (const account of owned) {
+      if (!account.profile) continue;
+      const signed = ready.has(account.profile.credential);
+      api.host.tryCall('routes.status', { route: account.name, installed: true, signed_in: signed, models: [account.model],
+        ...signed ? {} : { detail: `its sign-in is missing; run /profile refresh ${account.name}` } });
+    }
+    const routes = api.host.tryCall('routes.list', null);
+    const status = new Map(routes.ok && Array.isArray(routes.value) ? routes.value.map(route => [route.name, route.status ?? null]) : []);
+    store({ accounts: saved().accounts.map(account => status.has(account.name) ? { ...account, status: status.get(account.name) } : account) });
+  };
   const load = () => {
     refresh();
+    publish();
     if (owned(saved().accounts).length) api.host.tryCall('events.schedule', { key: 'provider', delay_ms: 1_000 });
   };
   api.on('start', load);
@@ -140,7 +157,7 @@ export default function activate(api: ModAPI) {
     const account = accounts.find(item => item.name === current);
     if (method !== 'account/rateLimits/updated' || !account) return;
     const limits = (params as Record<string, any> | null)?.rateLimits ?? {};
-    const family = account.profile ? account.profile.kind === 'chatgpt' ? 'codex' : null : PROVIDERS[account.provider]?.family ?? 'codex';
+    const family = account.profile ? account.profile.kind === 'chatgpt' ? 'codex' : null : PROVIDERS[account.provider] ? account.name.replace(/-/g, '_') : 'codex';
     if ((limits.limitId ?? 'codex') !== family) return;
     const seen: Window[] = ['primary', 'secondary'].map(name => limits[name]).filter(slot => typeof slot?.usedPercent === 'number')
       .map(slot => ({ minutes: typeof slot.windowDurationMins === 'number' ? slot.windowDurationMins : null, used: Math.round(slot.usedPercent),
@@ -472,8 +489,17 @@ export default function activate(api: ModAPI) {
     const done = api.host.tryCall('credentials.request', { action: 'remove', profile: credential });
     return done.ok ? `Removed ${name}${done.value.status === 'completed' ? ' and its sign-in' : '; its sign-in was kept'}.` : `Removed ${name}; its sign-in was kept: ${done.error}`;
   };
+  const health = (account: Account, seen: boolean, now: number) => {
+    const status = account.status;
+    if (!status) return null;
+    const state = !status.installed ? 'not installed' : !status.signed_in ? 'not signed in' : 'signed in';
+    const models = status.models?.length ?? 0;
+    return [status.detail ?? state, ...models ? [`${models} model${models === 1 ? '' : 's'}`] : [],
+      ...seen ? [] : (status.usage ?? []).map(slot => `${slot.label} ${slot.resets_at && slot.resets_at < now ? 'reset' : `${Math.round(slot.used_percent)}%`}`),
+      `checked ${ago(now - status.checked_at)}`].join(' · ');
+  };
   const describe = (account: Account, quota: Record<string, Quota>, now: number) =>
-    `${kind(account)} · ${account.billing === 'included_subscription' ? 'subscription' : account.profile?.model ?? account.model} · ${summary(account, quota[account.name], now)}`;
+    `${kind(account)} · ${account.billing === 'included_subscription' ? 'subscription' : account.profile?.model ?? account.model} · ${summary(account, quota[account.name], now)}${[health(account, !!quota[account.name], now)].filter(Boolean).map(text => ` · ${text}`).join('')}`;
   const reconnect = (name: string) => {
     const account = saved().accounts.find(item => item.name === name);
     const from = account && PROVIDERS[account.provider];
@@ -507,7 +533,11 @@ export default function activate(api: ModAPI) {
 
   api.command('profile', value => {
     const [op = '', label = '', extra = '', url = ''] = String(value ?? '').trim().split(/\s+/);
-    if (['', 'panel', 'list', 'use'].includes(op)) reread();
+    if (['', 'panel', 'list', 'use'].includes(op)) {
+      refresh();
+      reread();
+      publish();
+    }
     const { accounts, current, pending, notice } = saved();
     const named = (name: string) => accounts.find(item => item.name === name);
     if (!op) return panel();
