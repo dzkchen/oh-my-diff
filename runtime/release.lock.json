@@ -1,41 +1,41 @@
 {
   "artifacts": {
     "codex": {
-      "bytes": 436956576,
-      "sha256": "ee008c5e70903d4fce5e809a2f721fb8c2c5ae5c9236ffa1d8d4ea9cefee05c2"
+      "bytes": 436854704,
+      "sha256": "3f93302232f1fea2f9b4eb0b334fbfe2420db4ab206cbbf9684922357c344c47"
     },
     "codex-code-mode-host": {
-      "bytes": 94908872,
-      "sha256": "6ed438ea1c9cd8e8d75919a23336561ae87b1aabdabadc530144cbb8b02a0f14"
+      "bytes": 94908504,
+      "sha256": "58148242a544908635a7a26d06e1d47a99fabe97652628c372b965f0ac3aada3"
     },
     "mod-api.tgz": {
-      "bytes": 431377,
-      "sha256": "182025fa9af2b71e9a965bffab92c865bb0fcf6a73b2d9571b3d4ff0d5fc8995"
+      "bytes": 433346,
+      "sha256": "2b61155ef959f90735bff22569b0bee7e9ded500b273c47c534d70654ee26d04"
     },
     "omd": {
-      "bytes": 18487760,
-      "sha256": "8528e1a7e41554a81803b53a21e7f774929c645819381c2ad5b19dd90a511811"
+      "bytes": 18487856,
+      "sha256": "a3c3d1e53eb36db4a87bcfd2b0995439ebb86dd8d096ad21a935f5e49d0fbbc6"
     },
     "omd-broker": {
-      "bytes": 12559376,
-      "sha256": "dd4ed181d34b5cbda759b13b328050738c508d45f70391706792b0b25f60e997"
+      "bytes": 12559408,
+      "sha256": "595c740a8938e86216330d42f2801e9e2ae7942616ebbaf90c6feeeb61b2d0d3"
     },
     "omd-contract": {
-      "bytes": 16436224,
-      "sha256": "3f3259776c3ca7cfae959011441fb4ad14c7d567a619e207414b2a688c0038c2"
+      "bytes": 16436304,
+      "sha256": "50ad46fe2f5bce9a9c15979b64081db2b2a0bb44b0ea853a5221fe5d51f04094"
     },
     "omd-mod": {
-      "bytes": 19075296,
-      "sha256": "390adf2ad7b42a9f13eaefb7bab275b8f9fbd8af6902c81a608a7b33aafd2764"
+      "bytes": 19071904,
+      "sha256": "936f44548d072ab4c2756d5e57cfa859e63246efa8735a430e101992d2c0384c"
     },
     "omd-runner": {
-      "bytes": 71634632,
-      "sha256": "bdbad9216395060cd31a6ae7a9d04c29a3100ca85101d0a37b22848d45d74c3a"
+      "bytes": 71635768,
+      "sha256": "b19c094752aa23051228ed389475025b8811607d6ce57d83e6d52744beb181d1"
     }
   },
   "build_provenance": {
     "inputs": {
-      "cargo_lock_sha256": "e597d879353b6bf5baeba6a344b93f202b48f0fb48f252d4b81e6201b6f178b6",
+      "cargo_lock_sha256": "9f4c6a9981ac86658851ba0c5c883d16b635c3ab95c0682b4d92b74819ed1f9e",
       "configuration": {
         "cargo_arguments": [
           "build",
@@ -80,38 +80,38 @@
           "RUSTY_V8_SRC_BINDING_PATH": "b9d5652ebca515eb2bf4c2ee4a6551b2567117b5aa720f430d2032616dd7e3b5",
           "RUST_MIN_STACK": "16777216"
         },
-        "environment_sha256": "789f759260db64cf39d1d49fc1ee95daa91de3e071629ad98751037c621402d3",
+        "environment_sha256": "773729bf99e992c151b8554fb00808f93c394b4bcab6c6f36a9c95c155f365fa",
         "rustc_wrapper": null
       },
-      "normalized_cargo_lock_sha256": "9efc26116852723f76540da85d9e4537979014f166c39494bef61e49a9cc0883",
-      "runtime_patch_sha256": "1390b6ade3a474f8baa06082e1c9d79bc3e31d8d6291bdf4a02197a59101f849",
+      "normalized_cargo_lock_sha256": "5e1781c98407bf0cbf67bb39a2dffffa6d2a259871a47fe99946de22c716a782",
+      "runtime_patch_sha256": "72aed8bc780cf42d4f15342fea04564467380b5b4f506d180984a496ff69d80f",
       "rust_toolchain": "1.95.0",
       "target": "aarch64-apple-darwin",
-      "upstream_commit": "0a94398fa60c4fac0e7659e4213a0a36e613dd46"
+      "upstream_commit": "ce21072c90d32c40af7a55b60b2fb35c84a43a6a"
     },
     "schema": 1,
     "signed": {
-      "codex": "ee008c5e70903d4fce5e809a2f721fb8c2c5ae5c9236ffa1d8d4ea9cefee05c2",
-      "codex-code-mode-host": "6ed438ea1c9cd8e8d75919a23336561ae87b1aabdabadc530144cbb8b02a0f14",
-      "omd": "8528e1a7e41554a81803b53a21e7f774929c645819381c2ad5b19dd90a511811",
-      "omd-broker": "dd4ed181d34b5cbda759b13b328050738c508d45f70391706792b0b25f60e997",
-      "omd-contract": "3f3259776c3ca7cfae959011441fb4ad14c7d567a619e207414b2a688c0038c2",
-      "omd-mod": "390adf2ad7b42a9f13eaefb7bab275b8f9fbd8af6902c81a608a7b33aafd2764",
-      "omd-runner": "bdbad9216395060cd31a6ae7a9d04c29a3100ca85101d0a37b22848d45d74c3a"
+      "codex": "3f93302232f1fea2f9b4eb0b334fbfe2420db4ab206cbbf9684922357c344c47",
+      "codex-code-mode-host": "58148242a544908635a7a26d06e1d47a99fabe97652628c372b965f0ac3aada3",
+      "omd": "a3c3d1e53eb36db4a87bcfd2b0995439ebb86dd8d096ad21a935f5e49d0fbbc6",
+      "omd-broker": "595c740a8938e86216330d42f2801e9e2ae7942616ebbaf90c6feeeb61b2d0d3",
+      "omd-contract": "50ad46fe2f5bce9a9c15979b64081db2b2a0bb44b0ea853a5221fe5d51f04094",
+      "omd-mod": "936f44548d072ab4c2756d5e57cfa859e63246efa8735a430e101992d2c0384c",
+      "omd-runner": "b19c094752aa23051228ed389475025b8811607d6ce57d83e6d52744beb181d1"
     },
     "unsigned": {
-      "codex": "8cf10c129d9feb3627539a56f54b6c921937aa6f5643a44f0afbc59bfb680d3c",
-      "codex-code-mode-host": "6ed438ea1c9cd8e8d75919a23336561ae87b1aabdabadc530144cbb8b02a0f14",
-      "omd": "0350787ee70cd9a412310f042e13af1e8f6ba3dfaa76cb0c4ff20ecfb2d03884",
-      "omd-broker": "023e6d6d98508cfaa831c62f347881205373e5f408fc03a6be0f99ca0238195b",
-      "omd-contract": "7b318f850595831bfe40445c5b18a06b2cfd514c5d4da7af970c7024825e25bb",
-      "omd-mod": "b20a3253d396d07484052af0132f85bd332df5588717d5279a4deead9c09f650",
-      "omd-runner": "bdbad9216395060cd31a6ae7a9d04c29a3100ca85101d0a37b22848d45d74c3a"
+      "codex": "e1e505699a629e863a8211b3bc50df3300774b781d06884707a4080022f109cb",
+      "codex-code-mode-host": "58148242a544908635a7a26d06e1d47a99fabe97652628c372b965f0ac3aada3",
+      "omd": "037454033ced11c03b09b4b1647cab86777732dec8a6b6f2d508369a4ecca422",
+      "omd-broker": "8eb5e77dc8acb99e905ec20030ca9e376c3c56cb3e9b73d82f4c96e6f99a082a",
+      "omd-contract": "b0b801f0e3b50f5e5a71d8072c63423e0ed0adf1700f1beeb1ff2902b43b9674",
+      "omd-mod": "4c605ecbd2a26b56dcf351d12cebadb5f5fa2f3dbe35fef93d6dad517855a194",
+      "omd-runner": "b19c094752aa23051228ed389475025b8811607d6ce57d83e6d52744beb181d1"
     }
   },
   "mod_api": "1.0.0",
   "node": "24.22.1",
-  "normalized_cargo_lock_sha256": "9efc26116852723f76540da85d9e4537979014f166c39494bef61e49a9cc0883",
+  "normalized_cargo_lock_sha256": "5e1781c98407bf0cbf67bb39a2dffffa6d2a259871a47fe99946de22c716a782",
   "platform_tools": [
     "omd",
     "omd-contract"
@@ -162,11 +162,11 @@
       "plugin_sources": []
     }
   },
-  "runtime_patch_sha256": "1390b6ade3a474f8baa06082e1c9d79bc3e31d8d6291bdf4a02197a59101f849",
+  "runtime_patch_sha256": "72aed8bc780cf42d4f15342fea04564467380b5b4f506d180984a496ff69d80f",
   "rust_toolchain": "1.95.0",
   "schema": 1,
   "target": "aarch64-apple-darwin",
-  "upstream_commit": "0a94398fa60c4fac0e7659e4213a0a36e613dd46",
-  "upstream_tag": "rust-v0.167.1",
+  "upstream_commit": "ce21072c90d32c40af7a55b60b2fb35c84a43a6a",
+  "upstream_tag": "rust-v0.167.2",
   "version": "1.5.3"
 }
