@@ -98,6 +98,7 @@ class PullRequestChecks(unittest.TestCase):
             "README.md", "runtime/README.md", "docs/mod-authors/first-mod.md", "docs/contributing/ci.md",
             "mods/first-party/omd_logo/index.ts", "mods/examples/hello/index.ts",
             "plugins/omd-code-execution/plugin.json", "tests/test_package.py",
+            "release/changelog.json", "extensions/index.json", "runtime/release.lock.json",
         ]))
 
     def test_native_fingerprint_tracks_inputs_across_main_syncs(self):

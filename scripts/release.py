@@ -123,7 +123,7 @@ def reference_drift():
     return None
 
 
-def check(version=None):
+def check(version=None, crates=True):
     entries = json.loads(CHANGELOG.read_text())
     problems, seen, versions = [], set(), set()
     for entry in entries:
@@ -152,7 +152,7 @@ def check(version=None):
             problems.append(f"{version} is not vMAJOR.MINOR.PATCH or -rc.N")
         if lock_version() != version:
             problems.append(f"runtime/release.lock.json is {lock_version()}, not {version}")
-        if host_versions() != {version}:
+        if crates and host_versions() != {version}:
             problems.append(f"the OMD host crates are {', '.join(sorted(host_versions()))}, not {version}")
         if not entries or entries[0].get("version") != version:
             problems.append(f"the newest changelog entry is not {version}")
@@ -217,15 +217,13 @@ def prepare(version, summary):
     run("git", "fetch", "--tags", "origin", "main")
     if run("git", "tag", "--list", tag):
         raise SystemExit(f"{tag} already exists")
-    if host_versions("origin/main") != {version}:
-        raise SystemExit(f"main's OMD host crates are {', '.join(sorted(host_versions('origin/main')))}, not {version}: "
-                         "bump codex-omd and codex-omd-runner in the patch and merge that first")
     merged = json.loads(run("git", "show", "origin/main:runtime/release.lock.json"))["version"] == version
     if merged:
-        commit = next((commit for commit, _, subject in (line.partition(" ") for line in run(
-            "git", "log", "--first-parent", "--format=%H %s", "origin/main").splitlines()) if released(version, subject)), None)
+        commit = release_commit(version)
         if commit is None:
             raise SystemExit(f"main has no `chore(release): {version}` commit to tag")
+        if host_versions(commit) != {version}:
+            raise SystemExit(f"the OMD host crates at {commit[:7]} are {', '.join(sorted(host_versions(commit)))}, not {version}")
         if problems := history(json.loads(run("git", "show", f"{commit}:release/changelog.json")), version, commit):
             raise SystemExit("\n".join(problems))
         run("git", "tag", "--annotate", tag, "--message", f"Oh My Diff {version}", commit)
@@ -249,13 +247,15 @@ def prepare(version, summary):
     entries.insert(0, release_entry(entries, version, summary))
     CHANGELOG.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n")
     MARKDOWN.write_text(render(entries))
-    check(version)
+    check(version, crates=False)
     run("git", "add", LOCK, CATALOG, CHANGELOG, MARKDOWN)
     run("git", "commit", "--message", f"chore(release): {version}")
     run("git", "push", "--set-upstream", "origin", branch)
     run("gh", "pr", "create", "--repo", REPOSITORY, "--base", "main", "--head", branch,
         "--title", f"chore(release): {version}",
-        "--body", "Review and edit the generated `release/changelog.json` entry, then run `python3 scripts/release.py render`. "
+        "--body", f"Bump codex-omd and codex-omd-runner to {version} on this branch (scratch tree, `build.py sync`) unless "
+                  "main already has it. Review and edit the generated `release/changelog.json` entry, then run "
+                  "`python3 scripts/release.py render`. "
                   f"Squash merge this pull request: tagging looks for its `chore(release): {version}` commit on main. "
                   f"Run `mise run release -- {version}` again to cover changes merged to main since, and once more after "
                   "this merges to tag it.", capture=False)
@@ -271,7 +271,7 @@ def refresh(version, branch):
         entries[0]["commits"] += commits
         CHANGELOG.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n")
         MARKDOWN.write_text(render(entries))
-        check(version)
+        check(version, crates=False)
         run("git", "add", CHANGELOG, MARKDOWN)
         run("git", "commit", "--message", f"chore(release): add changes merged since {version} was prepared")
     run("git", "push", "origin", branch)
@@ -331,6 +331,44 @@ def reusable_validation(version):
     return empty
 
 
+def release_commit(version):
+    return next((commit for commit, _, subject in (line.partition(" ") for line in run(
+        "git", "log", "--first-parent", "--format=%H %s", "origin/main").splitlines()) if released(version, subject)), None)
+
+
+def next_step(version):
+    tag, workflows = f"v{version}", f"repos/{REPOSITORY}/actions/workflows"
+    if run("git", "tag", "--list", tag):
+        view = subprocess.run(["gh", "release", "view", tag, "--repo", REPOSITORY, "--json", "isDraft", "--jq", ".isDraft"],
+                              cwd=ROOT, capture_output=True, text=True)
+        return (f"{tag} is published: check the published release" if view.stdout.strip() == "false"
+                else f"{tag} is tagged: watch https://github.com/{REPOSITORY}/actions/workflows/release.yml")
+    commit = release_commit(version)
+    if commit is None:
+        branch = f"release/{tag}"
+        if run("git", "ls-remote", "origin", f"refs/heads/{branch}"):
+            run("git", "fetch", "origin", branch)
+            bump = (f"bump codex-omd and codex-omd-runner to {version} on {branch} (scratch tree, build.py sync), "
+                    if host_versions(f"origin/{branch}") != {version} else "")
+            return f"{bump}curate and squash merge {branch}; `mise run release -- {version}` first if main moved"
+        return f'mise run release -- {version} --summary "One sentence."'
+    runs = github_json(f"{workflows}/release.yml/runs?event=workflow_dispatch&head_sha={commit}&per_page=20")["workflow_runs"]
+    if active := [item for item in runs if item["status"] != "completed"]:
+        return f"wait for the dry run {active[0]['html_url']}"
+    if passed := [item for item in runs if item["conclusion"] == "success"]:
+        return f"update acceptance on {passed[0]['html_url']}'s package, then `mise run release -- {version}` to tag {commit[:7]}"
+    failed = f" (last failed: {runs[0]['html_url']})" if runs else ""
+    return f"gh workflow run release.yml --ref main -f version={version}{failed}; it qualifies {commit[:7]}"
+
+
+def status(version):
+    run("git", "fetch", "--tags", "origin", "main")
+    nightly = github_json(f"repos/{REPOSITORY}/actions/workflows/nightly.yml/runs?branch=main&status=completed&per_page=1")
+    for item in nightly["workflow_runs"]:
+        print(f"Latest nightly: {item['conclusion']} at {item['head_sha'][:7]} {item['html_url']}")
+    print(f"Next: {next_step(version)}")
+
+
 def rollback(version, dry_run=False):
     tag = f"v{version}"
     listed = json.loads(run("gh", "release", "list", "--repo", REPOSITORY, "--exclude-drafts",
@@ -356,6 +394,7 @@ def main():
     check_parser.add_argument("version", nargs="?")
     commands.add_parser("render", help="regenerate CHANGELOG.md from release/changelog.json")
     commands.add_parser("notes").add_argument("version")
+    commands.add_parser("status", help="report where a release stands and its next step").add_argument("version")
     reuse_parser = commands.add_parser("reuse", help="find a complete release dry run at this exact GitHub commit")
     reuse_parser.add_argument("version")
     reuse_parser.add_argument("--github-output", type=Path, help="append the reusable run and artifact IDs to this workflow output file")
@@ -367,6 +406,8 @@ def main():
         prepare(args.version, args.summary)
     elif args.command == "check":
         check(args.version)
+    elif args.command == "status":
+        status(args.version)
     elif args.command == "render":
         MARKDOWN.write_text(render(json.loads(CHANGELOG.read_text())))
     elif args.command == "notes":
