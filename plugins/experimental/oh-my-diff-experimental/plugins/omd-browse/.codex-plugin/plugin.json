@@ -1,0 +1,32 @@
+{
+  "name": "omd-browse",
+  "version": "0.3.0",
+  "description": "The web as a command line for Codex: pages become man pages, forms become commands, and the JSON endpoints sites call are learned and replayed with your session. Drives your real Chrome or a separate OMD profile, with handoffs, stored secrets, cross-origin iframes and recording.",
+  "author": {
+    "name": "Oh My Diff"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "OMD Browse",
+    "shortDescription": "Use the web as a command line",
+    "longDescription": "One `browse` tool takes shell-style command lines. Each page shows an outline, its forms as commands with flags, tables and learned endpoints; actions print only what changed; endpoints the site calls are kept per site and called directly next time. Sign-ins, 2FA and payments are handed to you, and stored secrets are typed without the model seeing them.",
+    "developerName": "Oh My Diff",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Local MCP Tools",
+      "Skills"
+    ],
+    "defaultPrompt": [
+      "Open localhost:3000 and check the sign-up form works",
+      "Find my latest invoice on the billing page I'm signed in to"
+    ]
+  },
+  "license": "MIT",
+  "keywords": [
+    "browser",
+    "chrome",
+    "cdp",
+    "web"
+  ]
+}

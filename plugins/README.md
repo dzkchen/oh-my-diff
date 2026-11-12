@@ -22,6 +22,7 @@ marketplace with `codex plugin marketplace add PATH/plugins/experimental/oh-my-d
 | [`omd-code-execution`](experimental/oh-my-diff-experimental/plugins/omd-code-execution/README.md) | Guides the model to run JavaScript cells with session storage, and persistent Python and Bun cells, in Codex code mode |
 | [`omd-output-budget`](experimental/oh-my-diff-experimental/plugins/omd-output-budget/README.md) | Keeps large shell and tool results out of the context, with paged reads, search and doc fetch |
 | [`omd-monitor`](experimental/oh-my-diff-experimental/plugins/omd-monitor/README.md) | Guides the agent to subscribe to builds, files and CI, continue other work and handle the result |
+| [`omd-browse`](experimental/oh-my-diff-experimental/plugins/omd-browse/README.md) | Lets the agent use the web as a command line in your real Chrome or a separate profile: pages become commands, and the site endpoints it sees are learned and called directly |
 
 ## Add a plugin
 
@@ -42,7 +43,7 @@ marketplace with `codex plugin marketplace add PATH/plugins/experimental/oh-my-d
 
 ## Turn on a component
 
-`omd-anchored-edit`, `omd-artifact-reading` and `omd-output-budget` contain a `mod/` folder. That folder is a mod
+`omd-anchored-edit`, `omd-artifact-reading`, `omd-output-budget` and `omd-browse` contain a `mod/` folder. That folder is a mod
 component: an ordinary mod that the plugin contains. Adding the plugin doesn't run it. You inspect it, trust it with
 the capabilities it asks for, and turn it on in your mod store, like any other mod you trust. Each plugin's README
 lists its component's capabilities.

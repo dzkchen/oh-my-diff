@@ -909,6 +909,28 @@
           "path": "skills/omd-monitor"
         }
       ]
+    },
+    {
+      "id": "omd-browse",
+      "version": "0.3.0",
+      "extension_type": "plugin",
+      "capability": "The web as a command line: pages as man pages with form commands, learned and replayable site endpoints, aliases, stored secrets, handoffs, cross-origin iframes and recording, in the user's real Chrome or a separate OMD profile",
+      "source": "plugins/experimental/oh-my-diff-experimental/plugins/omd-browse",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.167.0; OMD 1.5.0; Node 22 or later; a Chromium browser (Chrome 144 or later for your own browser); ffmpeg for MP4 recording; the optional mod component (live browser pane) needs mod API 1.0.0, process_raster_v1 and explicit trust and grants",
+      "tested_versions": [
+        "Codex 0.167.0",
+        "Chrome 156 (headless and headed OMD profile)",
+        "mod API 1.0.0 (offline checks)"
+      ],
+      "support_status": "experimental",
+      "components": [
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-browse"
+        }
+      ]
     }
   ]
 }

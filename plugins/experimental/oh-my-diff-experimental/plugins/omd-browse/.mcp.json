@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "omd_browse": {
+      "command": "node",
+      "args": ["./scripts/server.mjs"],
+      "cwd": ".",
+      "env_vars": ["OMD_BROWSE_MODE", "OMD_BROWSE_ALLOW", "OMD_BROWSE_BROWSER", "OMD_BROWSE_DATA", "OMD_BROWSE_HEADLESS", "OMD_BROWSE_IDLE_MINUTES", "OMD_BROWSE_CONNECT_SECONDS", "OMD_BROWSE_SECRETS_FILE", "OMD_BROWSE_FFMPEG", "XDG_DATA_HOME"],
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 1800
+    }
+  }
+}
