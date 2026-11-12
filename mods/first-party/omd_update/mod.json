@@ -37,7 +37,8 @@
       "exec_v1",
       "store_v1",
       "terminal_render_sites_v1",
-      "terminal_welcome_v1"
+      "terminal_welcome_v1",
+      "package_contributes_v1"
     ]
   }
 }

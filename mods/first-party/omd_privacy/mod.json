@@ -52,7 +52,8 @@
     "required_features": [
       "approval_v1",
       "final_request_policy_v1",
-      "store_v1"
+      "store_v1",
+      "package_contributes_v1"
     ]
   }
 }
