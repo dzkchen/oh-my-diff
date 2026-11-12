@@ -93518,10 +93518,10 @@ index 0000000000000000000000000000000000000000..708e3e710b8c9b6974f4c32640ca2c49
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6b3cc2cb7973b65574e0203c6346fb01cb8ab830
+index 0000000000000000000000000000000000000000..35db8bff5e1cb57d5efc3b97e2d53b60fce8a93f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,7355 @@
+@@ -0,0 +1,7341 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -97106,31 +97106,30 @@ index 0000000000000000000000000000000000000000..6b3cc2cb7973b65574e0203c6346fb01
 +    let shared = mods(&fixture.core);
 +    let thread_owner = create_owner(fixture.core.host.clone(), Arc::default(), None).unwrap();
 +    let turn_owner = create_owner(fixture.core.host.clone(), Arc::default(), None).unwrap();
-+    for owner in [&thread_owner, &turn_owner] {
-+        delivery::lead_started(&owner.core, &fixture.lead, None);
++    for core in [&thread_owner.core, &turn_owner.core, &fixture.core] {
++        delivery::lead_started(core, &fixture.lead, None);
 +    }
 +    let session_store = ExtensionData::new("session");
-+    let thread_store = ExtensionData::new(fixture.lead.thread.to_string());
-+    thread_store.insert(fixture.lead.clone());
-+    thread_store.insert_arc(thread_owner.clone());
-+    let turn_store = ExtensionData::new("turn");
 +    let plugins = codex_extension_api::SelectedPluginSnapshot::default();
 +    let mut outcomes = Vec::new();
-+    for case in ["thread", "step", "turn", "shared"] {
-+        if case == "turn" {
-+            turn_store.insert_arc(turn_owner.clone());
++    for (case, thread_owned, turn_owned, expected) in [
++        ("thread", Some(&thread_owner), None, &thread_owner.core),
++        (
++            "turn",
++            Some(&thread_owner),
++            Some(&turn_owner),
++            &turn_owner.core,
++        ),
++        ("shared", None, None, &fixture.core),
++    ] {
++        let thread = ExtensionData::new(fixture.lead.thread.to_string());
++        thread.insert(fixture.lead.clone());
++        let turn = ExtensionData::new("turn");
++        for (store, owner) in [(&thread, thread_owned), (&turn, turn_owned)] {
++            if let Some(owner) = owner {
++                store.insert_arc(owner.clone());
++            }
 +        }
-+        if case == "shared" {
-+            delivery::lead_started(&fixture.core, &fixture.lead, None);
-+        }
-+        let unowned_thread = ExtensionData::new(fixture.lead.thread.to_string());
-+        unowned_thread.insert(fixture.lead.clone());
-+        let thread = if case == "shared" {
-+            &unowned_thread
-+        } else {
-+            &thread_store
-+        };
-+        let empty_turn = ExtensionData::new("turn");
 +        let step = ExtensionData::new(format!("step-{case}"));
 +        shared
 +            .prepare_for_step(codex_extension_api::StepPreparationInput {
@@ -97140,21 +97139,13 @@ index 0000000000000000000000000000000000000000..6b3cc2cb7973b65574e0203c6346fb01
 +                executor_capability_discovery_v2: None,
 +                selected_plugins: &plugins,
 +                session_store: &session_store,
-+                thread_store: thread,
-+                turn_store: if case == "shared" {
-+                    &empty_turn
-+                } else {
-+                    &turn_store
-+                },
++                thread_store: &thread,
++                turn_store: &turn,
 +                step_store: &step,
 +            })
 +            .await;
-+        let tools = if case == "thread" {
-+            shared.tools(&session_store, thread)
-+        } else {
-+            shared.tools_for_step(&session_store, thread, &step)
-+        };
-+        let tool = tools
++        let tool = shared
++            .tools_for_step(&session_store, &thread, &step)
 +            .into_iter()
 +            .find(|tool| tool.tool_name() == ToolName::plain("mod_observer_arm"))
 +            .unwrap();
@@ -97179,18 +97170,13 @@ index 0000000000000000000000000000000000000000..6b3cc2cb7973b65574e0203c6346fb01
 +            .await
 +            .unwrap();
 +        let value: Value = serde_json::from_str(&output.log_output()).unwrap();
-+        let expected = match case {
-+            "turn" => &turn_owner.core,
-+            "shared" => &fixture.core,
-+            _ => &thread_owner.core,
-+        };
 +        let cancelled = delivery::cancel(expected, &fixture.lead, "observer", &json!({"key":"k"}));
 +        outcomes.push((case, value, cancelled));
 +    }
 +    let scheduled = json!({"ok":true,"value":{"key":"k","delay_ms":3600000}});
 +    assert_eq!(
 +        outcomes,
-+        ["thread", "step", "turn", "shared"].map(|case| (
++        ["thread", "turn", "shared"].map(|case| (
 +            case,
 +            scheduled.clone(),
 +            Ok::<_, String>(json!({"cancelled":true}))
@@ -105718,10 +105704,10 @@ index 0000000000000000000000000000000000000000..5367cedeccabe779aa420e095b3d4682
 +}
 diff --git a/codex-rs/ext/omd/src/mods/tools.rs b/codex-rs/ext/omd/src/mods/tools.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d229e901d7429b67fed8d2fa8f8e39c6041377c
+index 0000000000000000000000000000000000000000..e3f4205f924c3c05c8bd7a45913d7ae68ae37f15
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/tools.rs
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,248 @@
 +use super::*;
 +
 +struct Tool {
@@ -105750,15 +105736,13 @@ index 0000000000000000000000000000000000000000..4d229e901d7429b67fed8d2fa8f8e39c
 +        _: &ExtensionData,
 +        thread: &ExtensionData,
 +    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
-+        let selected = clients::for_store(thread);
-+        let this = selected.as_deref().unwrap_or(self);
 +        let Some(lead) = thread.get::<Lead>().filter(|lead| lead.owner == "lead") else {
 +            return Vec::new();
 +        };
-+        let Ok(runtime) = this.runtime.lock() else {
++        let Ok(runtime) = self.runtime.lock() else {
 +            return Vec::new();
 +        };
-+        this.tool_executors(lead, runtime.tools())
++        self.tool_executors(lead, runtime.tools())
 +    }
 +
 +    fn tools_for_step(
@@ -208254,10 +208238,10 @@ index 0000000000000000000000000000000000000000..c8b57534186c56bca390685f1a7bdc5d
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..155151f11cf879c57928d38b33413531ca277742
+index 0000000000000000000000000000000000000000..6e1a9a88950e523e73a90167ce03442a2941c67b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,6209 @@
+@@ -0,0 +1,6220 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -209269,6 +209253,7 @@ index 0000000000000000000000000000000000000000..155151f11cf879c57928d38b33413531
 +    })
 +}
 +crate::omd::isolated_static! { BLOCKED_SNAPSHOT: Mutex<Option<(u64, u64)>> = Mutex::new(None) }
++crate::omd::isolated_static! { ATTACHED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0) }
 +
 +crate::omd::isolated_static! { APPLIED_PLACEHOLDER: Mutex<Option<Option<String>>> = Mutex::new(None) }
 +
@@ -209722,6 +209707,11 @@ index 0000000000000000000000000000000000000000..155151f11cf879c57928d38b33413531
 +}
 +
 +pub(crate) fn invalidate_context() {
++    let now = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map(|elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX))
++        .unwrap_or_default();
++    ATTACHED.with(|attached| attached.store(now, std::sync::atomic::Ordering::Relaxed));
 +    crate::mod_render::clear_tool_notices();
 +    crate::mod_render::clear_asked();
 +    crate::mod_module::retain(&Default::default());
@@ -209953,6 +209943,11 @@ index 0000000000000000000000000000000000000000..155151f11cf879c57928d38b33413531
 +            .unwrap_or_default();
 +        let last = match cache.seen.replace((epoch, newest)) {
 +            Some((seen, last)) if seen == epoch => last,
++            _ if epoch
++                > ATTACHED.with(|attached| attached.load(std::sync::atomic::Ordering::Relaxed)) =>
++            {
++                0
++            }
 +            _ => return Vec::new(),
 +        };
 +        cache
@@ -214736,10 +214731,10 @@ index 0000000000000000000000000000000000000000..db9882f2468090380f949e1c1e144114
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c5d98bc3cc9780c3586b57223cbf3fe6bd45c07
+index 0000000000000000000000000000000000000000..b22c0785a64b9dfa56308650c07e42e456814993
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,3019 @@
+@@ -0,0 +1,3024 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -215874,6 +215869,11 @@ index 0000000000000000000000000000000000000000..7c5d98bc3cc9780c3586b57223cbf3fe
 +    publish(&saved);
 +    refresh();
 +    assert_eq!(take_new_activity(), vec![activity(3, "cancel")]);
++    saved.epoch = u64::MAX;
++    saved.activity = vec![activity(1, "watch")];
++    publish(&saved);
++    refresh();
++    assert_eq!(take_new_activity(), vec![activity(1, "watch")]);
 +}
 +
 +#[test]

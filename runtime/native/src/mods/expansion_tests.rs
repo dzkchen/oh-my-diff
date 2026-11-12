@@ -3582,31 +3582,30 @@ async fn mod_tools_keep_the_thread_and_turn_owner_when_preparing_a_sampling_step
     let shared = mods(&fixture.core);
     let thread_owner = create_owner(fixture.core.host.clone(), Arc::default(), None).unwrap();
     let turn_owner = create_owner(fixture.core.host.clone(), Arc::default(), None).unwrap();
-    for owner in [&thread_owner, &turn_owner] {
-        delivery::lead_started(&owner.core, &fixture.lead, None);
+    for core in [&thread_owner.core, &turn_owner.core, &fixture.core] {
+        delivery::lead_started(core, &fixture.lead, None);
     }
     let session_store = ExtensionData::new("session");
-    let thread_store = ExtensionData::new(fixture.lead.thread.to_string());
-    thread_store.insert(fixture.lead.clone());
-    thread_store.insert_arc(thread_owner.clone());
-    let turn_store = ExtensionData::new("turn");
     let plugins = codex_extension_api::SelectedPluginSnapshot::default();
     let mut outcomes = Vec::new();
-    for case in ["thread", "step", "turn", "shared"] {
-        if case == "turn" {
-            turn_store.insert_arc(turn_owner.clone());
+    for (case, thread_owned, turn_owned, expected) in [
+        ("thread", Some(&thread_owner), None, &thread_owner.core),
+        (
+            "turn",
+            Some(&thread_owner),
+            Some(&turn_owner),
+            &turn_owner.core,
+        ),
+        ("shared", None, None, &fixture.core),
+    ] {
+        let thread = ExtensionData::new(fixture.lead.thread.to_string());
+        thread.insert(fixture.lead.clone());
+        let turn = ExtensionData::new("turn");
+        for (store, owner) in [(&thread, thread_owned), (&turn, turn_owned)] {
+            if let Some(owner) = owner {
+                store.insert_arc(owner.clone());
+            }
         }
-        if case == "shared" {
-            delivery::lead_started(&fixture.core, &fixture.lead, None);
-        }
-        let unowned_thread = ExtensionData::new(fixture.lead.thread.to_string());
-        unowned_thread.insert(fixture.lead.clone());
-        let thread = if case == "shared" {
-            &unowned_thread
-        } else {
-            &thread_store
-        };
-        let empty_turn = ExtensionData::new("turn");
         let step = ExtensionData::new(format!("step-{case}"));
         shared
             .prepare_for_step(codex_extension_api::StepPreparationInput {
@@ -3616,21 +3615,13 @@ async fn mod_tools_keep_the_thread_and_turn_owner_when_preparing_a_sampling_step
                 executor_capability_discovery_v2: None,
                 selected_plugins: &plugins,
                 session_store: &session_store,
-                thread_store: thread,
-                turn_store: if case == "shared" {
-                    &empty_turn
-                } else {
-                    &turn_store
-                },
+                thread_store: &thread,
+                turn_store: &turn,
                 step_store: &step,
             })
             .await;
-        let tools = if case == "thread" {
-            shared.tools(&session_store, thread)
-        } else {
-            shared.tools_for_step(&session_store, thread, &step)
-        };
-        let tool = tools
+        let tool = shared
+            .tools_for_step(&session_store, &thread, &step)
             .into_iter()
             .find(|tool| tool.tool_name() == ToolName::plain("mod_observer_arm"))
             .unwrap();
@@ -3655,18 +3646,13 @@ async fn mod_tools_keep_the_thread_and_turn_owner_when_preparing_a_sampling_step
             .await
             .unwrap();
         let value: Value = serde_json::from_str(&output.log_output()).unwrap();
-        let expected = match case {
-            "turn" => &turn_owner.core,
-            "shared" => &fixture.core,
-            _ => &thread_owner.core,
-        };
         let cancelled = delivery::cancel(expected, &fixture.lead, "observer", &json!({"key":"k"}));
         outcomes.push((case, value, cancelled));
     }
     let scheduled = json!({"ok":true,"value":{"key":"k","delay_ms":3600000}});
     assert_eq!(
         outcomes,
-        ["thread", "step", "turn", "shared"].map(|case| (
+        ["thread", "turn", "shared"].map(|case| (
             case,
             scheduled.clone(),
             Ok::<_, String>(json!({"cancelled":true}))

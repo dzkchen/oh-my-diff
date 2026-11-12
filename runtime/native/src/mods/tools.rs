@@ -26,15 +26,13 @@ impl ToolContributor for Mods {
         _: &ExtensionData,
         thread: &ExtensionData,
     ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
-        let selected = clients::for_store(thread);
-        let this = selected.as_deref().unwrap_or(self);
         let Some(lead) = thread.get::<Lead>().filter(|lead| lead.owner == "lead") else {
             return Vec::new();
         };
-        let Ok(runtime) = this.runtime.lock() else {
+        let Ok(runtime) = self.runtime.lock() else {
             return Vec::new();
         };
-        this.tool_executors(lead, runtime.tools())
+        self.tool_executors(lead, runtime.tools())
     }
 
     fn tools_for_step(
