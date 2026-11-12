@@ -20,7 +20,6 @@ const ROLE_WORDS: [Role, RegExp][] = [
   ['worker', /\b(?:implement(?:s|ed|ing)?|writ(?:e|es|ing)|edit(?:s|ed|ing)?|fix(?:es|ed|ing)?|build(?:s|ing)?|cod(?:e|es|ing)|work(?:s|ed|ing|er)?)\b/i],
 ];
 const READ_TOOLS = ['exec_command', 'write_stdin'];
-const LIMIT_IDS: Record<string, string> = { omd_claude_cli: 'claude', openai: 'codex' };
 const HARD_FAILURES = ['authorization', 'rate_limit', 'allowance'];
 const FULL_PERCENT = 90;
 const COOLDOWN_MS = 15 * 60_000;
@@ -84,10 +83,30 @@ function matching<T extends Named>(items: T[], query: string): T[] {
 
 const resolve = <T extends Named>(items: T[], query: string): T | null => matching(items, query)[0] ?? null;
 
-function health(vitals: Vitals, provider: string, now: number): string | null {
-  const usage = vitals.windows?.[LIMIT_IDS[provider] ?? ''];
+const serves = (route: RouteInfo, model: { model: string; modelProvider?: string | null }) => route.provider === model.modelProvider
+  && (route.model === model.model || !route.status?.models || route.status.models.includes(model.model));
+// A lead route is its own account; a worker route runs on the first lead route of its provider that serves its model.
+const account = (route: RouteInfo, all: RouteInfo[]) => route.roles.includes('lead') ? route
+  : all.find(lead => lead.roles.includes('lead') && serves(lead, { model: route.model, modelProvider: route.provider })) ?? route;
+// Codex's limit id for an account: its route name with dashes as underscores, `codex` on the built-in OpenAI provider.
+const family = (route: RouteInfo, all: RouteInfo[]) => route.provider === 'openai' ? 'codex' : account(route, all).name.replace(/-/g, '_');
+
+function usageOf(vitals: Vitals, route: RouteInfo, all: RouteInfo[], now: number) {
+  const status = account(route, all).status;
+  const published = status?.usage ?? [];
+  if (!status || !published.length) return vitals.windows?.[family(route, all)] ?? null;
+  const live = published.filter(slot => !slot.resets_at || slot.resets_at > now);
+  if (!live.length) return null;
+  const top = live.reduce((a, b) => b.used_percent > a.used_percent ? b : a);
+  return { used: Math.round(top.used_percent), resets: top.resets_at ?? null, at: status.checked_at };
+}
+
+function health(vitals: Vitals, route: RouteInfo, all: RouteInfo[], now: number): string | null {
+  const status = account(route, all).status;
+  if (status && (!status.installed || !status.signed_in || status.detail)) return status.detail ?? (status.installed ? 'not signed in' : 'not installed');
+  const usage = usageOf(vitals, route, all, now);
   if (usage && usage.used >= FULL_PERCENT && (usage.resets !== null ? usage.resets > now : now - usage.at < STALE_MS)) return `${usage.used}% of its usage limit used`;
-  const failure = vitals.failed?.[provider];
+  const failure = vitals.failed?.[family(route, all)];
   return failure && now - failure.at < COOLDOWN_MS ? `${failure.category} failure ${Math.max(1, Math.round((now - failure.at) / 60_000))} min ago` : null;
 }
 
@@ -157,10 +176,13 @@ export default function activate(api: ModAPI) {
     return next(event);
   });
 
+  const leads = (model: Model, available: RouteInfo[]) => available.filter(route => route.roles.includes('lead') && serves(route, model));
   const blocked = (model: Model, available: RouteInfo[], seen: Vitals) => {
     if (!model.modelProvider) return null;
-    if (!available.some(route => route.provider === model.modelProvider && route.roles.includes('lead') && route.available)) return 'no usable route';
-    return health(seen, model.modelProvider, Date.now());
+    const usable = leads(model, available).filter(route => route.available);
+    if (!usable.length) return 'no usable route';
+    const reasons = usable.map(route => health(seen, route, available, Date.now()));
+    return reasons.includes(null) ? null : reasons[0];
   };
 
   api.intercept('agent_spawn', (spawn, next) => {
@@ -203,11 +225,11 @@ export default function activate(api: ModAPI) {
   });
 
   const runtime = (route: RouteInfo, models: Model[]) => !route.roles.includes('worker') && route.roles.includes('lead') && models.some(model => model.model === route.model && model.modelProvider === route.provider);
-  const skip = (route: RouteInfo, models: Model[], seen: Vitals, worktree = false) => {
+  const skip = (route: RouteInfo, all: RouteInfo[], models: Model[], seen: Vitals, worktree = false) => {
     if (!route.roles.includes('worker') && !runtime(route, models)) return 'not a worker route';
     if (!route.available) return 'its grant is missing or revoked';
     if (worktree && route.tools.length) return 'limited to read-only tools';
-    return health(seen, route.provider, Date.now());
+    return health(seen, route, all, Date.now());
   };
 
   const settle = (handle: string, outcome: Outcome, deliver = true) => {
@@ -224,9 +246,11 @@ export default function activate(api: ModAPI) {
     } else {
       next = { ...task, status: 'failed', error: clip(outcome.error ?? 'failed', ERROR_BYTES), brief: undefined };
       const category = outcome.failure?.category;
-      if (category && HARD_FAILURES.includes(category)) remember(value => ({ ...value, failed: { ...value.failed, [task.provider]: { at: Date.now(), category } } }));
-      const usage = retrying && category === 'rate_limit' && task.brief && !task.retry_of ? vitals().value.windows?.[LIMIT_IDS[task.provider] ?? ''] : undefined;
+      const all = category ? routes() : [];
+      const route = all.find(item => item.name === task.route);
+      if (category && HARD_FAILURES.includes(category)) remember(value => ({ ...value, failed: { ...value.failed, [route ? family(route, all) : task.route.replace(/-/g, '_')]: { at: Date.now(), category } } }));
       const now = Date.now();
+      const usage = route && retrying && category === 'rate_limit' && task.brief && !task.retry_of ? usageOf(vitals().value, route, all, now) : null;
       if (usage && usage.used >= FULL_PERCENT && usage.resets !== null && usage.resets > now && usage.resets - now <= RETRY_MAX_MS) {
         next = { ...next, brief: task.brief, retry_at: usage.resets + RETRY_GRACE_MS };
         save({ ...state, tasks: { ...state.tasks, [handle]: next } });
@@ -252,12 +276,13 @@ export default function activate(api: ModAPI) {
     const available = routes();
     for (const [handle, task] of due) {
       const route = available.find(item => item.name === task.route);
-      const failure = seen.failed?.[task.provider];
-      const cleared = failure && failure.at < task.retry_at! - RETRY_GRACE_MS ? { ...seen, failed: { ...seen.failed, [task.provider]: { ...failure, at: 0 } } } : seen;
+      const key = route ? family(route, available) : '';
+      const failure = seen.failed?.[key];
+      const cleared = failure && failure.at < task.retry_at! - RETRY_GRACE_MS ? { ...seen, failed: { ...seen.failed, [key]: { ...failure, at: 0 } } } : seen;
       const moved = route && (route.provider !== task.provider || route.billing !== task.billing || route.credential !== task.credential);
       const reason = !retrying ? 'retry_after_limit is off' : !route ? 'its route is gone'
         : moved ? `route ${task.route} now uses a different provider, account or billing; start the task again to run it there`
-        : skip(route, models, cleared, task.isolation === 'worktree');
+        : skip(route, available, models, cleared, task.isolation === 'worktree');
       const launched = route && !reason ? launch({ role: task.role, route: task.route, provider: task.provider, model: task.model, isolation: task.isolation, retry_of: handle }, route, task.brief ?? '') : null;
       const restarted = typeof launched === 'string';
       const cancelled = api.host.tryCall('agents.cancel', { handle, deliver: !restarted });
@@ -306,12 +331,12 @@ export default function activate(api: ModAPI) {
     let picked: { route: RouteInfo; model: string } | undefined;
     for (const query of wanted) {
       const options = [...matching(named, query).map(route => ({ route, model: route.model })),
-        ...matching(models.filter(model => !model.hidden), query).flatMap(model => named.filter(route => route.provider === model.modelProvider && runtime(route, models)).map(route => ({ route, model: model.model })))]
+        ...matching(models.filter(model => !model.hidden), query).flatMap(model => leads(model, named).filter(route => runtime(route, models)).map(route => ({ route, model: model.model })))]
         .filter((option, index, all) => all.findIndex(other => other.route.name === option.route.name && other.model === option.model) === index);
       if (!options.length) skipped.push(`${query}: no route matches`);
       for (const option of options) {
         if (passed.has(option.route.name)) continue;
-        const reason = skip(option.route, models, seen, worktree);
+        const reason = skip(option.route, named, models, seen, worktree);
         if (!reason) { picked = option; break; }
         passed.add(option.route.name);
         skipped.push(`${option.route.name}: ${reason}`);
@@ -396,11 +421,12 @@ export default function activate(api: ModAPI) {
   const targets = (query: string): Json => {
     const models = catalog();
     const seen = vitals().value;
-    const listed = routes().flatMap(route => {
-      const runs = runtime(route, models) ? models.filter(model => !model.hidden && model.modelProvider === route.provider && model.model !== route.model) : [];
+    const all = routes();
+    const listed = all.flatMap(route => {
+      const runs = runtime(route, models) ? models.filter(model => !model.hidden && model.model !== route.model && serves(route, model)) : [];
       const hits = query ? matching(runs, query).map(model => model.model) : runs.map(model => model.model);
       if (query && !hits.length && !matching([{ model: route.model, displayName: route.name }], query).length) return [];
-      const reason = skip(route, models, seen);
+      const reason = skip(route, all, models, seen);
       const others = hits.slice(0, LISTED_MODELS);
       return [{ route: route.name, model: route.model, ...others.length ? { models: others } : {}, ...hits.length > others.length ? { more_models: hits.length - others.length } : {},
         provider: route.provider, billing: route.billing, isolation: route.tools.length ? ['shared'] : ['shared', 'worktree'], usable: !reason, ...reason ? { skipped: reason } : {} }];

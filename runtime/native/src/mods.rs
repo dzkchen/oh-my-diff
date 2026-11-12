@@ -15,6 +15,7 @@ mod operations;
 mod peering;
 mod persisted;
 mod roles;
+pub(crate) mod route_status;
 pub(crate) mod services;
 mod snapshots;
 mod tools;
@@ -1120,11 +1121,12 @@ impl Mods {
 
     fn routing_decision(&self, runtime: &mut ModHost, config: &mut Config) -> Result<(), String> {
         let (routing, _) = self.host.route_config();
+        let statuses = self.host.route_status.snapshot();
         let routes = routing
             .routes
             .iter()
             .filter(|route| route.roles.contains(&config::RouteRole::Lead))
-            .map(|route| operations::route_info(&self.host, route))
+            .map(|route| operations::route_info(&self.host, route, &statuses))
             .collect::<Vec<_>>();
         if routes.is_empty() {
             return Ok(());

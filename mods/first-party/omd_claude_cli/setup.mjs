@@ -7,7 +7,7 @@ import { access, chmod, mkdir, open, readFile, realpath, rename, rm, writeFile }
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ACCOUNT } from './index.ts';
+import { ACCOUNT, accountRoute as routeName } from './index.ts';
 import { accountEnv, checkCli, cliArgs, cliEnv, eventQueue } from './transport.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
@@ -123,7 +123,6 @@ export const publishable = accounts => {
   const chosen = new Set([...accounts.map(account => account.models[0]), ...accounts.flatMap(account => account.models.slice(1))].slice(0, 16));
   return accounts.flatMap(account => account.models.filter(model => chosen.has(model)));
 };
-const routeName = name => name === 'default' ? 'claude' : `claude-${name}`;
 const widest = accounts => Math.max(...accounts.flatMap(account => account.models.map(model => model.window)));
 const rates = (billing, window) => ({ input_microusd_per_million: 0, cached_microusd_per_million: 0, output_microusd_per_million: 0,
   reservation_microusd: 0, max_output_tokens: 128000, input_token_ceiling: window,

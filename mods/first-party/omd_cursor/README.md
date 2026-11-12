@@ -32,6 +32,7 @@ Removing an account doesn't revoke its key. The key stays valid at Cursor until 
 in your Cursor dashboard.
 
 An account `NAME` starts with a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 24 characters.
+Two accounts can't differ only by `_` and `-` (`my_team` and `my-team`), because Codex gives them one usage limit.
 For example, `/cursor setup work` enrolls a second account, whose models appear in `/model` as `cursor-auto.work`.
 
 Run `/cursor setup` again when the key expires or after changing the SDK dependencies. Each run is a fresh enrollment
@@ -67,6 +68,12 @@ It has no settings.
   token counts of its turns; a run that can't be matched unambiguously within five minutes stays unsettled in
   `/cursor usage`. The charge then appears in `/status`. A zero charge can mean
   plan-included usage, your own API key (BYOK) or credit-grant usage. The SDK doesn't say which.
+- Each account's route publishes a status (SDK installed, key stored and unexpired, its models, and why it isn't usable)
+  that `/profile` and the router read. The mod refreshes it a second after start, every 10 minutes while a status is
+  older than that, on `/cursor`, and after setup or removal. It runs no process to do so, so nothing can time out. Its
+  usage row is only the plan usage Cursor reports, never an estimate.
+- `/status` shows each account's plan usage as its own row (`Cursor`, `Cursor (work)`), from the same dashboard call as
+  below.
 - Plan usage, shown beside the account in `omd_profiles`, is read at most once a minute after a run, so it can be a
   run behind. It comes from an undocumented Cursor dashboard call that may break with any SDK update.
 - When Cursor refuses a request for plan usage or rate limits, the turn fails as `rate_limit_exceeded`. OMD never
