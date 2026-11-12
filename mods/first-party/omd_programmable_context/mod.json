@@ -17,7 +17,7 @@
   "capabilities": ["agents", "commands", "fs.read", "history", "lifecycle", "model", "inventory", "store", "terminal", "tools"],
   "environment": ["crypto"],
   "compatibility": {
-    "required_features": ["state_scopes_v1", "history_v1", "store_thread_v1", "routes_v1", "model_complete_v2", "terminal_prompt_v1"]
+    "required_features": ["state_scopes_v1", "history_v1", "store_thread_v1", "routes_v1", "model_complete_v2", "terminal_prompt_v1", "package_contributes_v1"]
   },
   "settings_schema": {
     "type": "object",
