@@ -94,13 +94,14 @@ def operations(document):
 def host_changes(version):
     tied, ranges = {}, [["HEAD", f"^v{version}"]]
     while ranges:
+        tip, *stops = ranges.pop()
         for entry in git("log", "--first-parent", "--diff-merges=first-parent", "--format=%x00%h %p%x01%s", "--name-only",
-                         *ranges.pop()).split("\0")[1:]:
+                         tip, *stops).split("\0")[1:]:
             header, _, body = entry.partition("\x01")
             commit, *parents = header.split()
             subject, *paths = body.split("\n")
             if len(parents) > 1 and not subject.startswith("Merge pull request #"):
-                ranges.append([parents[1], f"^{parents[0]}", f"^v{version}"])
+                ranges.append([parents[1], f"^{parents[0]}", *stops])
                 continue
             if any(path == "mods/api.d.ts" or path.startswith("runtime/") and not GENERATED.fullmatch(path) for path in paths):
                 for identifier in {path.split("/")[2] for path in paths if path.startswith("mods/first-party/") and path.count("/") > 2}:

@@ -101,11 +101,11 @@ leaves out each changed or added mod the release can't run and publishes the res
 host features the release lacks (`needs_host`), uses a `mod.json` field, list-item field or capability, state scope or
 app subscription value that no first-party manifest at the tag used (`needs_manifest`), calls a host operation whose
 schema changed since the tag, directly or through an SDK helper such as `api.session()` (`needs_api`), or changed in a
-commit or merged pull request that also changed `runtime/` or `mods/api.d.ts` (`needs_runtime`). Those mods wait for
-the next release. The run publishes nothing, and still passes, when no mod is new, the release isn't tagged yet,
-`main` hosts a different mod API, or `mods/api.d.ts` changed since the tag (run it by hand with `api_reviewed` once
-you have checked no bundled mod uses the change). When a mod an earlier bundle shipped can no longer be shipped, the
-run fails: cut a release.
+commit or merged pull request that also changed `runtime/` or `mods/api.d.ts` (`needs_runtime`; any other merge, such
+as one from `git pull`, counts each change it brought in on its own). Those mods wait for the next release. The run
+publishes nothing, and still passes, when no mod is new, the release isn't tagged yet, `main` hosts a different mod
+API, or `mods/api.d.ts` changed since the tag (run it by hand with `api_reviewed` once you have checked no bundled mod
+uses the change). When a mod an earlier bundle shipped can no longer be shipped, the run fails: cut a release.
 
 To publish by hand, for example to exclude a mod:
 
