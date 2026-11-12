@@ -31,6 +31,8 @@ class Plan(unittest.TestCase):
                 {"id": identifier, "extension_type": "mod", "support_status": "experimental", "capability": identifier} for identifier in "abc"]}))
             (root / mods_bundle.OPERATIONS).parent.mkdir(parents=True)
             (root / mods_bundle.OPERATIONS).write_text(json.dumps(operations))
+            (root / mods_bundle.BOOTSTRAP).parent.mkdir(parents=True)
+            (root / mods_bundle.BOOTSTRAP).write_text("const api = Object.freeze({\n  run() { return hostCall('x.run', null); },\n});\n")
             for identifier in main["packages"]:
                 (root / "mods/first-party" / identifier).mkdir(parents=True)
                 (root / "mods/first-party" / identifier / "mod.json").write_text(
@@ -99,6 +101,9 @@ class Plan(unittest.TestCase):
                             operations=schema("0", {"0": {"type": "number"}}), sources={"b": "api.host.call('x.run', null)"})
         self.assertEqual((planned["bundle"], planned["excluded"], planned["needs_api"], planned["api_changed"]),
                          (["a"], ["b"], {}, ["x.run"]))
+        planned = self.plan(lock(a="a1", b="b1"), {}, features=(), manifests=manifests, operations=schema("0", {"0": {"type": "number"}}),
+                            sources={"a": "api.time.sleep(1)", "b": "const { root } = api.run();"})
+        self.assertEqual(planned["needs_api"], {"b": ["x.run"]})
         with self.assertRaisesRegex(ValueError, "no longer suit OMD 1.0.0; cut a release instead: b"):
             self.plan(lock(a="a0", b="b2"), {"mods-1.0.0-1": lock(a="a0", b="b1")}, features=(), manifests={
                 "a": {"compatibility": {"required_features": []}}, "b": {"contributes": {}}}, auto=True)

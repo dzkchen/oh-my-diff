@@ -13,6 +13,7 @@ from scripts import mods_lock
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERATIONS = "runtime/omd/src/mods/operation_schema.json"
+BOOTSTRAP = "runtime/omd/runner/src/bootstrap.js"
 FREE_FORM = {"settings_schema", "codex_config", "mcp_servers", "lifecycle", "services.exports[].methods"}
 ENUMS = {"capabilities[]", "state_scope", "subscriptions.app[]", "http_access.credentials[]", "environment[]"}
 GENERATED = re.compile(r"runtime/[^/]+\.(?:lock\.json|txt|md)")
@@ -56,10 +57,24 @@ def released_manifests(version):
             if path.endswith("/mod.json") and path.count("/") == 3]
 
 
-def calls(identifier, names):
+def helpers(source):
+    functions = dict(re.findall(r"^function (\w+)(\(.*?)(?=^\S)", source, re.M | re.S))
+
+    def reached(body, seen=frozenset()):
+        found = set(re.findall(r"host(?:Try)?Call\('([\w.]+)'", body))
+        for name in set(re.findall(r"\b(\w+)\(", body)) & functions.keys() - seen:
+            found |= reached(functions[name], seen | {name})
+        return found
+    region = found[1] if (found := re.search(r"^const api = Object\.freeze\(\{\n(.*?)^\}\);", source, re.M | re.S)) else ""
+    members = {name: found for name, body in re.findall(r"^  (\w+)(.*?)(?=^  \w|\Z)", region, re.M | re.S) if (found := reached(body))}
+    return members | {"": reached(source) - set().union(*members.values())}
+
+
+def calls(identifier, names, wrapped):
     sources = " ".join(path.read_text(errors="ignore") for path in (ROOT / "mods/first-party" / identifier).rglob("*")
                        if path.is_file() and path.suffix in {".ts", ".mjs", ".js", ".json"} and ".test." not in path.name)
-    return sorted(name for name in names if f"'{name}'" in sources or f'"{name}"' in sources)
+    through = set().union(*(found for member, found in wrapped.items() if not member or re.search(rf"\.{member}\b", sources)))
+    return sorted(name for name in names if f"'{name}'" in sources or f'"{name}"' in sources or name in through)
 
 
 def operations(document):
@@ -130,6 +145,10 @@ def plan(exclude=()):
     api_changed += git("diff", "--name-only", f"v{version}", "--", "mods/api.d.ts").splitlines()
     accepted = set().union(*map(manifest_keys, released_manifests(version)))
     changed_operations = [name for name in api_changed if "/" not in name]
+    wrapped = {}
+    for source in (git("show", f"v{version}:{BOOTSTRAP}"), (ROOT / BOOTSTRAP).read_text()):
+        for member, found in helpers(source).items():
+            wrapped[member] = wrapped.get(member, set()) | found
     tied = host_changes(version)
     return {"omd": version, "serial": (bundles[-1][0] if bundles else 0) + 1, "changed": changed, "shipped": sorted(shipped),
             "bundle": bundle, "features": sorted(features),
@@ -138,7 +157,7 @@ def plan(exclude=()):
             "needs_host": {identifier: sorted(missing) for identifier in bundle if (missing := required_features(identifier) - features)},
             "needs_manifest": {identifier: sorted(unknown) for identifier in bundle if (unknown := manifest_keys(json.loads(
                 (ROOT / "mods/first-party" / identifier / "mod.json").read_text())) - accepted)},
-            "needs_api": {identifier: used for identifier in bundle if (used := calls(identifier, changed_operations))},
+            "needs_api": {identifier: used for identifier in bundle if (used := calls(identifier, changed_operations, wrapped))},
             "needs_runtime": {identifier: sorted(tied[identifier]) for identifier in bundle if identifier in tied},
             "added": sorted((set(arrived) - shipped.keys()) & set(bundle)), "needs_release": waiting, "excluded": sorted(exclude),
             "api_changed": api_changed, "commits": history(version, bundle)}
