@@ -134,15 +134,15 @@
       "extension_type": "mod",
       "files": {
         "handoff.mjs": "e5039961e425a8948594f42bb399b349486cd1b3150651d0489d44891e45d219",
-        "index.ts": "ae8b9427a7dfef0b85cf8dfd1a08ffaa5504fac59fa483098bc7f7d82a93f88a",
-        "mod.json": "53ee1054c3c98495aa74565c967908ba1823e19a00cd457e565d2a11ad8ad892",
-        "setup.mjs": "37f0b1dc81b0b51bf4349ecfd77207c5b55fb187f80e666817b3d5ebf770020c",
+        "index.ts": "bb073a838bcbd4a5899804a6f53bab07311751a54881b83d1f1181f39f381ac6",
+        "mod.json": "d8526605ea10af3fa37bd283c61ed8f2076346c7116dd87f9e48b25fb7274e19",
+        "setup.mjs": "51d7bd66a504ee28db080c33db92f2e1d9d23bf48698f9fe03c4661a610c059e",
         "transport.mjs": "4f85584f8e53141d39e8520baf1b6864d571f18c25140b27389699a547903e33"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "0af48be17474df96a4e70f0c4e3f185da22453eefdfe452edc00f0b79393dd28",
+      "package_sha256": "9d6b3a65a67d8ac52307e303286508acd01bcc79d4a7e8675a75ffc89144134b",
       "source": "mods/first-party/omd_claude_cli",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     "omd_continue": {
       "api": "1.0.0",
@@ -887,13 +887,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "567d31a05d0d318a839dd9a974f84940c97356a945f7b94e051c7b7cbd07fbd6",
-        "mod.json": "b4158668d3c17430e07042b948e55ca64504dd3e9117d5e0a9a4cd6f82b5ae25"
+        "index.ts": "fe6bbdfcbf74bb6c9ba4d26475114578bbacd86c1f74aa1fd2e2df62068b5d4e",
+        "mod.json": "bd66ca4fb117d8c527b5243b76c3f5f70d146a42d9a599ce9669cf2df9d84d0b"
       },
       "id": "omd_update",
-      "package_sha256": "41a82169077dc06dbbc0b65e0538e2d53e20d37530b3b98163750482a5343449",
+      "package_sha256": "3369e416266501c865286a96d74cd5dc76974c316a9f61662e1fbc2980f25d39",
       "source": "mods/first-party/omd_update",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     "omd_usage": {
       "api": "1.0.0",

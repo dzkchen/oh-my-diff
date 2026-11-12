@@ -1123,6 +1123,12 @@ class UpdateSelection(unittest.TestCase):
                          "Oh My Diff 0.2.0 (OMD+) is installed. Restart codex to use it.\nRetired and turned off: omd_old.\n"
                          "New default mods, left off (turn them on in /mods): omd_new.\nNew permissions: omd_git (exec, network).")
         self.assertEqual(self.module.update_text("now", {"mods_updated": ["omd_logo"], "capabilities": {}}), "Updated first-party mods: omd_logo.")
+        carried = {"catalog_updated": ["omd_usage"], "needs_review": ["omd_git"]}
+        lines = ["Updated mods you installed from the catalog: omd_usage.",
+                 "These installed mods need your review before they update; run omd mods update ID for each: omd_git."]
+        self.assertEqual(self.module.change_lines(carried), lines)
+        self.assertEqual(self.module.update_text("now", {"mods_updated": ["omd_logo"], "needs_review": ["omd_git"]}).splitlines(),
+                         ["Updated first-party mods: omd_logo.", lines[1]])
         self.assertEqual(self.module.update_text("checks", {"checks": "off", "profiles": ["full", "platform"]}),
                          "Update checks: off (OMD+, OMD Core).")
         self.assertEqual(self.module.update_text("now", {"installed": "0.1.0", "up_to_date": False, "error": "offline"}),
@@ -1269,9 +1275,11 @@ class UpdateSelection(unittest.TestCase):
                 raise ValueError(f"managed artifact changed: {generation}/codex")
             return {"profile": "platform"}
 
-        with patch.object(self.module, "status", side_effect=status), patch.object(self.module, "package"), \
+        with patch.object(self.module, "status", side_effect=status), patch.object(self.module, "package") as packaged, \
                 patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
             self.module.rollback(types.SimpleNamespace(json=True, session=None, upstream=None), self.root, bin_dir, self.current)
+        self.assertEqual([(call.args[0], call.args[3:]) for call in packaged.call_args_list],
+                         [(older, ("reconcile",)), (self.current, ("catalog-align", "--to", older / "prefix"))])
         self.assertEqual(self.module.pointer(self.root, "current"), older)
         self.assertEqual(self.module.pointer(self.root, "previous"), self.current)
         self.assertEqual(os.readlink(bin_dir / "codex"), str(self.root / "current/bin/codex"))

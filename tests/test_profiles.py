@@ -857,6 +857,9 @@ enabled = true
             profiles.write(prefix, record)
             selection = {"path": str(store / "sources/one"), "sha256": "sha-old", "selected": True}
             commands = []
+            index_path = str(store / "package-index.json")
+            packaged = {"version": "1.0.0", "integrity": "sha-old", "scope": "user", "trust": {"capabilities": ["old"]},
+                        "source": {"kind": "package", "index": index_path, "id": "catalogued", "version": "1.0.0"}}
 
             def invoke(_manager, command, _store, *arguments):
                 commands.append(command)
@@ -864,10 +867,17 @@ enabled = true
                     return {"sha256": "sha-" + (Path(_store) / "index.ts").read_text()}
                 if command == "selection-status":
                     return {"selections": [dict(selection)]}
+                if command == "package-lock":
+                    return {"packages": {"catalogued": dict(packaged)}}
+                if command == "package-plan":
+                    return {"packages": [{"id": "catalogued", "scope": "user"}], "confirmation": "confirmed",
+                            "changes": {"packages": [{"state_version": {"migration_required": False}}]}}
                 if command == "trust-all":
                     selection.update(sha256=json.loads(arguments[0])[0]["sha256"], selected=False)
                 elif command == "enable":
                     selection["selected"] = True
+                elif command == "package-apply":
+                    packaged["integrity"] = json.loads(Path(index_path).read_text())["packages"]["catalogued"][0]["integrity"]
                 return {}
 
             def state():
@@ -875,7 +885,7 @@ enabled = true
                 locked = json.loads((prefix / "management/runtime/mods.lock.json").read_text())["packages"]
                 return ({identifier: (prefix / "sources" / identifier / "index.ts").read_text() for identifier in ("one", "two", "catalogued")},
                         (store / "sources/one/index.ts").read_text(), {identifier: locked[identifier]["package_sha256"] for identifier in locked},
-                        installed["packages"]["one"]["sha256"], installed.get("mods_bundle"), selection["selected"])
+                        installed["packages"]["one"]["sha256"], installed.get("mods_bundle"), selection["selected"], packaged["integrity"])
 
             with patch.object(profiles, "check", return_value=(None, "manager")), patch.object(profiles, "invoke", side_effect=invoke):
                 (bundle / "sources/one/index.ts").write_text("tampered")
@@ -883,15 +893,17 @@ enabled = true
                     profiles.apply_mods(prefix, base / "bin", bundle, {"serial": 1}, True)
                 (bundle / "sources/one/index.ts").write_text("new")
                 before = state()
-                self.assertEqual(profiles.update_mods(prefix, base / "bin", bundle, 1), {"updated": ["one"], "capabilities": {"one": ["new"]}})
+                self.assertEqual(profiles.update_mods(prefix, base / "bin", bundle, 1),
+                                 {"updated": ["catalogued", "one"], "needs_review": [], "capabilities": {"one": ["new"]}})
                 self.assertEqual(state(), ({"one": "new", "two": "same", "catalogued": "new"}, "new",
-                                           {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new"}, "sha-new", {"serial": 1}, True))
+                                           {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new"}, "sha-new", {"serial": 1}, True, "sha-new"))
                 index = json.loads((store / "package-index.json").read_text())["packages"]["catalogued"][0]
                 self.assertEqual((index["integrity"], index["source"]["path"]), ("sha-new", str(prefix / "sources/catalogued")))
                 self.assertEqual(json.loads((prefix / "install.json").read_text())["management"]["files"]["runtime/mods.lock.json"],
                                  profiles.support.digest(prefix / "management/runtime/mods.lock.json"))
                 self.assertFalse((prefix / "sources/added").exists())
-                self.assertEqual(profiles.rollback_mods(prefix, base / "bin"), {"updated": ["one"], "capabilities": {"one": ["old"]}})
+                self.assertEqual(profiles.rollback_mods(prefix, base / "bin"),
+                                 {"updated": ["catalogued", "one"], "needs_review": [], "capabilities": {"one": ["old"]}})
                 self.assertEqual(state(), before)
                 self.assertFalse((prefix / "mods-previous").exists())
                 with self.assertRaisesRegex(ValueError, "no first-party mod update to roll back"):
@@ -923,6 +935,58 @@ enabled = true
                         profiles.update_mods(prefix, base / "bin", bundle, 1)
                 self.assertEqual(state(), before)
                 self.assertFalse((prefix / "mods-previous").exists())
+
+    def test_a_catalog_copy_that_needs_approval_or_fails_to_plan_is_left_for_review(self):
+        index = "/store/package-index.json"
+        locked = {identifier: {"version": "1.0.0", "integrity": "old", "scope": "user", "trust": {},
+                               "source": {"kind": "package", "index": index, "id": identifier, "version": "1.0.0"}}
+                  for identifier in ("approval", "broken", "current", "migrating", "moved", "odd", "rescoped")}
+        locked["current"]["integrity"] = "new"
+        locked["elsewhere"] = locked["moved"] | {"source": {"kind": "repository"}}
+        applied = []
+
+        def invoke(_manager, command, _store, *arguments):
+            identifier = json.loads(arguments[0])["source"]["id"] if arguments else None
+            if command == "package-lock":
+                return {"packages": locked}
+            if command == "package-apply":
+                applied.append(identifier)
+            if identifier == "broken":
+                raise RuntimeError("policy refuses it")
+            if identifier == "odd":
+                return {}
+            return {"packages": [{"id": identifier, "scope": "project" if identifier == "rescoped" else "user"}], "confirmation": "c",
+                    "changes": {"packages": [{"renewed_approval": identifier == "approval",
+                                              "state_version": {"migration_required": identifier == "migrating"}}]}}
+
+        with patch.object(profiles, "invoke", side_effect=invoke):
+            result = profiles.update_catalog_copies("manager", Path("/store"), {
+                identifier: {"version": "2.0.0", "package_sha256": "new"} for identifier in locked})
+        self.assertEqual(result, {"catalog_updated": ["moved"], "needs_review": ["approval", "broken", "migrating", "odd", "rescoped"]})
+        self.assertEqual(applied, ["moved"])
+        with patch.object(profiles, "invoke", side_effect=RuntimeError("no lock")):
+            self.assertEqual(profiles.update_catalog_copies("manager", Path("/store"), {}), {"catalog_updated": [], "needs_review": []})
+
+    def test_reconcile_points_the_catalog_at_this_installation_before_moving_its_copies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, store = base / "prefix", base / "store"
+            (prefix / "management/runtime").mkdir(parents=True)
+            store.mkdir()
+            packages = {"omd_usage": {"version": "1.0.0", "package_sha256": "old"}, "omd_new": {"version": "1.0.0", "package_sha256": "n"}}
+            (prefix / "management/runtime/mods.lock.json").write_text(json.dumps({"packages": packages}))
+            entry = {"version": "2.0.0", "integrity": "new", "source": {"kind": "local", "path": "/later"}, "description": "d"}
+            (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": {
+                "omd_usage": [entry], "third": [entry | {"source": {"kind": "repository"}}]}}))
+            with patch.object(profiles, "update_catalog_copies", return_value={"catalog_updated": ["omd_usage"], "needs_review": []}) as moved:
+                self.assertEqual(profiles.align_catalog(prefix, "manager", store)["catalog_updated"], ["omd_usage"])
+            moved.assert_called_once_with("manager", store, packages)
+            index = json.loads((store / "package-index.json").read_text())["packages"]
+            self.assertEqual(index["omd_usage"], [entry | {"version": "1.0.0", "integrity": "old",
+                                                           "source": {"kind": "local", "path": str(prefix / "sources/omd_usage")}}])
+            self.assertEqual(index["third"][0]["version"], "2.0.0")
+            (store / "package-index.json").unlink()
+            self.assertEqual(profiles.align_catalog(prefix, "manager", store), {"catalog_updated": [], "needs_review": []})
 
     def test_a_directory_package_on_beside_its_bundled_copy_is_turned_off(self):
         store = Path("/store")

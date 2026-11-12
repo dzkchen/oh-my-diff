@@ -2,7 +2,7 @@ import type { Json, ModAPI, TerminalComponent, TerminalPatch, TerminalTone } fro
 
 type Release = { version: string; prerelease?: boolean; notes?: string; page?: string; user_mods?: string[]; mod_api?: string };
 type Mods = { omd: string; serial: number; changed?: string[]; notes?: string; page?: string };
-type Changes = { retired?: string[]; left_off?: string[]; capabilities?: Record<string, string[]> };
+type Changes = { retired?: string[]; left_off?: string[]; capabilities?: Record<string, string[]>; catalog_updated?: string[]; needs_review?: string[] };
 type Info = {
   installed?: string; checked_at?: number | null; available?: Release | null; blocked?: { version: string; reasons?: string[] } | null;
   error?: string | null; pending?: { version: string } | null; failed?: { version: string; error?: string; at: number } | null;
@@ -32,6 +32,8 @@ export default function activate(api: ModAPI) {
     ...(value?.retired?.length ? [`Retired and turned off: ${names(value.retired)}.`] : []),
     ...(value?.left_off?.length ? [`New default mods, left off (turn them on in /mods): ${names(value.left_off)}.`] : []),
     ...(Object.keys(value?.capabilities ?? {}).length ? [`New permissions: ${Object.entries(value?.capabilities ?? {}).map(([name, added]) => `${visible(name, 64)} (${names(added)})`).join('; ')}.`] : []),
+    ...(value?.catalog_updated?.length ? [`Updated mods you installed from the catalog: ${names(value.catalog_updated)}.`] : []),
+    ...(value?.needs_review?.length ? [`These installed mods need your review before they update; run omd mods update ID for each: ${names(value.needs_review)}.`] : []),
   ].join(' ');
   const modKey = (mods: Mods) => `mods-${mods.omd}-${mods.serial}`;
   const same = (mods: Mods, other?: { omd?: string; serial: number } | null) => other?.omd === mods.omd && other.serial === mods.serial;
