@@ -887,13 +887,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "567d31a05d0d318a839dd9a974f84940c97356a945f7b94e051c7b7cbd07fbd6",
-        "mod.json": "b4158668d3c17430e07042b948e55ca64504dd3e9117d5e0a9a4cd6f82b5ae25"
+        "index.ts": "fe6bbdfcbf74bb6c9ba4d26475114578bbacd86c1f74aa1fd2e2df62068b5d4e",
+        "mod.json": "bd66ca4fb117d8c527b5243b76c3f5f70d146a42d9a599ce9669cf2df9d84d0b"
       },
       "id": "omd_update",
-      "package_sha256": "41a82169077dc06dbbc0b65e0538e2d53e20d37530b3b98163750482a5343449",
+      "package_sha256": "3369e416266501c865286a96d74cd5dc76974c316a9f61662e1fbc2980f25d39",
       "source": "mods/first-party/omd_update",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     "omd_usage": {
       "api": "1.0.0",
