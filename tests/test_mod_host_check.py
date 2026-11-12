@@ -42,7 +42,7 @@ class SourceRules(unittest.TestCase):
             ])
             (path / "mod.json").write_text(json.dumps({"id": "fixture", "contributes": {}}))
             self.assertEqual(check.static_problems(path), [
-                "assets, relative imports, api.component and contributes need required feature package_contributes_v1"])
+                "contributes needs required feature package_contributes_v1"])
 
     def test_manifest_limits(self):
         with tempfile.TemporaryDirectory() as directory:

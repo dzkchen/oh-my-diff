@@ -13,6 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = [ROOT / "mods/first-party", ROOT / "mods/examples", ROOT / "mods/ports"]
+NEEDS = {"package_text_assets_v1": "assets", "package_imports_v1": "relative imports", "component_modules_v1": "api.component",
+         "package_contributes_v1": "contributes"}
 TUI_SURFACE = json.loads((ROOT / "mods/conformance/tui-surface.json").read_text())
 TUI_OPERATIONS = set(TUI_SURFACE["operations"])
 BUILTIN_SLASH = set(TUI_SURFACE["slash_commands"])
@@ -42,9 +44,10 @@ def manifest(path):
     return json.loads((path / "mod.json").read_text())
 
 
-def packages(names):
+def packages(names, plugins=False):
     found = [path for source in SOURCES for path in sorted(source.iterdir()) if (path / "mod.json").is_file()]
-    return [path for path in found if not names or path.name in names or manifest(path)["id"] in names]
+    found += sorted(ROOT.glob("plugins/*/*/plugins/*/mod")) if plugins else []
+    return [path for path in found if not names or path.name in names or path.parent.name in names or manifest(path)["id"] in names]
 
 
 class Host:
@@ -257,7 +260,7 @@ def static_problems(path):
         found += [f"{kind}_features lists unknown host feature {feature}" for feature in sorted(set(features) - FEATURES)]
     found += [f"{feature} is both required and optional" for feature in sorted(set(lists["required"]) & set(lists["optional"]))]
     required = set(lists["required"])
-    found += [f"assets, relative imports, api.component and contributes need required feature {feature}" for feature in sorted(needed - required)]
+    found += [f"{NEEDS[feature]} needs required feature {feature}" for feature in sorted(needed - required)]
     if path.parent.name == "first-party":
         found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH - replaced)]
     found += [f"{count} {kind} exceed the limit of 32" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 32]
@@ -330,7 +333,7 @@ def main():
     args = parser.parse_args()
     inspect_sources(packages(args.packages))
     if args.static:
-        report = {f"{path.parent.name}/{path.name}": found for path in packages(args.packages) if (found := static_problems(path))}
+        report = {f"{path.parent.name}/{path.name}": found for path in packages(args.packages, plugins=True) if (found := static_problems(path))}
     else:
         if not args.omd_mod:
             parser.error("omd-mod not found; pass --omd-mod")
