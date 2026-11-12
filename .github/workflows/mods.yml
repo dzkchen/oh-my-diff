@@ -1,6 +1,11 @@
 name: Mods
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - mods/first-party/**
+      - runtime/mods.lock.json
   workflow_dispatch:
     inputs:
       dry_run:
@@ -65,8 +70,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           EXCLUDE: ${{ inputs.exclude }}
           API_REVIEWED: ${{ inputs.api_reviewed && 'yes' || '' }}
-        run: python3 -m scripts.mods_bundle build --output bundle --commit "$GITHUB_SHA" ${EXCLUDE:+--exclude $EXCLUDE} ${API_REVIEWED:+--api-reviewed}
+          AUTO: ${{ github.event_name == 'push' && 'yes' || '' }}
+        run: python3 -m scripts.mods_bundle build --output bundle --commit "$GITHUB_SHA" ${EXCLUDE:+--exclude $EXCLUDE} ${API_REVIEWED:+--api-reviewed} ${AUTO:+--auto}
       - name: Sign and publish (dry run prints the command)
+        if: hashFiles('bundle/omd-mods.json') != ''
         env:
           GH_TOKEN: ${{ github.token }}
           OMD_RELEASE_SIGNING_KEY: ${{ secrets.OMD_RELEASE_SIGNING_KEY }}
