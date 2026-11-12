@@ -723,7 +723,8 @@ class UpdateSelection(unittest.TestCase):
     def test_a_built_mod_bundle_extracts_with_the_installer_and_matches_its_manifest(self):
         from scripts import mods_bundle
         planned = {"omd": "0.1.0", "serial": 4, "changed": ["omd_update"], "bundle": ["omd_update"], "new": ["omd_update"],
-                   "added": [], "needs_host": {}, "needs_release": [], "api_changed": [], "commits": ["abc fix"], "features": []}
+                   "added": [], "needs_host": {}, "needs_manifest": {}, "needs_api": {}, "needs_runtime": {}, "needs_release": [],
+                   "api_changed": [], "commits": ["abc fix"], "features": []}
         with patch.object(mods_bundle, "plan", return_value=planned), patch.object(
                 mods_bundle, "directory", side_effect=lambda _version, _features, listed, first_party: {
                     identifier: entries for identifier, entries in listed.items() if identifier not in first_party}):

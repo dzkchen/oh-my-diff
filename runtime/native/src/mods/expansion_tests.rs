@@ -3570,6 +3570,99 @@ async fn read_only_spawns_reject_tools_the_pinned_codex_lacks() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mod_tools_keep_the_thread_and_turn_owner_when_preparing_a_sampling_step() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["tools", "events"],
+        manifest: Value::Null,
+        source: "export default api => { api.tool({name:'arm',description:'Arm a timer.',parameters:{type:'object',properties:{}}}, () => api.host.tryCall('events.schedule', {key:'k',delay_ms:3600000})); }",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let shared = mods(&fixture.core);
+    let thread_owner = create_owner(fixture.core.host.clone(), Arc::default(), None).unwrap();
+    let turn_owner = create_owner(fixture.core.host.clone(), Arc::default(), None).unwrap();
+    for core in [&thread_owner.core, &turn_owner.core, &fixture.core] {
+        delivery::lead_started(core, &fixture.lead, None);
+    }
+    let session_store = ExtensionData::new("session");
+    let plugins = codex_extension_api::SelectedPluginSnapshot::default();
+    let mut outcomes = Vec::new();
+    for (case, thread_owned, turn_owned, expected) in [
+        ("thread", Some(&thread_owner), None, &thread_owner.core),
+        (
+            "turn",
+            Some(&thread_owner),
+            Some(&turn_owner),
+            &turn_owner.core,
+        ),
+        ("shared", None, None, &fixture.core),
+    ] {
+        let thread = ExtensionData::new(fixture.lead.thread.to_string());
+        thread.insert(fixture.lead.clone());
+        let turn = ExtensionData::new("turn");
+        for (store, owner) in [(&thread, thread_owned), (&turn, turn_owned)] {
+            if let Some(owner) = owner {
+                store.insert_arc(owner.clone());
+            }
+        }
+        let step = ExtensionData::new(format!("step-{case}"));
+        shared
+            .prepare_for_step(codex_extension_api::StepPreparationInput {
+                turn_id: "turn",
+                ready_selected_capability_roots: &[],
+                executor_capability_discovery: None,
+                executor_capability_discovery_v2: None,
+                selected_plugins: &plugins,
+                session_store: &session_store,
+                thread_store: &thread,
+                turn_store: &turn,
+                step_store: &step,
+            })
+            .await;
+        let tool = shared
+            .tools_for_step(&session_store, &thread, &step)
+            .into_iter()
+            .find(|tool| tool.tool_name() == ToolName::plain("mod_observer_arm"))
+            .unwrap();
+        let output = tool
+            .handle(ToolCall {
+                turn_id: "turn".into(),
+                call_id: format!("call-{case}"),
+                tool_name: tool.tool_name(),
+                model: "test".into(),
+                codex_turn_metadata: None,
+                truncation_policy: codex_protocol::protocol::TruncationPolicy::Bytes(4096),
+                source: codex_extension_api::ToolCallSource::Direct,
+                conversation_history: codex_extension_api::ConversationHistory::default(),
+                turn_item_emitter: Arc::new(codex_extension_api::NoopTurnItemEmitter),
+                attachment_store: codex_core::passthrough_image_store(),
+                ephemeral: false,
+                environments: Vec::new(),
+                payload: codex_extension_api::ToolPayload::Function {
+                    arguments: "{}".into(),
+                },
+            })
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_str(&output.log_output()).unwrap();
+        let cancelled = delivery::cancel(expected, &fixture.lead, "observer", &json!({"key":"k"}));
+        outcomes.push((case, value, cancelled));
+    }
+    let scheduled = json!({"ok":true,"value":{"key":"k","delay_ms":3600000}});
+    assert_eq!(
+        outcomes,
+        ["thread", "turn", "shared"].map(|case| (
+            case,
+            scheduled.clone(),
+            Ok::<_, String>(json!({"cancelled":true}))
+        )),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn dynamic_tools_are_defined_invoked_and_removed_by_their_mod() {
     let Some(fixture) = fixture(&[Package {
         id: "bridge",
