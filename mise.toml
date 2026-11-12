@@ -22,9 +22,23 @@ usage = 'arg "<name>" help="Scratch tree name"'
 run = "python3 .github/scripts/build.py dev-setup {{ usage.name | quote }}"
 
 [tasks."dev:build"]
-description = "Build the runnable debug app: dev:build NAME"
+description = "Build the runnable debug app and mod engine: dev:build NAME"
 usage = 'arg "<name>" help="Scratch tree name"'
 run = "python3 .github/scripts/build.py dev-build {{ usage.name | quote }}"
+
+[tasks."dev:run"]
+description = "Build the tree and run it on this checkout's mods, reloading them as they change: dev:run NAME [--enable ID] [-- CODEX_ARGS]"
+usage = '''
+arg "<name>" help="Scratch tree name"
+flag "--enable <id>" var=#true help="Also turn this first-party mod on"
+arg "[codex]" var=#true help="Arguments for codex"
+'''
+run = "python3 .github/scripts/build.py dev-run {{ usage.name | quote }}{% for id in usage.enable | default(value=[]) %} --enable {{ id | quote }}{% endfor %} --{% for argument in usage.codex | default(value=[]) %} {{ argument | quote }}{% endfor %}"
+
+[tasks."dev:refresh"]
+description = "Replace an unedited tree's patch with this checkout's, in place: dev:refresh NAME"
+usage = 'arg "<name>" help="Scratch tree name"'
+run = "python3 .github/scripts/build.py dev-refresh {{ usage.name | quote }}"
 
 [tasks."dev:mods"]
 description = "Build only the debug mod engine and runner: dev:mods NAME"
