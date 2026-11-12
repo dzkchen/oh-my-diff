@@ -119,7 +119,7 @@ test('a provider near its limit or recently failing is skipped, then the fallbac
   assert.equal(spawn({}, { state, vitals: windows(99, 1) }).next.model, 'claude-sonnet-5-5', 'an expired window no longer counts');
   assert.equal(spawn({}, { state, vitals: windows(89, null) }).next.model, 'claude-sonnet-5-5');
   assert.equal(spawn({}, { state, vitals: windows(99, null, now - 61 * 60_000) }).next.model, 'claude-sonnet-5-5', 'a window without a reset time stops blocking after an hour');
-  const failed = (at, category = 'rate_limit') => ({ failed: { omd_claude_cli: { at, category } } });
+  const failed = (at, category = 'rate_limit') => ({ failed: { claude: { at, category } } });
   assert.match(spawn({}, { state, vitals: failed(now - 60_000) }).notices[0], /\(rate_limit failure 1 min ago\)/);
   assert.equal(spawn({}, { state, vitals: failed(now - 16 * 60_000) }).next.model, 'claude-sonnet-5-5');
 });
@@ -180,20 +180,20 @@ test('delegate_task wait waits once and ends with the running text when the task
   assert.deepEqual(done.of('agents.result'), [{ handle: 'h1', consume: true }]);
   const failed = delegate({ action: 'start', task: 'Review', mode: 'wait' }, { answer: { 'agents.wait': () => ({ status: 'failed', error: 'native_agent_failed', failure: { category: 'rate_limit', code: 429, message: 'slow down' } }) } });
   assert.equal(failed.value.status, 'failed');
-  assert.equal(failed.of('store.put')[0].value.failed.openai.category, 'rate_limit');
+  assert.equal(failed.of('store.put')[0].value.failed.codex.category, 'rate_limit');
   assert.deepEqual(failed.of('agents.cancel'), [{ handle: 'h1', deliver: false }], 'a failure returned to the model is not delivered again');
 });
 
 test('delegate_task skips unhealthy routes, falls back with a notice and lists the reasons', () => {
   const now = Date.now();
   const windows = { claude: { used: 95, resets: null, at: now } };
-  const near = { windows, failed: { openai: { at: now - 60_000, category: 'authorization' } } };
+  const near = { windows, failed: { codex: { at: now - 60_000, category: 'authorization' } } };
   const lead = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored({ windows }) });
   assert.equal(lead.of('agents.spawn')[0].route, 'plan-gpt', 'the lead model is the last resort');
   assert.match(lead.of('terminal.notice')[0].text, /sonnet-worker: 95% of its usage limit used; claude: 95% of its usage limit used, so this general task runs on plan-gpt/);
   const spare = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored({ windows }), settings: { fallback_models: 'mini' } });
   assert.equal(spare.of('agents.spawn')[0].route, 'reader');
-  const same = delegate({ action: 'start', task: 'Go', model: 'gpt' }, { answer: stored({ failed: { openai: { at: now - 60_000, category: 'authorization' } } }), routes: [{ ...WORKERS[0], name: 'a' }, { ...WORKERS[0], name: 'b', provider: 'other' }] });
+  const same = delegate({ action: 'start', task: 'Go', model: 'gpt' }, { answer: stored({ failed: { codex: { at: now - 60_000, category: 'authorization' } } }), routes: [{ ...WORKERS[0], name: 'a' }, { ...WORKERS[0], name: 'b', provider: 'other' }] });
   assert.equal(same.of('agents.spawn')[0].route, 'b');
   assert.match(same.of('terminal.notice')[0].text, /^a: authorization failure 1 min ago, so this general task runs on b/, 'any skipped route is named');
   const none = delegate({ action: 'start', task: 'Go', model: 'sonnet' }, { answer: stored(near) });
@@ -229,7 +229,7 @@ test('agent_end settles a task without scheduling a wake, and clips stored error
   assert.deepEqual(first.of('agents.result'), [{ handle: 'a', consume: true }]);
   assert.equal(first.state.tasks.a.text, 'a done');
   const failed = end(first.state, 'c', { status: 'failed', text: undefined, error: `native_agent_failed ${'e'.repeat(3000)}`, failure: { category: 'allowance', code: 1, message: 'm' } });
-  assert.equal(failed.of('store.put')[0].value.failed.openai.category, 'allowance');
+  assert.equal(failed.of('store.put')[0].value.failed.codex.category, 'allowance');
   assert.equal(failed.of('agents.cancel').length, 1);
   assert.equal(Buffer.byteLength(failed.state.tasks.c.error), 1024, 'errors are clipped');
   assert.ok(![...first.ops, ...failed.ops].some(op => op === 'events.schedule' || op === 'turns.queue'), 'the host delivers the result to the lead');
@@ -381,7 +381,7 @@ test('with retry_after_limit, a task stopped by a usage limit restarts once at t
   assert.deepEqual(ended.of('agents.cancel'), [], 'a held failure keeps its handle and is not delivered');
   assert.equal(delegate({ action: 'status', handle: 'h1' }, { state: ended.state, settings }).value.status, 'waiting');
   const due = { ...ended.state, tasks: { h1: { ...ended.state.tasks.h1, retry_at: now - 1 } } };
-  const ownFailure = stored({ failed: { omd_claude_cli: { at: now - 60_000, category: 'rate_limit' } } });
+  const ownFailure = stored({ failed: { claude: { at: now - 60_000, category: 'rate_limit' } } });
   const restarted = fire('timer', '', { key: 'retry' }, { state: due, settings, answer: { ...ownFailure, 'agents.spawn': () => ({ handle: 'h2', route: 'sonnet-worker', permissions: 'read_only' }) } });
   assert.deepEqual(restarted.of('agents.spawn'), [{ role: 'general', route: 'sonnet-worker', prompt: 'Map it', workspace: 'read_only', tools: ['exec_command', 'write_stdin'] }]);
   assert.equal(restarted.state.tasks.h2.retry_of, 'h1');
@@ -445,4 +445,30 @@ test('delegate_task start claims early results and does not repeat mailbox deliv
   const failed = delegate({ action: 'start', task: 'Review', mode: 'async' }, { settings: { retry_after_limit: true },
     answer: { 'agents.result': () => ({ status: 'failed', error: 'failed' }) } });
   assert.deepEqual(failed.of('agents.cancel'), [{ handle: 'h1', deliver: false }]);
+});
+
+test('published route status decides health per account, and a model runs on the account route that serves it', () => {
+  const status = (fields = {}) => ({ installed: true, signed_in: true, models: ['claude-sonnet-5-5', 'claude-opus-5-5'], usage: null, detail: null, checked_at: Date.now(), ...fields });
+  const state = { all: { query: 'sonnet', effort: null } };
+  const out = spawn({}, { state, routes: [{ ...CLAUDE_ROUTE, status: status({ signed_in: false, detail: 'not signed in; run /claude login' }) }] });
+  assert.equal(out.next.model, null);
+  assert.match(out.notices[0], /Claude Sonnet 5\.5 is skipped \(not signed in; run \/claude login\)/);
+  const full = spawn({}, { state, routes: [{ ...CLAUDE_ROUTE, status: status({ usage: [{ label: '5h', used_percent: 95, window_minutes: 300, resets_at: Date.now() + 60_000 }] }) }] });
+  assert.match(full.notices[0], /\(95% of its usage limit used\)/);
+  const hidden = spawn({}, { state, routes: [{ ...CLAUDE_ROUTE, status: status({ usage: [{ label: '5h', used_percent: 100, window_minutes: 300, resets_at: Date.now() - 60_000 },
+    { label: '7d', used_percent: 95, window_minutes: 10080, resets_at: Date.now() + 86_400_000 }] }) }] });
+  assert.match(hidden.notices[0] ?? '', /\(95% of its usage limit used\)/, 'a window that already reset does not hide a live full one');
+  assert.equal(spawn({}, { state, routes: [{ ...CLAUDE_ROUTE, status: status({ installed: false }) }] }).notices[0].includes('(not installed)'), true);
+  const accounts = [
+    { name: 'claude', provider: 'omd_claude_cli', model: 'claude-opus-5-5', roles: ['lead'], available: true, tools: [], billing: 'included_subscription', status: status({ models: ['claude-opus-5-5', 'claude-sonnet-5-5'] }) },
+    { name: 'claude-work', provider: 'omd_claude_cli', model: 'claude-opus-5-5.work', roles: ['lead'], available: true, tools: [], billing: 'included_subscription', status: status({ models: ['claude-opus-5-5.work'], detail: 'not signed in; run /claude login work' }) },
+  ];
+  const models = [...MODELS, { model: 'claude-opus-5-5.work', displayName: 'Claude Opus 5.5 · work', hidden: false, modelProvider: 'omd_claude_cli', supportedReasoningEfforts: [] }];
+  const answer = { 'app.request': () => ({ data: models, nextCursor: null }) };
+  const work = delegate({ action: 'start', task: 'Go', model: 'opus work' }, { routes: accounts, answer });
+  assert.equal(work.value.status, 'refused');
+  assert.match(work.value.error, /claude-work: not signed in; run \/claude login work/);
+  assert.doesNotMatch(work.value.error, /^Cannot delegate: claude:/, 'the default account is not tried for the work account model');
+  const listed = delegate({ action: 'targets' }, { routes: accounts, answer }).value.targets;
+  assert.deepEqual(listed.map(target => [target.route, target.models, target.usable]), [['claude', ['claude-sonnet-5-5'], true], ['claude-work', undefined, false]]);
 });

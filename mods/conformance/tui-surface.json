@@ -110,6 +110,7 @@
     "routes.list",
     "routes.models",
     "routes.select",
+    "routes.status",
     "routes.write",
     "session.info",
     "sessions.ports",

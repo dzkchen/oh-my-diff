@@ -89,12 +89,16 @@ lists those models.
 ### Routing health
 
 This applies to `delegate_task` and to subagents the router routes. A model the lead named itself is kept unchecked.
-A target is skipped when:
+Each route is one account: `claude` and `claude-work` are checked separately, and a model runs only on a route whose
+published status lists it (an account's own models). A target is skipped when:
 
 - its route isn't available,
-- its provider's latest usage window (from `account/rateLimits/updated`, which Claude sends after a Claude request) is
-  at 90% or more, or
-- a task on that provider failed for authorization, rate limit or allowance in the last 15 minutes.
+- its provider mod reports the route not installed, not signed in, or unusable for a stated reason (the route status
+  `/profile` shows),
+- its account's fullest usage window that hasn't reset is at 90% or more. The window comes from the route status, else from
+  `account/rateLimits/updated` for the route's limit family (the route name with `-` as `_`, `codex` on the built-in
+  OpenAI provider), or
+- a task on that account failed for authorization, rate limit or allowance in the last 15 minutes.
 
 Windows and failures are kept in the mod's user store, so every thread sees them. A window with no reset time stops
 counting after an hour. The task or subagent then runs on the first usable model in `fallback_models`, else the lead's

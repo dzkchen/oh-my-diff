@@ -13,7 +13,11 @@ export type ServiceContract = { name: `${string}.${string}`; version: `${number}
 export type ResourceRef = { reference: string; sha256: string };
 export type HostEvidence = { path: string; sha256: string };
 
-export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed'; tools: string[]; available: boolean; credential: string | null; data?: Json };
+export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed'; tools: string[]; available: boolean; credential: string | null; data?: Json; /** Requires route_status_v1: the latest status the route's provider mod published in this process, or null. */ status?: RouteStatus | null };
+/** One usage window of a route's account; `resets_at` is Unix milliseconds. */
+export type RouteUsageWindow = { label: string; used_percent: number; window_minutes?: number | null; resets_at?: number | null };
+/** A route's provider-published status; `checked_at` (Unix milliseconds) is stamped by the host. */
+export type RouteStatus = { installed: boolean; signed_in: boolean; version?: string | null; models?: string[] | null; usage?: RouteUsageWindow[] | null; detail?: string | null; checked_at: number };
 /** A lead route as `host.json` stores it; `data` (at most 2 KiB) is kept for the route's provider mod. */
 export type HostRoute = { name: string; roles: ['lead']; provider: string; model: string; reasoning_effort: string; responses_url: string; rates: HostRouteRates; mods?: string[]; tools?: string[]; data?: Json };
 export type HostRouteRates = { input_microusd_per_million: number; cached_microusd_per_million: number; cache_write_microusd_per_million?: number; output_microusd_per_million: number; reservation_microusd: number; max_output_tokens: number; input_token_ceiling: number; included_subscription: boolean; external_subscription?: boolean; provider_billed?: boolean };
@@ -472,6 +476,8 @@ export interface HostOperations {
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   /** Requires model_context_window_v1: sets (tokens), clears (null) or reads a model's context window from each thread's next turn (other sessions: the turn after), capped at its maximum. */
   'models.context_window': { arguments: { model: string; tokens?: number | null }; result: { model: string; tokens: number | null; max: number | null } };
+  /** Requires route_status_v1: publishes a route's status; only a mod with a host-approved provider grant for the route's provider may call it. */
+  'routes.status': { arguments: { route: string; installed: boolean; signed_in: boolean; version?: string; models?: string[]; usage?: RouteUsageWindow[]; detail?: string }; result: { route: string; checked_at: number } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' | 'new_threads' }; result: { route: RouteInfo; effective_at: 'next_request' | 'new_thread' } };
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
   /** Requires turn_abort_v1; acceptance precedes cancellation cleanup. */

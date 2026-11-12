@@ -77,6 +77,14 @@ pub(crate) fn define_providers(config: &crate::config::HostConfig, active: impl 
 }
 
 impl Grant {
+    pub(crate) fn provides(&self, mod_id: &str, provider: &str) -> bool {
+        self.mod_id == mod_id
+            && self
+                .route
+                .as_ref()
+                .is_some_and(|route| route.provider == provider)
+    }
+
     pub(crate) fn billed_rates(&self, provider: &str) -> Option<&crate::accounting::Rates> {
         self.route
             .as_ref()

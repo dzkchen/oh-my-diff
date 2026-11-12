@@ -374,7 +374,7 @@ test('/profile add opens one picker; accounts sign in through their own mods and
     if (operation === 'credentials.request') return { status: 'completed', profile: { id: `cred-${args.label}`, label: args.label, kind: 'api_key', origin: 'https://api.openai.com', status: 'ready' } };
     if (operation === 'commands.invoke') return args.command === 'omd_cursor:cursor' ? (() => { throw new Error('unknown_command: omd_cursor:cursor'); })()
       : { command: args.command, result: { display: 'Starting Claude login for account work (subscription); progress shows below' } };
-    return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'openai', model: 'gpt-6.1-sol' }, 'routes.list': routes, 'events.schedule': {}, 'events.publish': { delivered: 1, dropped: 0 },
+    return { 'credentials.list': [], 'packages.list': installed, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'openai', model: 'gpt-6.1-sol' }, 'routes.list': routes, 'events.schedule': {}, 'events.publish': { delivered: 1, dropped: 0 },
       'store.get': null, 'store.put': { revision: 1 }, 'terminal.panel': { shown: true }, 'sidecars.status': null, 'providers.register': {}, 'providers.models': {},
       'credentials.request': { status: 'completed', profile: { id: 'cred-k', label: 'key1', kind: 'api_key', origin: 'https://api.openai.com' } } }[operation];
   });
@@ -551,7 +551,7 @@ test('account selection affects only new threads and a refused selection leaves 
       if (failure) throw new Error(failure);
       return { route: rows.find(row => row.name === args.route), effective_at: 'new_thread' };
     }
-    return { 'routes.list': rows, 'exec.run': { exit_code: 0, stdout: JSON.stringify(rows.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'terminal.prompt': { status: answer }, 'events.publish': { delivered: 1, dropped: 0 },
+    return { 'credentials.list': [], 'routes.list': rows, 'exec.run': { exit_code: 0, stdout: JSON.stringify(rows.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'terminal.prompt': { status: answer }, 'events.publish': { delivered: 1, dropped: 0 },
       'sidecars.status': { running: true }, 'store.get': null, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'packages.list': installed }[operation];
   });
   let state = invoke(null, 'start', {}).state;
@@ -587,7 +587,7 @@ test('a profile added outside the session is listed and selectable on the first 
     if (operation === 'routes.select') return { route: rows.find(row => row.name === args.route), effective_at: 'new_thread' };
     if (operation === 'exec.run') return { exit_code: 0, stdout: JSON.stringify(rows.map(row => row.data)), stderr: '' };
     if (event === 'command' && operation === 'routes.list') throw new Error('host_operation_unavailable');
-    return { 'routes.list': rows, 'terminal.prompt': { status: 'accepted' }, 'events.publish': { delivered: 1, dropped: 0 }, 'events.schedule': {},
+    return { 'credentials.list': [], 'routes.list': rows, 'terminal.prompt': { status: 'accepted' }, 'events.publish': { delivered: 1, dropped: 0 }, 'events.schedule': {},
       'sidecars.status': { running: true }, 'store.get': null, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'packages.list': installed }[operation];
   });
   const state = invoke(null, 'start', {}).state;
@@ -605,7 +605,7 @@ test('a profile changed to a paid API outside the session is billed as paid and 
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload }, ({ operation, arguments: args }) => {
     if (operation === 'exec.run') return { exit_code: 0, stdout: JSON.stringify(rows.map(row => row.data)), stderr: '' };
     if (operation === 'terminal.prompt') { prompts.push(args); return { status: 'declined' }; }
-    return { 'routes.list': rows, 'events.publish': { delivered: 1, dropped: 0 }, 'sidecars.status': { running: true }, 'store.get': null,
+    return { 'credentials.list': [], 'routes.list': rows, 'events.publish': { delivered: 1, dropped: 0 }, 'sidecars.status': { running: true }, 'store.get': null,
       'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'packages.list': installed }[operation];
   });
   const state = invoke(null, 'start', {}).state;
@@ -725,6 +725,8 @@ test('Claude and Cursor accounts from their own mods are listed, metered from th
   state = invoke(state, 'app_notification', limits('codex')).state;
   assert.equal(kv.quota, undefined);
   state = invoke(state, 'app_notification', limits('claude')).state;
+  assert.equal(kv.quota, undefined, 'the default Claude account\'s family does not meter the work account');
+  state = invoke(state, 'app_notification', limits('claude_work')).state;
   assert.deepEqual(Object.keys(kv.quota.value), ['claude-work']);
   invoke({ ...state, accounts: [{ ...state.accounts[0], profile: profileData('key', true) }], current: 'work', seen: null }, 'app_notification', limits('codex'));
   assert.deepEqual(Object.keys(kv.quota.value), ['claude-work']);
@@ -810,7 +812,7 @@ test('the /model picker lists the profiles this mod publishes on its routes chan
   const published = [];
   const producer = callback({ ...request, state: null, event: 'start', payload: {} }, ({ operation, arguments: args }) => {
     if (operation === 'events.publish') return published.push(args) && { delivered: 1, dropped: 0 };
-    return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'store.get': null,
+    return { 'credentials.list': [], 'packages.list': installed, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'omd_profiles', model: 'work' }, 'store.get': null,
       'routes.list': [route('work', 'included_subscription'), route('paid', 'metered')] }[operation];
   });
   assert.equal(producer.error, undefined);
@@ -908,7 +910,7 @@ test('the last unused profile can be removed with its router and credential from
   const result = callback({ ...request, state: { mod: '/store/sources/omd_profiles', accounts: [{ name: 'home', profile }], current: null },
     event: 'command', name: 'profile', payload: 'remove home' }, ({ operation, arguments: args }) => {
     calls.push({ operation, args });
-    return { 'terminal.prompt': { status: 'accepted' }, 'exec.run': { exit_code: 0, stdout: '{"profiles":[]}', stderr: '' },
+    return { 'credentials.list': [], 'terminal.prompt': { status: 'accepted' }, 'exec.run': { exit_code: 0, stdout: '{"profiles":[]}', stderr: '' },
       'store.get': null, 'store.put': { revision: 1 }, 'events.publish': { delivered: 1, dropped: 0 }, 'credentials.request': { status: 'completed', profile: null } }[operation];
   });
   assert.equal(result.error, undefined);
@@ -925,7 +927,7 @@ test('new-thread selection markers follow resumed threads and stay isolated betw
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, payload, name }, ({ operation, arguments: args }) => {
     if (operation === 'store.get') return kv[args.key] ?? null;
     if (operation === 'store.put') { kv[args.key] = { value: args.value, revision: (kv[args.key]?.revision ?? 0) + 1, provenance: { at: 0 } }; return { revision: kv[args.key].revision }; }
-    return { 'routes.list': routes, 'exec.run': { exit_code: 0, stdout: JSON.stringify(routes.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
+    return { 'credentials.list': [], 'routes.list': routes, 'exec.run': { exit_code: 0, stdout: JSON.stringify(routes.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
       'routes.select': { route: routes[1], effective_at: 'new_thread' } }[operation];
   });
   const original = invoke(null, 'start', {}).state;
@@ -960,7 +962,7 @@ test('new-thread selection history stays within the store value limit across OMD
       selections = args.value;
       return { revision: 2 };
     }
-    return { 'routes.list': routes, 'exec.run': { exit_code: 0, stdout: JSON.stringify(routes.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
+    return { 'credentials.list': [], 'routes.list': routes, 'exec.run': { exit_code: 0, stdout: JSON.stringify(routes.filter(row => row.provider === 'omd_profiles').map(row => row.data)), stderr: '' }, 'session.info': session, 'packages.list': installed, 'events.publish': { delivered: 1, dropped: 0 },
       'routes.select': { route: routes[1], effective_at: 'new_thread' } }[operation];
   });
   const original = invoke(null, 'start', {}).state;
@@ -968,4 +970,41 @@ test('new-thread selection history stays within the store value limit across OMD
   assert.match(selected.value.display, /selected for new threads/);
   assert.equal(invoke(null, 'start', {}).state.pending, 'home');
   assert.ok(Buffer.byteLength(JSON.stringify(selections)) <= 65536);
+});
+
+test('profile routes publish their sign-in status and /profile list shows every account route status, including routes added after start', () => {
+  const calls = [];
+  const claude = { name: 'claude-work', model: 'claude-opus-5.work', provider: 'omd_claude_cli', reasoning: 'high', roles: ['lead'], billing: 'included_subscription', tools: [], available: true, credential: null,
+    status: { installed: true, signed_in: false, version: '2.1.400', models: ['claude-opus-5.work', 'claude-sonnet-5.work'], usage: [{ label: '5h', used_percent: 42, window_minutes: 300, resets_at: null }], detail: 'not signed in; run /claude login work', checked_at: 1_000_000 - 120_000 } };
+  const routes = [route('work', 'included_subscription'), route('spare', 'included_subscription')];
+  const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload, virtual_time_ms: 1_000_000 }, ({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    if (operation === 'routes.status') {
+      const row = routes.find(item => item.name === args.route);
+      const { route: _, ...published } = args;
+      row.status = { version: null, usage: null, detail: null, ...published, checked_at: 1_000_000 };
+      return { route: args.route, checked_at: 1_000_000 };
+    }
+    return { 'credentials.list': [{ id: 'cred-work', label: 'work', kind: 'chatgpt', status: 'ready' }], 'packages.list': installed, 'routes.list': routes,
+      'exec.run': { exit_code: 0, stdout: JSON.stringify(routes.filter(row => row.data).map(row => row.data)), stderr: '' }, 'events.publish': { delivered: 1, dropped: 0 }, 'events.schedule': {},
+      'sidecars.status': { running: true }, 'store.get': null, 'session.info': { thread_id: 'thread-1', process_id: 'process-1', provider: 'openai', model: 'gpt-6.1-sol' } }[operation];
+  });
+  const state = invoke(null, 'start', {}).state;
+  assert.deepEqual(calls.filter(call => call.operation === 'routes.status').map(call => call.args), [
+    { route: 'work', installed: true, signed_in: true, models: ['work'] },
+    { route: 'spare', installed: true, signed_in: false, models: ['spare'], detail: 'its sign-in is missing; run /profile refresh spare' }]);
+  routes.push(claude);
+  const lines = invoke(state, 'command', 'list', 'profile').value.display.split('\n');
+  assert.match(lines.find(line => line.includes(' work ')), /signed in · 1 model · checked just now/);
+  assert.match(lines.find(line => line.includes(' spare ')), / · its sign-in is missing; run \/profile refresh spare · /);
+  assert.match(lines.find(line => line.includes('claude-work')), / · not signed in; run \/claude login work · 2 models · 5h 42% · checked 2m ago/);
+  claude.status.detail = 'x'.repeat(256);
+  calls.length = 0;
+  invoke(state, 'command', '', 'profile');
+  const items = calls.find(call => call.operation === 'terminal.panel').args.items;
+  assert.ok(items.every(item => Buffer.byteLength(item.description) <= 256), 'a long route status still fits the panel');
+  calls.length = 0;
+  invoke({ ...state, current: 'work' }, 'app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: { limitId: 'codex', primary: { usedPercent: 95, windowDurationMins: 300, resetsAt: 2_000 } } } });
+  assert.deepEqual(calls.filter(call => call.operation === 'routes.status').map(call => call.args), [{ route: 'work', installed: true, signed_in: true, models: ['work'],
+    usage: [{ label: '5h', used_percent: 95, window_minutes: 300, resets_at: 2_000_000 }] }], 'a ChatGPT profile reports its own codex usage on its route');
 });

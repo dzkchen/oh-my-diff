@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, handoff } from './handoff.mjs';
-import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, PLANS, cliSupported, loginCommand, signedIn, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, PLANS, cliSupported, limitFamily, loginCommand, signedIn, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
 const BODY_LIMIT = 64 * 1024 * 1024;
@@ -142,16 +142,17 @@ async function bodyOf(request) {
   catch (error) { throw new BodyError(error.code === 'ERR_BUFFER_TOO_LARGE' ? 413 : 400, 'invalid_content_encoding'); }
 }
 
-// Maps the subscription's unified 5-hour and 7-day windows onto a `claude` rate-limit header family for /status.
-export function limitHeaders(headers, note) {
-  const out = { 'x-claude-limit-name': 'Claude', 'x-omd-provider-note': note };
+// Maps the subscription's unified 5-hour and 7-day windows onto the account route's rate-limit header family for /status.
+export function limitHeaders(headers, note, account = 'default') {
+  const family = limitFamily(account);
+  const out = { [`x-${family}-limit-name`]: account === 'default' ? 'Claude' : `Claude (${account})`, 'x-omd-provider-note': note };
   for (const [window, slot, minutes] of [['5h', 'primary', 300], ['7d', 'secondary', 10080]]) {
     const used = Number(headers[`anthropic-ratelimit-unified-${window}-utilization`]);
     if (headers[`anthropic-ratelimit-unified-${window}-utilization`] == null || !Number.isFinite(used)) continue;
-    out[`x-claude-${slot}-used-percent`] = String(Math.round(used * 10000) / 100);
-    out[`x-claude-${slot}-window-minutes`] = String(minutes);
+    out[`x-${family}-${slot}-used-percent`] = String(Math.round(used * 10000) / 100);
+    out[`x-${family}-${slot}-window-minutes`] = String(minutes);
     const reset = Number(headers[`anthropic-ratelimit-unified-${window}-reset`]);
-    if (Number.isFinite(reset) && reset > 0) out[`x-claude-${slot}-reset-at`] = String(Math.round(reset));
+    if (Number.isFinite(reset) && reset > 0) out[`x-${family}-${slot}-reset-at`] = String(Math.round(reset));
   }
   return out;
 }
@@ -622,7 +623,7 @@ async function serve(routePath, home, username) {
     const extraUsage = await extraUsageAllowed(routePath);
     const head = (headers = {}) => {
       if (!response.headersSent) response.writeHead(200, { 'content-type': 'text/event-stream',
-        'cache-control': 'no-store', ...limitHeaders(headers, providerNote(account.billing, login.plan, headers, extraUsage)) });
+        'cache-control': 'no-store', ...limitHeaders(headers, providerNote(account.billing, login.plan, headers, extraUsage), account.name) });
     };
     const send = event => { head(); response.write(`data: ${JSON.stringify(event)}\n\n`); };
     try {

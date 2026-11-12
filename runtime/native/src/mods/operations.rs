@@ -75,6 +75,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "model.complete"
                         | "model.fork"
                         | "routes.list"
+                        | "routes.status"
                         | "session.info"
                         | "tools.list"
                         | "turns.activity"
@@ -88,7 +89,11 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                 ))
 }
 
-pub(super) fn route_info(host: &Host, route: &config::Route) -> Value {
+pub(super) fn route_info(
+    host: &Host,
+    route: &config::Route,
+    statuses: &super::route_status::Statuses,
+) -> Value {
     let available = route.grant.as_ref().is_none_or(|grant| {
         accounting::worker_authorized(
             &grant.path,
@@ -103,7 +108,8 @@ pub(super) fn route_info(host: &Host, route: &config::Route) -> Value {
     json!({"name": route.name, "model": route.model, "provider": route.provider,
         "reasoning": route.reasoning_effort, "roles": route.roles,
         "billing": accounting::billing(Some(&route.rates)),
-        "tools": route.tools, "available": available, "credential": route.credential})
+        "tools": route.tools, "available": available, "credential": route.credential,
+        "status": super::route_status::latest(statuses, route)})
 }
 
 async fn authority(lead: &Lead, call: Option<&ToolCall<'_>>) -> Result<WorkspaceAuthority, String> {
@@ -613,22 +619,29 @@ async fn run(
             .await;
     }
     match operation.as_str() {
-        "routes.list" => Ok(json!(
-            host.route_config()
-                .0
-                .routes_for(caller.id)
-                .into_iter()
-                .map(|route| {
-                    let mut info = route_info(host, route);
-                    if route.provider == caller.id
-                        && let Some(data) = &route.data
-                    {
-                        info["data"] = data.clone();
-                    }
-                    info
-                })
-                .collect::<Vec<_>>()
-        )),
+        "routes.list" => {
+            let statuses = host.route_status.snapshot();
+            Ok(json!(
+                host.route_config()
+                    .0
+                    .routes_for(caller.id)
+                    .into_iter()
+                    .map(|route| {
+                        let mut info = route_info(host, route, &statuses);
+                        if route.provider == caller.id
+                            && let Some(data) = &route.data
+                        {
+                            info["data"] = data.clone();
+                        }
+                        info
+                    })
+                    .collect::<Vec<_>>()
+            ))
+        }
+        "routes.status" => {
+            host.route_status
+                .publish(&host.route_config().0, caller.id, request.arguments)
+        }
         "ledger.settle" => {
             let arguments = &request.arguments;
             let (Some(request_id), Some(microusd), Some(source)) = (

@@ -29,6 +29,7 @@ several accounts. [Manage mods](../../../docs/manage-mods.md) covers the other w
 | `/model` | Pick a Claude model; the thread switches provider from its next turn and keeps its history |
 
 An account `NAME` starts with a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 24 characters.
+Two accounts can't differ only by `_` and `-` (`my_team` and `my-team`), because Codex gives them one usage limit.
 For example, `/claude login work` signs in a second account, whose models appear in `/model` as
 `claude-opus-5-5.work`.
 
@@ -38,8 +39,16 @@ its own Keychain item. Each account gets its own route (a model setup in `host.j
 request runs under the account the model belongs to. A model other than an account's default is billed on the shared
 rate. That's the plan, or provider billing if any account uses Console API credits.
 
-`/status` shows the plan's 5-hour and weekly limits with reset times, and which billing source is in use. An expired
-login or a model your account lacks is refused with a message naming `/claude login`.
+`/status` shows the plan's 5-hour and weekly limits with reset times, and which billing source is in use. Each account
+has its own row (`Claude`, `Claude (work)`). An expired login or a model your account lacks is refused with a message
+naming `/claude login`.
+
+Each account's route (`claude`, `claude-NAME`) publishes its status: whether the CLI is installed and supported, whether
+the account is signed in, its models, its latest 5-hour and weekly usage, and why it can't be used. `/profile` shows
+it and the subagent router skips an account that isn't usable. The mod checks a second after start and then every 10
+minutes while the status this OMD process last published is older than that, after `/claude`, and after a login or
+removal; on a host without route status it doesn't check. The version check and each sign-in check stop after 10 s. A
+usage window without a reset time lasts until the next check.
 
 OMD never switches between plan limits and API credits on its own. The choice is stored and changes only when you run
 `/claude login` or `/claude login api` again.

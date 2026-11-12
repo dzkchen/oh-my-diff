@@ -1,5 +1,43 @@
 [
   {
+    "version": "1.5.3",
+    "date": "2026-11-12",
+    "title": "Oh My Diff 1.5.3",
+    "summary": "Codex 0.167.2 and per-account provider routes.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Providers: each configured Claude, Cursor and profile route is its own account, with its own rate limits, `/status` row and usage meter",
+          "Mod updates: first-party mod fixes reach installs of the current release as soon as they merge"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Upstream: Codex 0.167.2"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Realtime: WebRTC voice calls send their request body again",
+          "Mods: tools from mods run in the terminal that owns the turn"
+        ]
+      }
+    ],
+    "commits": [
+      "98a1058",
+      "fffeac1",
+      "c06911d",
+      "86cc1a1",
+      "6d86478",
+      "520b118",
+      "8044b68",
+      "4ee69f1"
+    ]
+  },
+  {
     "version": "1.5.2",
     "date": "2026-11-11",
     "title": "Oh My Diff 1.5.2",

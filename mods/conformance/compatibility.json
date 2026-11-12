@@ -3,7 +3,7 @@
   "as_of": "2026-11-11",
   "host": {
     "codex": "0.167.2",
-    "omd": "1.5.2",
+    "omd": "1.5.3",
     "release_status": "development",
     "latest_stable": "1.5.0",
     "stability": "stable",
@@ -169,6 +169,7 @@
       "terminal_welcome_hidden_v1",
       "routes_add_self_v1",
       "routes_add_model_v1",
+      "route_status_v1",
       "package_needs_approval_v1",
       "package_contributes_v1",
       "plugin_components_v1"

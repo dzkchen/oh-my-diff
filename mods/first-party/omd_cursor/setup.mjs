@@ -6,7 +6,7 @@ import { access, chmod, mkdir, open, readFile, readdir, readlink, realpath, rena
 import { userInfo } from 'node:os';
 import { basename, dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ACCOUNT } from './index.ts';
+import { ACCOUNT, accountRoute as label } from './index.ts';
 import { SDK_VERSION, loadSdk, privateDirectory } from './transport.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
@@ -115,7 +115,6 @@ const publishable = accounts => {
   const chosen = new Set([...accounts.map(account => account.models[0]), ...accounts.flatMap(account => account.models.slice(1))].slice(0, 16));
   return accounts.flatMap(account => account.models.filter(model => chosen.has(model)));
 };
-const label = name => name === 'default' ? 'cursor' : `cursor-${name}`;
 
 function storeSecret(omdMod, store, credential, name) {
   try {

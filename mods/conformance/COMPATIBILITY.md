@@ -53,6 +53,7 @@ the API version matches. Each list holds at most 32 features.
 | `packages.list` `needs_approval` | `package_needs_approval_v1` |
 | `routes.add` without `mod` | `routes_add_self_v1` |
 | `routes.add` with `model` or `effort`, `routes.models` | `routes_add_model_v1` |
+| `routes.status`, `routes.list` `status` | `route_status_v1` |
 | `packages.list` `maintainer` and `contributes`, manifest `contributes` | `package_contributes_v1` |
 | `plugins.components`, the `plugin` package source and `install` with `enable` | `plugin_components_v1` |
 | `api.settingsFile` | `settings_file_v1` |
