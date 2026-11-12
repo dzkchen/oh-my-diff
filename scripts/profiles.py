@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
 import errno
 import hashlib
 import json
@@ -155,12 +156,98 @@ def sync_sources(manager, store, origin, packages):
     return changed
 
 
+def kept_copies(store, packages, installed):
+    return {identifier: {"sha256": package["package_sha256"], "files": package["files"], "capabilities": package["capabilities"]}
+            for identifier, package in packages.items() if identifier not in installed and (store / "sources" / identifier).is_dir()}
+
+
 def refresh_kept_copies(manager, store, origin, packages, installed):
-    kept = {identifier: {"sha256": package["package_sha256"], "files": package["files"],
-                         "capabilities": package["capabilities"]}
-            for identifier, package in packages.items()
-            if identifier not in installed and (store / "sources" / identifier).is_dir()}
-    return sync_sources(manager, store, origin, kept)
+    return sync_sources(manager, store, origin, kept_copies(store, packages, installed))
+
+
+def catalog_installed(manager, store):
+    try:
+        return {identifier for identifier, entry in invoke(manager, "package-lock", store)["packages"].items()
+                if entry["source"].get("kind") == "package"}
+    except (RuntimeError, KeyError, TypeError, AttributeError):
+        return set()
+
+
+def directory_entries(index):
+    return {identifier: entries for identifier, entries in index["packages"].items() if entries[0]["source"]["kind"] != "local"}
+
+
+def prune_shelves(root):
+    wanted = set()
+    for lock in (*root.glob("releases/*/prefix/management/runtime/mods.lock.json"), *root.glob("releases/*/prefix/mods-previous/mods.lock.json")):
+        with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+            wanted |= {(identifier, package["package_sha256"]) for identifier, package in json.loads(lock.read_text())["packages"].items()}
+    for index in root.glob("stores/*/package-index.json"):
+        with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+            wanted |= {(Path(path).parent.name, Path(path).name) for entries in json.loads(index.read_text())["packages"].values()
+                       for entry in entries if entry["source"]["kind"] == "local" and (path := entry["source"]["path"])}
+    for shelf in root.glob("catalog/*/*"):
+        if shelf.is_dir() and (shelf.parent.name, shelf.name) not in wanted:
+            shutil.rmtree(shelf, ignore_errors=True)
+
+
+def update_catalog_copies(manager, store, packages):
+    index = store / "package-index.json"
+    odd = (RuntimeError, KeyError, TypeError, AttributeError)
+    updated, review = [], []
+    try:
+        locked = invoke(manager, "package-lock", store)["packages"]
+    except odd:
+        return {"catalog_updated": updated, "needs_review": review}
+    for identifier, package in sorted(packages.items()):
+        try:
+            entry = locked.get(identifier)
+            if (not entry or entry["source"] != {"kind": "package", "index": str(index), "id": identifier, "version": entry["version"]}
+                    or entry["integrity"] == package["package_sha256"]):
+                continue
+            request = json.dumps({"action": "update", "scope": entry["scope"], "offline": True,
+                                  "source": {"kind": "package", "index": str(index), "id": identifier, "version": package["version"]},
+                                  "trust": {"packages": {name: item["trust"] for name, item in locked.items()}}})
+            preview = invoke(manager, "package-plan", store, request)
+            if (any(item["id"] in locked and locked[item["id"]]["scope"] != item["scope"] for item in preview["packages"])
+                    or any(change.get("renewed_approval") or change["state_version"]["migration_required"]
+                           for change in preview["changes"]["packages"])):
+                review.append(identifier)
+                continue
+            invoke(manager, "package-apply", store, request, preview["confirmation"])
+            updated.append(identifier)
+            locked = invoke(manager, "package-lock", store)["packages"]
+        except odd:
+            if identifier not in updated:
+                review.append(identifier)
+    if updated:
+        with contextlib.suppress(RuntimeError):
+            invoke(manager, "reload", store)
+    return {"catalog_updated": updated, "needs_review": review}
+
+
+def point_index(prefix, store, packages, described=None):
+    path = store / "package-index.json"
+    index = json.loads(path.read_text())
+    managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
+    for identifier, package in packages.items():
+        details = (described or {}).get(identifier, {})
+        entry = (index["packages"].get(identifier) or [details and {"source": {"kind": "local"}}])[0]
+        if entry and entry["source"]["kind"] == "local":
+            shelf = (shelve(prefix / "sources" / identifier, prefix.parents[2] / "catalog" / identifier / package["package_sha256"])
+                     if managed else prefix / "sources" / identifier)
+            index["packages"][identifier] = [entry | details | {"version": package["version"], "integrity": package["package_sha256"],
+                                                                "source": {"kind": "local", "path": str(shelf)}}]
+    support.atomic_text(path, json.dumps(index, indent=2) + "\n")
+
+
+def align_catalog(prefix, manager, store):
+    lock = prefix / "management/runtime/mods.lock.json"
+    if not lock.is_file() or not (store / "package-index.json").is_file():
+        return {"catalog_updated": [], "needs_review": []}
+    packages = json.loads(lock.read_text())["packages"]
+    point_index(prefix, store, packages)
+    return update_catalog_copies(manager, store, packages)
 
 
 def keep_bundled_copies(manager, store):
@@ -224,7 +311,8 @@ def reconcile(prefix, bin_dir):
     _, manager = check(record, bin_dir)
     store = Path(record["store"])
     restored = restore_selection(manager, store, record)
-    return {"restored": sync_sources(manager, store, prefix / "sources", record["packages"]), **restored}
+    result = {"restored": sync_sources(manager, store, prefix / "sources", record["packages"]), **restored}
+    return result | {"catalog_restored": align_catalog(prefix, manager, store)["catalog_updated"]}
 
 
 def added_capabilities(before, after):
@@ -258,31 +346,54 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
     changed = {identifier: package for identifier, package in offered["packages"].items()
                if identifier in lock["packages"] and (identifier in forced
                                                       or package["package_sha256"] != lock["packages"][identifier]["package_sha256"])}
-    if not changed:
-        marker.unlink(missing_ok=True)
-        return {"updated": []}
-    for identifier, package in changed.items():
+    added = {identifier: package for identifier, package in offered["packages"].items() if identifier not in lock["packages"]}
+    store = Path(record["store"])
+    held = catalog_installed(manager, store)
+    removed = [identifier for identifier in offered.get("added", []) if identifier in lock["packages"]]
+    kept_new = sorted(set(removed) & held)
+    removed = [identifier for identifier in removed if identifier not in held]
+    listed = offered.get("index")
+    refused = {}
+    for identifier, package in (changed | added).items():
         source = (bundle / "sources" / identifier).resolve()
         files = {path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()}
         if files != set(package["files"]) or any(support.digest(source / name) != digest for name, digest in package["files"].items()):
             raise ValueError(f"mod bundle files differ from its lock: {identifier}")
-        verify(manager, source, package["package_sha256"])
+        try:
+            verify(manager, source, package["package_sha256"])
+        except (RuntimeError, ValueError):
+            refused[identifier] = package["package_sha256"]
+    changed = {identifier: package for identifier, package in changed.items() if identifier not in refused}
+    added = {identifier: package for identifier, package in added.items() if identifier not in refused}
+    if record.get("mods_refused", {}) != refused:
+        record["mods_refused"] = refused
+        write(prefix, record)
+    if not (changed or added or removed or listed):
+        marker.unlink(missing_ok=True)
+        return {"updated": [], "kept": kept_new, "refused": sorted(refused)}
+    index = json.loads((store / "package-index.json").read_text())
     if backup:
         staged = prefix / ".mods-previous.new"
         for identifier in changed:
             shutil.copytree(prefix / "sources" / identifier, staged / "sources" / identifier)
         staged.mkdir(exist_ok=True)
         support.atomic_text(staged / "mods.lock.json", json.dumps({
-            "mod_api": lock["mod_api"], "applied": record.get("mods_bundle"),
+            "mod_api": lock["mod_api"], "applied": record.get("mods_bundle"), "added": sorted(added),
+            **({"index": directory_entries(index)} if listed is not None else {}),
             "packages": {identifier: lock["packages"][identifier] for identifier in changed}}, indent=2, sort_keys=True) + "\n")
         shutil.rmtree(prefix / "mods-previous", ignore_errors=True)
         staged.rename(prefix / "mods-previous")
-    lock["packages"].update(changed)
+    lock["packages"].update(changed | added)
+    for identifier in removed:
+        del lock["packages"][identifier]
     text = json.dumps(lock, indent=2, sort_keys=True) + "\n"
-    identifiers = sorted(changed)
-    support.atomic_text(marker, json.dumps({"lock": hashlib.sha256(text.encode()).hexdigest(), "ids": identifiers}))
-    for identifier in changed:
+    identifiers = sorted(changed | added)
+    support.atomic_text(marker, json.dumps({"lock": hashlib.sha256(text.encode()).hexdigest(), "ids": sorted(changed)}))
+    for identifier in identifiers:
         replace_tree(bundle / "sources" / identifier, prefix / "sources" / identifier)
+    for identifier in removed:
+        shutil.rmtree(prefix / "sources" / identifier, ignore_errors=True)
+        record["sources"].pop(identifier, None)
     support.atomic_text(lock_path, text)
     record["management"]["files"]["runtime/mods.lock.json"] = support.digest(lock_path)
     before = {identifier: dict(package) for identifier, package in record["packages"].items()}
@@ -299,20 +410,23 @@ def apply_mods(prefix, bin_dir, bundle, applied, backup):
     else:
         record.pop("mods_bundle", None)
     write(prefix, record)
-    store = Path(record["store"])
+    point_index(prefix, store, {identifier: lock["packages"][identifier] for identifier in identifiers}, offered.get("catalog", {}))
     index = json.loads((store / "package-index.json").read_text())
-    managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
-    for identifier in set(identifiers) & index["packages"].keys():
-        entry, package = index["packages"][identifier][0], lock["packages"][identifier]
-        if entry["source"]["kind"] == "local":
-            shelf = (shelve(prefix / "sources" / identifier, prefix.parents[2] / "catalog" / identifier / package["package_sha256"])
-                     if managed else prefix / "sources" / identifier)
-            index["packages"][identifier] = [entry | {"version": package["version"], "integrity": package["package_sha256"],
-                                                      "source": {"kind": "local", "path": str(shelf)}}]
+    for identifier in removed:
+        index["packages"].pop(identifier, None)
+    if listed is not None:
+        index["packages"] = {identifier: entries for identifier, entries in index["packages"].items()
+                             if entries[0]["source"]["kind"] == "local"} | listed
     support.atomic_text(store / "package-index.json", json.dumps(index, indent=2) + "\n")
-    sync_sources(manager, store, prefix / "sources", installed)
+    if prefix.name == "prefix" and prefix.parent.parent.name == "releases":
+        prune_shelves(prefix.parents[2])
+    kept = kept_copies(store, {identifier: lock["packages"][identifier] for identifier in changed}, record["packages"])
+    synced = sync_sources(manager, store, prefix / "sources", installed | kept)
+    carried = update_catalog_copies(manager, store, {identifier: lock["packages"][identifier] for identifier in changed})
     marker.unlink()
-    return {"updated": sorted(installed), "capabilities": added_capabilities(before, installed)}
+    return {"updated": sorted(set(synced) | installed.keys() | set(carried["catalog_updated"])), "added": sorted(added),
+            "kept": kept_new, "refused": sorted(refused), "needs_review": carried["needs_review"],
+            "capabilities": added_capabilities(before, installed)}
 
 
 def rollback_mods(prefix, bin_dir):
@@ -1019,13 +1133,7 @@ def install(args):
         sources = store / "sources"
         sources.mkdir(exist_ok=True)
         trusted, enabled = [], []
-        curated = {entry["id"]: entry for entry in json.loads((ROOT / "extensions/index.json").read_text())["packages"]
-                   if entry["extension_type"] == "mod" and entry["support_status"] in ("experimental", "reviewed_candidate", "supported")}
-        catalog = {identifier: [{"version": entry["version"], "integrity": entry["published"]["sha256"],
-                                 "source": {"kind": "repository", "repository": entry["published"]["repository"],
-                                            "revision": entry["published"]["revision"], "subdirectory": entry["source"]},
-                                 "description": entry["capability"], "support": entry["support_status"]}]
-                   for identifier, entry in curated.items() if "published" in entry}
+        curated, catalog = support.catalog(json.loads((ROOT / "extensions/index.json").read_text()))
         routed = previous.get("providers", {}) if previous and previous["profile"] == args.profile else {}
         wanted = set(profile_packages(args.profile)) | {identifier for identifier in ROUTES.values() if identifier in routed}
         for identifier in PACKAGES:
@@ -1147,6 +1255,9 @@ def install(args):
         failed = [(package["id"], package["error"]) for package in result["packages"] if package["error"]]
         if failed:
             raise ValueError(f"first-party mod failed to load during installation: {failed}")
+        if previous:
+            record["changes"] |= update_catalog_copies(installed_manager, store, packages)
+            write(prefix, record)
         if managed:
             deduplicate(prefix.parents[2])
         return result
@@ -1432,6 +1543,8 @@ def main():
     install_parser.add_argument("--attach-store", action="store_true")
     install_parser.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
     reconcile_parser = commands.add_parser("reconcile", help="restore this installation's first-party mod sources in its store (used by install.sh)")
+    align_parser = commands.add_parser("catalog-align", help="move catalog-installed first-party mods to another installation's versions (used by install.sh)")
+    align_parser.add_argument("--to", type=Path, required=True)
     reconcile_parser.add_argument("--summary", action="store_true", help="print one line instead of JSON (used by the codex launcher)")
     commands.add_parser("purge-accounts", help="sign out isolated accounts before uninstall (used by install.sh)")
     mods_parser = commands.add_parser("mods-update", help="apply a verified first-party mod bundle (used by install.sh)")
@@ -1501,6 +1614,9 @@ def main():
             print("Oh My Diff restored your mod choices after the reset."
                   + (f" Turn these back on in /mods: {', '.join(others)}." if others else ""))
             return
+    elif args.command == "catalog-align":
+        target = load(args.to)
+        result = align_catalog(args.to, Path(target["manager"]["installed_path"]), Path(target["store"]))
     elif args.command == "purge-accounts":
         record = load(prefix)
         check(record, bin_dir)

@@ -2,7 +2,8 @@
 
 The maintainer prepares a release pull request, merges it, then pushes a tag to publish. The tag workflow can reuse
 a successful release dry run on the same commit. Nightly prereleases publish automatically; see
-[How CI checks a change](ci.md#nightly-builds).
+[How CI checks a change](ci.md#nightly-builds). To try unreleased changes, don't cut a release:
+[run your checkout](runtime.md#run-your-checkout).
 
 ## Before you start
 
@@ -90,8 +91,10 @@ queues and fresh compilation still affect elapsed time; the reuse path needs a h
 Fixes to `mods/first-party` can reach users of the current release without a new release. The Mods workflow builds
 a bundle from `main` and publishes it as the GitHub release `mods-VERSION-N`, where VERSION is `release_pin.omd` in
 `extensions/index.json` and N counts up. The bundle holds every mod that differs from the `vVERSION` tag or that an
-earlier bundle changed. Installs of exactly that VERSION take the mods that differ from what they have. Mods new
-since the release, mods that need host features the release lacks, and a mod API change wait for the next release.
+earlier bundle changed, plus mods added since the release, which arrive in the catalog turned off. It also
+carries the curated directory's entries for other publishers' mods. Installs of exactly that VERSION take the mods
+that differ from what they have. Mods that need host features the release lacks, and a mod API change, wait for the
+next release.
 
 1. Check what would ship:
 
@@ -100,8 +103,9 @@ since the release, mods that need host features the release lacks, and a mod API
    ```
 
    `bundle` lists the mods it would ship, `new` the ones that changed since the last bundle (the build refuses when
-   it is empty), `needs_host` mods whose `required_features` the release's host lacks (the build refuses them) and
-   `needs_release` new mods it skips. `host_changed` lists host files changed since the tag: a mod fix that depends
+   it is empty), `added` the bundled mods the release didn't have, `needs_host` mods whose `required_features` the
+   release's host lacks (the build refuses them) and `needs_release` new mods it skips because they need a newer
+   host. `host_changed` lists host files changed since the tag: a mod fix that depends
    on one of those changes waits for the release. `api_changed` lists the host operations whose arguments or results
    changed, and `mods/api.d.ts` when it changed; the build refuses a changed API unless you pass `--api-reviewed`
    after leaving out every mod that depends on the change with `--exclude ID...` (`plan` takes `--exclude` too).

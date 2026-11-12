@@ -42,7 +42,8 @@
       "exec_v1",
       "app_v1",
       "state_scopes_v1",
-      "ui_controls_v1"
+      "ui_controls_v1",
+      "package_contributes_v1"
     ]
   },
   "settings_schema": {

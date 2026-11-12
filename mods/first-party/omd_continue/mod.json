@@ -11,5 +11,5 @@
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_continue"},
   "capabilities": ["commands", "sessions"],
-  "compatibility": {"required_features": ["turn_activity_v1"]}
+  "compatibility": {"required_features": ["turn_activity_v1", "package_contributes_v1"]}
 }
