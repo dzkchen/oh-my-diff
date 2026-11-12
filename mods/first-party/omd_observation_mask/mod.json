@@ -13,7 +13,7 @@
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_observation_mask"},
   "capabilities": ["history", "interception", "middleware", "tools", "store", "commands", "model", "lifecycle", "inventory"],
-  "compatibility": {"required_features": ["history_v1", "tool_original_v1", "continuation_middleware_v1", "model_turn_interception_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "lifecycle_events_v1", "package_imports_v1", "package_text_assets_v1"]},
+  "compatibility": {"required_features": ["history_v1", "tool_original_v1", "continuation_middleware_v1", "model_turn_interception_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "lifecycle_events_v1", "package_imports_v1", "package_text_assets_v1", "package_contributes_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {

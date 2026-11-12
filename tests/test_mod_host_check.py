@@ -40,6 +40,9 @@ class SourceRules(unittest.TestCase):
                 "optional_features lists unknown host feature nope_v1",
                 f"{features[0]} is both required and optional",
             ])
+            (path / "mod.json").write_text(json.dumps({"id": "fixture", "contributes": {}}))
+            self.assertEqual(check.static_problems(path), [
+                "contributes needs required feature package_contributes_v1"])
 
     def test_manifest_limits(self):
         with tempfile.TemporaryDirectory() as directory:

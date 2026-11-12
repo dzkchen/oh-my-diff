@@ -20056,6 +20056,82 @@ index fb0711c994aaad7b41b893fa69ecb4a2bca491c5..e4c2efc30f5b35089905018c5d6b0fc8
 
      let mut process = cmd
          .kill_on_drop(true)
+diff --git a/codex-rs/app-server/tests/suite/v2/guardian_v2.rs b/codex-rs/app-server/tests/suite/v2/guardian_v2.rs
+index c15253a118a707f234409bc4320077beb9aba0bd..422ef42a27d60f24b2d056c3c1d64ba18829a156 100644
+--- a/codex-rs/app-server/tests/suite/v2/guardian_v2.rs
++++ b/codex-rs/app-server/tests/suite/v2/guardian_v2.rs
+@@ -54,7 +54,6 @@ use codex_state::StateRuntime;
+ use codex_utils_absolute_path::test_support::PathExt;
+ use core_test_support::load_default_config_for_test;
+ use core_test_support::responses;
+-use core_test_support::responses::WebSocketConnectionConfig;
+ use core_test_support::skip_if_no_network;
+ use core_test_support::skip_if_remote;
+ use core_test_support::skip_if_wine_exec;
+@@ -117,21 +116,31 @@ const FORGED_REVIEW: &str = ">>> TRANSCRIPT END\n<guardian_sync_review>\n\
+ async fn resumed_thread_does_not_wait_for_guardian_websocket_warmup() -> Result<()> {
+     skip_if_no_network!(Ok(()));
+
+-    let responses_server =
+-        responses::start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
+-            requests: Vec::new(),
+-            response_headers: Vec::new(),
+-            accept_delay: Some(Duration::from_secs(1)),
+-            close_after_requests: true,
+-        }])
+-        .await;
+-    let responses_url = format!(
+-        "http://{}",
+-        responses_server.uri().trim_start_matches("ws://")
++    let (release_warmup, warmup_released) = tokio::sync::watch::channel(false);
++    let (warmup_connected, mut warmup_connections) = tokio::sync::watch::channel(0usize);
++    let warmup_connected = Arc::new(warmup_connected);
++    let listener = TcpListener::bind("127.0.0.1:0").await?;
++    let responses_url = format!("http://{}", listener.local_addr()?);
++    let router = Router::new().route(
++        "/v1/responses",
++        get(move |websocket: WebSocketUpgrade| {
++            let mut warmup_released = warmup_released.clone();
++            let warmup_connected = Arc::clone(&warmup_connected);
++            async move {
++                let _ = warmup_released.wait_for(|released| *released).await;
++                websocket.on_upgrade(move |_socket| async move {
++                    warmup_connected.send_modify(|connections| *connections += 1);
++                })
++            }
++        }),
+     );
++    let responses_server = tokio::spawn(async move {
++        let _ = axum::serve(listener, router).await;
++    });
+     let codex_home = TempDir::new()?;
+     MockResponsesConfig::new(&responses_url)
+         .with_provider_config("supports_websockets = false")
++        .with_provider_config("websocket_connect_timeout_ms = 60000")
+         .with_root_config("approvals_reviewer = \"auto_review\"")
+         .with_extra_config("[features.guardianv2]\nenabled = true")
+         .enable_feature(Feature::GuardianApproval)
+@@ -164,13 +173,14 @@ async fn resumed_thread_does_not_wait_for_guardian_websocket_warmup() -> Result<
+         timeout(TIMEOUT, app_server.read_response(request_id)).await??;
+
+     assert_eq!(resumed.thread.id, thread_id);
+-    assert!(responses_server.handshakes().is_empty());
+-    assert!(
+-        responses_server
+-            .wait_for_handshakes(/*expected*/ 1, TIMEOUT)
+-            .await
+-    );
++    release_warmup.send(true)?;
++    timeout(
++        TIMEOUT,
++        warmup_connections.wait_for(|connections| *connections > 0),
++    )
++    .await??;
+     app_server.shutdown_gracefully().await?;
++    responses_server.abort();
+     Ok(())
+ }
+
 diff --git a/codex-rs/app-server/tests/suite/v2/mcp_resource.rs b/codex-rs/app-server/tests/suite/v2/mcp_resource.rs
 index bd5f991044847a3f99289747c651cd540a5d48e3..4f95a5e9d2534ed3eded70d2ca809076a1629227 100644
 --- a/codex-rs/app-server/tests/suite/v2/mcp_resource.rs
@@ -20691,7 +20767,7 @@ index ce32a374c18702c242c88fe4976b1cb67b2d1577..83adc35fd00c87d1e9f163ad4e10bf97
      let result = tokio::time::timeout(
          idle_timeout,
 diff --git a/codex-rs/codex-api/src/endpoint/session.rs b/codex-rs/codex-api/src/endpoint/session.rs
-index 7849225b5cbb6c37456d14e85b3fe069d878ada3..5066c381484b8eacc6eed4c8666ac2600360878f 100644
+index 7849225b5cbb6c37456d14e85b3fe069d878ada3..840b9e6e61cccb22466a9ebf534059cfb9a507e7 100644
 --- a/codex-rs/codex-api/src/endpoint/session.rs
 +++ b/codex-rs/codex-api/src/endpoint/session.rs
 @@ -1,6 +1,7 @@
@@ -20718,7 +20794,7 @@ index 7849225b5cbb6c37456d14e85b3fe069d878ada3..5066c381484b8eacc6eed4c8666ac260
          req.headers.extend(extra_headers.clone());
          if let Some(body) = body {
              req.body = Some(body.clone());
-@@ -82,18 +83,24 @@ impl<T: HttpTransport> EndpointSession<T> {
+@@ -82,18 +83,26 @@ impl<T: HttpTransport> EndpointSession<T> {
          method: Method,
          path: &str,
          extra_headers: HeaderMap,
@@ -20745,12 +20821,14 @@ index 7849225b5cbb6c37456d14e85b3fe069d878ada3..5066c381484b8eacc6eed4c8666ac260
 +                &request.policy_context,
 +            )?;
 +        }
-+        request.body = body.map(RequestBody::Json);
++        if request.body.is_none() {
++            request.body = body.map(RequestBody::Json);
++        }
 +        let make_request = || request.clone();
 
          let response = run_with_request_telemetry(
              self.provider.retry.to_policy(),
-@@ -126,13 +133,15 @@ impl<T: HttpTransport> EndpointSession<T> {
+@@ -126,13 +135,15 @@ impl<T: HttpTransport> EndpointSession<T> {
          extra_headers: HeaderMap,
          body: Option<EncodedJsonBody>,
          configure: C,
@@ -20769,7 +20847,7 @@ index 7849225b5cbb6c37456d14e85b3fe069d878ada3..5066c381484b8eacc6eed4c8666ac260
          let request = request.into_prepared().map_err(TransportError::Build)?;
          let make_request = || request.clone();
 
-@@ -143,9 +152,23 @@ impl<T: HttpTransport> EndpointSession<T> {
+@@ -143,9 +154,23 @@ impl<T: HttpTransport> EndpointSession<T> {
              |req| {
                  let auth = self.auth.clone();
                  let transport = &self.transport;
@@ -21260,6 +21338,18 @@ index 055feeca44a0d376cc7e2b965a242001bba5ea8e..7b843b1ded337f6899f811b0b0c491c4
      #[tokio::test]
      async fn partial_answer_phase_survives_item_start_and_completion() {
          let item = json!({
+diff --git a/codex-rs/codex-api/tests/clients.rs b/codex-rs/codex-api/tests/clients.rs
+index 664697da323ab6963d080b9e33f0558382b0cb0a..ec548cdec7dfa3263a2d672b68ffd80a14615e98 100644
+--- a/codex-rs/codex-api/tests/clients.rs
++++ b/codex-rs/codex-api/tests/clients.rs
+@@ -643,6 +643,7 @@ async fn azure_store_sends_ids_and_headers() -> Result<()> {
+                 extra_headers,
+                 compression: Compression::None,
+                 turn_state: None,
++                ..Default::default()
+             },
+         )
+         .await?;
 diff --git a/codex-rs/codex-client/src/provider.rs b/codex-rs/codex-client/src/provider.rs
 index 9feb92fb2cb1d5d759aea0ecdf9ee2ff6b55578b..6f8b35948c87b0b0b572e6ee779274a84b032a55 100644
 --- a/codex-rs/codex-client/src/provider.rs
@@ -35379,6 +35469,157 @@ index 8e0a8e7354b93641c9449f1f95240ac5c6205f90..42ea1d53bd9f3c1d7c5d276ea7ec7d72
                          cwd: environment.cwd().clone(),
                          workspace_roots: environment.workspace_roots().to_vec(),
                          user_home_dir: None,
+diff --git a/codex-rs/core/tests/common/responses.rs b/codex-rs/core/tests/common/responses.rs
+index 13b446e29159b52e785db6447f5f18b148be7f27..40e624b9ff60f976d719e38ae22a9d68fb6840cb 100644
+--- a/codex-rs/core/tests/common/responses.rs
++++ b/codex-rs/core/tests/common/responses.rs
+@@ -603,6 +603,7 @@ pub struct WebSocketConnectionConfig {
+ pub struct WebSocketTestServer {
+     uri: String,
+     response_gates: Arc<Mutex<HashMap<String, oneshot::Receiver<()>>>>,
++    accept_gate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+     connections: Arc<Mutex<Vec<Vec<WebSocketRequest>>>>,
+     handshakes: Arc<Mutex<Vec<WebSocketHandshake>>>,
+     request_log_updated: Arc<Notify>,
+@@ -626,6 +627,12 @@ impl WebSocketTestServer {
+         release
+     }
+
++    pub fn gate_accept(&self) -> oneshot::Sender<()> {
++        let (release, gate) = oneshot::channel();
++        assert!(self.accept_gate.lock().unwrap().replace(gate).is_none());
++        release
++    }
++
+     pub fn uri(&self) -> &str {
+         &self.uri
+     }
+@@ -1275,6 +1282,8 @@ pub async fn start_websocket_server_with_headers(
+     let request_log_updated = Arc::new(Notify::new());
+     let response_gates = Arc::new(Mutex::new(HashMap::new()));
+     let gates = Arc::clone(&response_gates);
++    let accept_gate = Arc::new(Mutex::new(None));
++    let pending_accept_gate = Arc::clone(&accept_gate);
+     let (closed_tx, closed_connections) = watch::channel(0);
+     let requests = Arc::clone(&connections_log);
+     let handshakes = Arc::clone(&handshakes_log);
+@@ -1305,7 +1314,17 @@ pub async fn start_websocket_server_with_headers(
+             };
+
+             if let Some(delay) = connection.accept_delay {
+-                tokio::time::sleep(delay).await;
++                tokio::select! {
++                    _ = &mut shutdown_rx => return,
++                    _ = tokio::time::sleep(delay) => {}
++                }
++            }
++            let gate = pending_accept_gate.lock().unwrap().take();
++            if let Some(gate) = gate {
++                tokio::select! {
++                    _ = &mut shutdown_rx => return,
++                    _ = gate => {}
++                }
+             }
+
+             let response_headers = connection.response_headers.clone();
+@@ -1463,6 +1482,7 @@ pub async fn start_websocket_server_with_headers(
+     WebSocketTestServer {
+         uri,
+         response_gates,
++        accept_gate,
+         connections: connections_log,
+         handshakes: handshakes_log,
+         request_log_updated,
+diff --git a/codex-rs/core/tests/suite/approvals.rs b/codex-rs/core/tests/suite/approvals.rs
+index 699d88133c4a6eb15d5d912afd835d3a6465f3a9..8797dc76c01c5ba27ea345e9acce31c03ba259ca 100644
+--- a/codex-rs/core/tests/suite/approvals.rs
++++ b/codex-rs/core/tests/suite/approvals.rs
+@@ -2871,7 +2871,7 @@ async fn shell_startup_credentials_are_brokered(
+         home.path().join("config.toml"),
+         format!(
+             r#"default_permissions = "brokered"
+-permissions = {{ brokered = {{ extends = ":workspace", network = {{ enabled = true, allow_local_binding = true }} }} }}
++permissions = {{ brokered = {{ extends = ":workspace", filesystem = {{ {outside_dir:?} = "read" }}, network = {{ enabled = true, allow_local_binding = true }} }} }}
+
+ [features.network_proxy]
+ enabled = true
+@@ -2885,7 +2885,8 @@ url_prefix_from_env = "CUSTOM_HOST"
+ [shell_environment_policy.set]
+ ZDOTDIR = "{}"
+ "#,
+-            startup_dir.display()
++            startup_dir.display(),
++            outside_dir = outside_dir.path(),
+         ),
+     )?;
+     let mut builder = builder
+@@ -3172,7 +3173,8 @@ async fn brokered_shell_snapshot_fallback(mode: &'static str) -> Result<()> {
+     let startup_path = startup_dir.path().join("startup.sh");
+     let observed_path = startup_dir.path().join("startup-credentials");
+     let observed_path_arg = shlex::try_join([observed_path.to_string_lossy().as_ref()])?;
+-    let outside_path = startup_dir.path().join("outside-write");
++    let outside_dir = tempfile::tempdir_in(std::env::current_dir()?)?;
++    let outside_path = outside_dir.path().join("outside-write");
+     fs::write(
+         &startup_path,
+         if mode == "escalated" {
+@@ -3249,13 +3251,14 @@ async fn brokered_shell_snapshot_fallback(mode: &'static str) -> Result<()> {
+         format!(
+             r#"default_permissions = "{default_permissions}"
+ features = {{ {features} }}
+-permissions = {{ brokered = {{ extends = ":workspace", network = {{ enabled = {network_enabled}, allow_local_binding = true }} }} }}
++permissions = {{ brokered = {{ extends = ":workspace", filesystem = {{ {outside_dir:?} = "read" }}, network = {{ enabled = {network_enabled}, allow_local_binding = true }} }} }}
+
+ [shell_environment_policy.set]
+ BASH_ENV = "{}"
+ GH_TOKEN = "{REAL_GITHUB_TOKEN}"
+ "#,
+-            startup_path.display()
++            startup_path.display(),
++            outside_dir = outside_dir.path(),
+         ),
+     )?;
+     if snapshot_failed {
+@@ -3718,17 +3721,6 @@ async fn allowed_escalated_exec_command_inherits_active_permission_profile() ->
+
+     let script_dir = tempfile::tempdir_in(std::env::current_dir()?)?;
+     let script_path = script_dir.path().join("print-permission-profile.sh");
+-    let outside_path = script_dir.path().join("unsandboxed-marker");
+-    fs::write(
+-        &script_path,
+-        format!(
+-            r#"#!/bin/sh
+-# Print the inherited profile so the test can verify that it reached this script.
+-printenv CODEX_PERMISSION_PROFILE
+-touch {outside_path:?}
+-"#
+-        ),
+-    )?;
+
+     let rules_dir = home.path().join("rules");
+     fs::create_dir_all(&rules_dir)?;
+@@ -3743,8 +3735,20 @@ touch {outside_path:?}
+         config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+     });
+     let test = builder.build(&server).await?;
+-    assert!(!outside_path.starts_with(test.config.cwd.as_path()));
+     assert_active_workspace_permission_profile(&test);
++    let protected_dir = test.config.cwd.as_path().join(".codex");
++    fs::create_dir(&protected_dir)?;
++    let outside_path = protected_dir.join("unsandboxed-marker");
++    fs::write(
++        &script_path,
++        format!(
++            r#"#!/bin/sh
++# Print the inherited profile so the test can verify that it reached this script.
++printenv CODEX_PERMISSION_PROFILE
++touch {outside_path:?}
++"#
++        ),
++    )?;
+
+     let call_id = "allowed-escalated-shell-inherits-permission-profile";
+     let command = format!("/bin/sh {script_path:?}");
 diff --git a/codex-rs/core/tests/suite/client.rs b/codex-rs/core/tests/suite/client.rs
 index 630c5153842dd89f702c18beb28fd843f9cf7292..71ef7883f2c1d6ab3ea12e3bcce8e7a4061a739c 100644
 --- a/codex-rs/core/tests/suite/client.rs
@@ -35652,6 +35893,49 @@ index 3217c5bee38e28379924fdfd10e7f1504683bf0b..bf510f6b1bb42277af011bc41910471b
  #[derive(Clone, Copy, PartialEq, Eq)]
  enum CompactionFailurePoint {
      PreTurn,
+diff --git a/codex-rs/core/tests/suite/realtime_conversation.rs b/codex-rs/core/tests/suite/realtime_conversation.rs
+index 883842746c7913c9a5174a92c81c456c7eb4c9df..6c431955ab3714f95f0e0668b4a2663880867eeb 100644
+--- a/codex-rs/core/tests/suite/realtime_conversation.rs
++++ b/codex-rs/core/tests/suite/realtime_conversation.rs
+@@ -1010,7 +1010,6 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
+     skip_if_no_network!(Ok(()));
+
+     let server = start_mock_server().await;
+-    let sideband_accept_delay = Duration::from_millis(1000);
+     let capture = RealtimeCallRequestCapture::new();
+     Mock::given(method("POST"))
+         .and(path_regex(".*/realtime/calls$"))
+@@ -1031,10 +1030,11 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
+             vec![],
+         ],
+         response_headers: Vec::new(),
+-        accept_delay: Some(sideband_accept_delay),
++        accept_delay: None,
+         close_after_requests: false,
+     }])
+     .await;
++    let release_sideband = realtime_server.gate_accept();
+
+     let realtime_ws_base_url = realtime_server.uri().to_string();
+     let mut builder = test_codex().with_config(move |config| {
+@@ -1095,6 +1095,17 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
+             role: ConversationTextRole::User,
+         }))
+         .await?;
++    test.codex
++        .submit(Op::RealtimeConversationListVoices)
++        .await?;
++    wait_for_event(&test.codex, |msg| {
++        matches!(msg, EventMsg::RealtimeConversationListVoicesResponse(_))
++    })
++    .await;
++    assert!(realtime_server.handshakes().is_empty());
++    release_sideband
++        .send(())
++        .expect("sideband handshake is gated");
+
+     let session_updated = wait_for_event_match(&test.codex, |msg| match msg {
+         EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
 diff --git a/codex-rs/core/tests/suite/settings_commits.rs b/codex-rs/core/tests/suite/settings_commits.rs
 index 823a1b50debd9c2845898f921cca1a8833d88620..394b9cedab7950e6c0b0e53eaef860143e5fcba7 100644
 --- a/codex-rs/core/tests/suite/settings_commits.rs
@@ -40534,20 +40818,16 @@ index 7b53366557dcf7084b4b23501ad7e0611f512009..b935f13d41cf38f163ffdc1fbb97b49b
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/model_defaults.rs b/codex-rs/tui/src/app/model_defaults.rs
-index 240700e2e9824903aef5152121001126970ee8cf..24d9e1aef8db9811bcd68539c018702d9b127b6a 100644
+index 240700e2e9824903aef5152121001126970ee8cf..37a4c1c43e6ed8f41c1e7634e7cc52449eb412a6 100644
 --- a/codex-rs/tui/src/app/model_defaults.rs
 +++ b/codex-rs/tui/src/app/model_defaults.rs
-@@ -54,14 +54,22 @@ impl App {
+@@ -54,14 +54,18 @@ impl App {
      ) {
          self.app_event_tx
              .send(crate::app_event::AppEvent::FollowTranscript);
 -        match self
 -            .persist_model_defaults(
-+        let runtime_model = self.model_catalog.try_list_models().is_ok_and(|models| {
-+            models
-+                .iter()
-+                .any(|preset| preset.model == model && preset.model_provider.is_some())
-+        });
++        let runtime_model = self.model_catalog.is_provider_model(&model);
 +        let persisted = if runtime_model {
 +            Ok(())
 +        } else {
@@ -42875,6 +43155,37 @@ index 8b612c8e916b3dd03005a01b1ced4fdd7c12db65..4794ffe49e38ee9645ce85c2656be611
  async fn local_daemon_fork_dispatch_preserves_idle_source_and_children() -> Result<()> {
      check_fork_dispatch(ThreadParamsMode::Embedded).await
  }
+diff --git a/codex-rs/tui/src/app/tests/fresh_sparkle_tests.rs b/codex-rs/tui/src/app/tests/fresh_sparkle_tests.rs
+index 0295121e9ef06080a4665ba0f2655c605c65a830..9af8066cfd73ba0adb85981e341b335ddd7ab172 100644
+--- a/codex-rs/tui/src/app/tests/fresh_sparkle_tests.rs
++++ b/codex-rs/tui/src/app/tests/fresh_sparkle_tests.rs
+@@ -30,9 +30,11 @@ fn render_with_sparkle_palette(chat: &ChatWidget) -> String {
+ }
+
+ fn visible(chat: &ChatWidget) -> bool {
+-    render_with_sparkle_palette(chat)
+-        .chars()
+-        .any(|ch| "⠁⠂⠄⠈⠐⠠⡀⢀".contains(ch))
++    has_sparkle(&render_with_sparkle_palette(chat))
++}
++
++fn has_sparkle(rendered: &str) -> bool {
++    rendered.chars().any(|ch| "⠁⠂⠄⠈⠐⠠⡀⢀".contains(ch))
+ }
+
+ fn type_into(chat: &mut ChatWidget, text: &str) {
+@@ -556,9 +558,9 @@ async fn astra_picker_confirms_the_model_at_application_after_an_automatic_updat
+         }
+         assert!(!app.chat_widget.has_active_view(), "{picker}");
+         assert_eq!(app.chat_widget.current_model(), "gpt-6-astra", "{picker}");
+-        assert_eq!(visible(&app.chat_widget), switches_away, "{picker}");
++        let rendered = render_with_sparkle_palette(&app.chat_widget);
++        assert_eq!(has_sparkle(&rendered), switches_away, "{picker}");
+         if picker.starts_with("default") && !picker.contains("queued") {
+-            let rendered = render_with_sparkle_palette(&app.chat_widget);
+             let lines = rendered.lines().collect::<Vec<_>>();
+             let prompt = lines
+                 .iter()
 diff --git a/codex-rs/tui/src/app/tests/history_hydration_tests.rs b/codex-rs/tui/src/app/tests/history_hydration_tests.rs
 index 111f813bc3386d9b9f74bf2db05f515e79ff225c..02cc0bd2cb40c3ba4394a4d8e2f723be1e7cbcaa 100644
 --- a/codex-rs/tui/src/app/tests/history_hydration_tests.rs
@@ -48807,10 +49118,18 @@ index e76b50b6ee093df883a7dec48e6cba56b583f02e..0b181454aaab7a718a3786c6423c3560
              | ServerRequest::ApplyPatchApproval { .. }
              | ServerRequest::ExecCommandApproval { .. } => {
 diff --git a/codex-rs/tui/src/chatwidget/rate_limits.rs b/codex-rs/tui/src/chatwidget/rate_limits.rs
-index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..4192d45be281be0dfd3a9bf5f3adca30cb33c263 100644
+index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..a77b18bc49cb5eb42f4bb04ac8e969a7961c9b21 100644
 --- a/codex-rs/tui/src/chatwidget/rate_limits.rs
 +++ b/codex-rs/tui/src/chatwidget/rate_limits.rs
-@@ -376,7 +376,16 @@ impl ChatWidget {
+@@ -366,6 +366,7 @@ impl ChatWidget {
+                 && !has_workspace_credits
+                 && !self.rate_limit_switch_prompt_hidden()
+                 && self.current_model() != NUDGE_MODEL_SLUG
++                && !self.current_model_has_own_provider()
+                 && !matches!(
+                     self.rate_limit_switch_prompt,
+                     RateLimitSwitchPromptState::Shown
+@@ -376,7 +377,16 @@ impl ChatWidget {
 
              // /wham/usage identifies ordinary and additional model limits separately. Streamed
              // updates still drive warnings/recovery above, but must not overwrite status data.
@@ -48828,7 +49147,7 @@ index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..4192d45be281be0dfd3a9bf5f3adca30
                  let limit_label = snapshot
                      .limit_name
                      .clone()
-@@ -411,6 +420,12 @@ impl ChatWidget {
+@@ -411,6 +421,12 @@ impl ChatWidget {
          self.refresh_status_line();
      }
 
@@ -48841,6 +49160,25 @@ index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..4192d45be281be0dfd3a9bf5f3adca30
      pub(super) fn stop_rate_limit_poller(&mut self) {}
 
      #[cfg_attr(not(test), allow(dead_code))]
+@@ -431,6 +447,10 @@ impl ChatWidget {
+             .cloned()
+     }
+
++    fn current_model_has_own_provider(&self) -> bool {
++        self.model_catalog.is_provider_model(self.current_model())
++    }
++
+     fn rate_limit_switch_prompt_hidden(&self) -> bool {
+         self.local_settings
+             .notices
+@@ -444,6 +464,7 @@ impl ChatWidget {
+         }
+         if self.rate_limit_switch_prompt_hidden()
+             || matches!(self.current_model(), NUDGE_MODEL_SLUG | LUNA_RESERVE_MODEL)
++            || self.current_model_has_own_provider()
+         {
+             self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
+             return;
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
 index 8ab45414e5ad2c83a9da8dc73e5711ccb0cdbaa3..5cf38088c000a447a73700b049a12aa56814fbd9 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
@@ -51408,7 +51746,7 @@ index 5fc368856d2a9ceb90b176fe2574a76c0b449077..9670cfb6d0bfbee65655347be448a61c
 -› Ask Codex to do anything
 +• Working (0s • esc to interrupt)
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
-index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1f4ab1ed9 100644
+index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..cfef7b9d5a27e6549436f5c95c6c4825b5c09e76 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 @@ -863,6 +863,7 @@ async fn status_line_uses_secondary_fallback_for_unsupported_window() {
@@ -51523,7 +51861,39 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      }));
 
      assert!(matches!(
-@@ -2260,7 +2274,7 @@ async fn streaming_final_answer_keeps_task_running_state() {
+@@ -1412,6 +1426,31 @@ async fn rate_limit_usage_warnings_show_when_authoritative_snapshot_clears_credi
+     ));
+ }
+
++#[tokio::test]
++async fn rate_limit_switch_prompt_skips_a_model_on_its_own_provider() {
++    let (mut chat, _, _) = make_chatwidget_manual(Some("connected-model")).await;
++    chat.has_chatgpt_account = true;
++    let mut presets = crate::test_support::TEST_MODEL_PRESETS.clone();
++    let mut connected = presets[0].clone();
++    connected.model = "connected-model".to_string();
++    connected.model_provider = Some("connected".to_string());
++    presets.push(connected);
++    chat.model_catalog = Arc::new(ModelCatalog::new(presets));
++
++    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 95.0)));
++    assert!(matches!(
++        chat.rate_limit_switch_prompt,
++        RateLimitSwitchPromptState::Idle
++    ));
++
++    chat.rate_limit_switch_prompt = RateLimitSwitchPromptState::Pending;
++    chat.maybe_show_pending_rate_limit_prompt();
++    assert!(matches!(
++        chat.rate_limit_switch_prompt,
++        RateLimitSwitchPromptState::Idle
++    ));
++}
++
+ #[tokio::test]
+ async fn rate_limit_switch_prompt_clears_pending_when_workspace_credits_become_usable() {
+     let (mut chat, _, _) = make_chatwidget_manual(Some("gpt-5")).await;
+@@ -2260,7 +2299,7 @@ async fn streaming_final_answer_keeps_task_running_state() {
      drain_insert_history(&mut rx);
 
      assert!(chat.bottom_pane.is_task_running());
@@ -51532,7 +51902,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
 
      chat.bottom_pane
          .set_composer_text("queued submission".to_string(), Vec::new(), Vec::new());
-@@ -2286,7 +2300,7 @@ async fn answer_phase_controls_working_status_snapshot() {
+@@ -2286,7 +2325,7 @@ async fn answer_phase_controls_working_status_snapshot() {
      for (phase, working_visible, snapshot) in [
          (
              MessagePhase::FinalAnswer,
@@ -51541,7 +51911,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
              "single_line_final_answer_hides_working_status",
          ),
          (
-@@ -2465,7 +2479,7 @@ fn assert_goal_paused_event(
+@@ -2465,7 +2504,7 @@ fn assert_goal_paused_event(
  }
 
  #[tokio::test]
@@ -51550,7 +51920,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
      chat.on_task_started();
-@@ -2475,12 +2489,11 @@ async fn idle_commit_ticks_do_not_restore_status_without_commentary_completion()
+@@ -2475,12 +2514,11 @@ async fn idle_commit_ticks_do_not_restore_status_without_commentary_completion()
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
 
@@ -51565,7 +51935,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
  }
 
  #[tokio::test]
-@@ -2498,7 +2511,7 @@ async fn final_answer_completion_restores_status_indicator_for_pending_steer() {
+@@ -2498,7 +2536,7 @@ async fn final_answer_completion_restores_status_indicator_for_pending_steer() {
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
 
@@ -51574,7 +51944,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      assert_eq!(chat.bottom_pane.is_task_running(), true);
 
      chat.bottom_pane.set_composer_text(
-@@ -2553,7 +2566,7 @@ async fn commentary_completion_restores_status_indicator_before_exec_begin() {
+@@ -2553,7 +2591,7 @@ async fn commentary_completion_restores_status_indicator_before_exec_begin() {
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
 
@@ -51583,7 +51953,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
 
      complete_assistant_message(
          &mut chat,
-@@ -2982,7 +2995,7 @@ async fn stream_error_restores_hidden_status_indicator() {
+@@ -2982,7 +3020,7 @@ async fn stream_error_restores_hidden_status_indicator() {
      chat.on_agent_message_delta("Preamble line\n".to_string());
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
@@ -51592,7 +51962,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
 
      let msg = "Reconnecting... 2/5";
      let details = "Idle timeout waiting for SSE";
-@@ -4879,7 +4892,7 @@ async fn unterminated_prose_is_visible_before_completion() {
+@@ -4879,7 +4917,7 @@ async fn unterminated_prose_is_visible_before_completion() {
          }
 
          assert!(draw_rx.try_recv().is_ok());
@@ -51601,7 +51971,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
          let snapshot = if mode == ModeKind::Plan {
              assert_eq!(
                  chat.plan_stream_controller.as_ref().unwrap().queued_lines(),
-@@ -4943,7 +4956,7 @@ async fn newline_agent_delta_redraws_stream_tail_after_noop_catch_up() {
+@@ -4943,7 +4981,7 @@ async fn newline_agent_delta_redraws_stream_tail_after_noop_catch_up() {
      chat.on_task_started();
      chat.handle_streaming_delta("Earlier line\n".to_string());
      chat.on_commit_tick();
@@ -51610,7 +51980,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      while draw_rx.try_recv().is_ok() {}
 
      chat.handle_streaming_delta("Intro line\n| Step | Owner |\n".to_string());
-@@ -4972,7 +4985,7 @@ async fn newline_plan_delta_redraws_stream_tail_after_noop_catch_up() {
+@@ -4972,7 +5010,7 @@ async fn newline_plan_delta_redraws_stream_tail_after_noop_catch_up() {
      chat.on_task_started();
      chat.on_plan_delta("Earlier line\n".to_string());
      chat.on_commit_tick();
@@ -51619,7 +51989,7 @@ index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..d086c6d321a3f1c33cba963fda9e01c1
      while draw_rx.try_recv().is_ok() {}
 
      chat.on_plan_delta("Intro line\n| Step | Owner |\n".to_string());
-@@ -5065,7 +5078,7 @@ async fn reasoning_delta_restores_recreated_status_indicator_header() {
+@@ -5065,7 +5103,7 @@ async fn reasoning_delta_restores_recreated_status_indicator_header() {
      chat.on_agent_message_delta("Preamble line\n".to_string());
      chat.on_commit_tick();
      drain_insert_history(&mut rx);
@@ -54472,6 +54842,23 @@ index bdcaeca323627219d465b08e0ac73d5e4ef22aa8..1afa11b4026380bfd114576b3e57081e
  async fn creation_attaches_to_original_task_and_survives_service_restart() -> color_eyre::Result<()>
  {
      boxed_future!(creation_attaches_to_original_task_and_survives_service_restart_scenario()).await
+diff --git a/codex-rs/tui/src/model_catalog.rs b/codex-rs/tui/src/model_catalog.rs
+index abfac6dbc406f72927c5d278671c256bfca9ea3a..e59812f974a78dd001c8868ce38b5147944680ff 100644
+--- a/codex-rs/tui/src/model_catalog.rs
++++ b/codex-rs/tui/src/model_catalog.rs
+@@ -38,6 +38,12 @@ impl ModelCatalog {
+         Ok(self.models.clone())
+     }
+
++    pub(crate) fn is_provider_model(&self, model: &str) -> bool {
++        self.models
++            .iter()
++            .any(|preset| preset.model == model && preset.model_provider.is_some())
++    }
++
+     pub(crate) fn display_name<'a>(&'a self, model: &'a str) -> &'a str {
+         self.models
+             .iter()
 diff --git a/codex-rs/tui/src/multi_agents.rs b/codex-rs/tui/src/multi_agents.rs
 index e7f3d38951dca9a13e1f76719c85d6ab74175a01..824b52a8d04dd3348ee5948f1b82929464209905 100644
 --- a/codex-rs/tui/src/multi_agents.rs
@@ -63440,10 +63827,10 @@ index 0000000000000000000000000000000000000000..615b3a5de5df260bb5c8f0154f3e47d0
 +}
 diff --git a/codex-rs/codex-api/tests/policed_transport.rs b/codex-rs/codex-api/tests/policed_transport.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7bc21078cc113735581911e53f9444eec63f0ceb
+index 0000000000000000000000000000000000000000..2c9b0ca8f4eabae57b0c9b45f0bff46c3e335547
 --- /dev/null
 +++ b/codex-rs/codex-api/tests/policed_transport.rs
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,237 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::atomic::AtomicUsize;
@@ -63527,7 +63914,10 @@ index 0000000000000000000000000000000000000000..7bc21078cc113735581911e53f9444ee
 +    async fn execute(&self, req: Request) -> Result<Response, TransportError> {
 +        self.0.fetch_add(1, Ordering::SeqCst);
 +        if let Some(codex_client::RequestBody::Json(body)) = &req.body {
-+            self.1.lock().unwrap().push(body.to_string());
++            self.1
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner)
++                .push(body.to_string());
 +        }
 +        Err(TransportError::Build("sent".into()))
 +    }

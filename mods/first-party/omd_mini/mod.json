@@ -14,5 +14,5 @@
   "capabilities": ["terminal", "commands", "lifecycle", "store", "exec", "threads", "sessions", "inventory"],
   "exec_environment": ["OH_MY_DIFF_PRESENTATION", "OH_MY_DIFF_LAUNCH"],
   "subscriptions": {"app": ["thread/settings/updated", "thread/tokenUsage/updated", "account/rateLimits/updated"]},
-  "compatibility": {"required_features": ["app_v1", "exec_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "terminal_lists_v1"]}
+  "compatibility": {"required_features": ["app_v1", "exec_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "terminal_lists_v1", "package_contributes_v1"]}
 }

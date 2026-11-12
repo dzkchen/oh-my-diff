@@ -18,7 +18,7 @@
     "channels": ["omd_usage/refresh"],
     "app": ["account/updated", "account/rateLimits/updated", "thread/settings/updated", "thread/tokenUsage/updated", "thread/reverted", "turn/plan/updated"]
   },
-  "compatibility": { "required_features": ["builtins_v1", "terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1", "app_v1", "model_turn_interception_v1", "ui_controls_v1", "package_imports_v1", "package_text_assets_v1"] },
+  "compatibility": { "required_features": ["builtins_v1", "terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1", "app_v1", "model_turn_interception_v1", "ui_controls_v1", "package_imports_v1", "package_text_assets_v1", "package_contributes_v1"] },
   "settings_schema": {
     "type": "object",
     "properties": {

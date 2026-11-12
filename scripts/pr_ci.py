@@ -5,11 +5,14 @@ import os
 from pathlib import Path
 import subprocess
 
+RELEASE_METADATA = ("release/changelog.json", "extensions/index.json", "runtime/release.lock.json")
+
 
 def needs_native(paths):
     return any(
-        path.startswith("runtime/")
-        or not (path.endswith(".md") or path.startswith(("docs/", "mods/first-party/", "mods/examples/", "plugins/", "tests/")))
+        path.startswith(("runtime/omd/", "runtime/native/"))
+        or not (path.endswith(".md") or path in RELEASE_METADATA
+                or path.startswith(("docs/", "mods/first-party/", "mods/examples/", "plugins/", "tests/")))
         for path in paths
     )
 
@@ -21,9 +24,7 @@ def native_fingerprint():
         if not record:
             continue
         path = record.split(b"\t", 1)[1].decode()
-        if needs_native([path]) and path not in (
-            "runtime/mods.lock.json", "runtime/plugins.lock.json", "runtime/release.lock.json",
-        ):
+        if needs_native([path]) and path not in ("runtime/mods.lock.json", "runtime/plugins.lock.json"):
             digest.update(record + b"\0")
     return digest.hexdigest()
 
