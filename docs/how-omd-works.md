@@ -76,7 +76,7 @@ numbers will differ.
 
 ## Mods, plugins, skills and hooks
 
-Codex `0.167.1` already has plugins, skills and hooks. A mod is for the changes they can't make.
+Codex `0.167.2` already has plugins, skills and hooks. A mod is for the changes they can't make.
 
 | Use | For |
 | --- | --- |
@@ -85,7 +85,7 @@ Codex `0.167.1` already has plugins, skills and hooks. A mod is for the changes 
 | A plugin | Tools or services Codex can call, optionally with an MCP server (a program that offers tools over the Model Context Protocol) |
 | A mod | Changing how `codex` itself behaves or looks: commands, screens, requests, tool calls |
 
-Codex `0.167.1` plugins bundle skills, prompts, MCP servers and hook files. Codex hooks are external commands or MCP
+Codex `0.167.2` plugins bundle skills, prompts, MCP servers and hook files. Codex hooks are external commands or MCP
 tools that return a decision: block a call, add context, or rewrite a tool's input.
 
 A hook can't store state between calls, stream output, draw on screen, choose which model answers or run an agent.

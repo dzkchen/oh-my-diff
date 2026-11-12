@@ -168,5 +168,5 @@
   "target": "aarch64-apple-darwin",
   "upstream_commit": "0a94398fa60c4fac0e7659e4213a0a36e613dd46",
   "upstream_tag": "rust-v0.167.1",
-  "version": "1.5.2"
+  "version": "1.5.3"
 }

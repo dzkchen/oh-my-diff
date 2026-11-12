@@ -2,6 +2,24 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.3](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.3) — 2026-11-12
+
+Codex 0.167.2 and per-account provider routes.
+
+### New
+
+- Providers: each configured Claude, Cursor and profile route is its own account, with its own rate limits, `/status` row and usage meter
+- Mod updates: first-party mod fixes reach installs of the current release as soon as they merge
+
+### Changed
+
+- Upstream: Codex 0.167.2
+
+### Fixed
+
+- Realtime: WebRTC voice calls send their request body again
+- Mods: tools from mods run in the terminal that owns the turn
+
 ## [1.5.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.2) — 2026-11-11
 
 Codex 0.167.1, shareable theme scenes, and more reliable status, cache and background work.
