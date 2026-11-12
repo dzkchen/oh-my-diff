@@ -43,7 +43,8 @@
       "integration_receipts_v1",
       "agent_lifecycle_v1",
       "tool_result_fingerprints_v1",
-      "routes_add_model_v1"
+      "routes_add_model_v1",
+      "package_contributes_v1"
     ]
   },
   "services": {

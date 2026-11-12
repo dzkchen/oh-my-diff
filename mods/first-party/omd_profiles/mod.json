@@ -61,7 +61,8 @@
       "terminal_render_sites_v1",
       "terminal_rich_line_v1",
       "timers_v1",
-      "unrestricted_process_v1"
+      "unrestricted_process_v1",
+      "package_contributes_v1"
     ]
   },
   "assets": [
