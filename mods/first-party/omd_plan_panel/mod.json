@@ -14,7 +14,7 @@
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_plan_panel"},
   "capabilities": ["terminal", "commands", "store", "threads"],
   "subscriptions": {"app": ["turn/plan/updated", "turn/started"]},
-  "compatibility": {"required_features": ["app_v1", "store_v1", "state_scopes_v1", "terminal_render_sites_v1", "codex_config_v1"]},
+  "compatibility": {"required_features": ["app_v1", "store_v1", "state_scopes_v1", "terminal_render_sites_v1", "codex_config_v1", "package_contributes_v1"]},
   "codex_config": {"tools.update_plan.enabled": true},
   "settings_schema": {
     "type": "object",

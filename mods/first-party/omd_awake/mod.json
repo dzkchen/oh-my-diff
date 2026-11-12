@@ -14,7 +14,7 @@
   "capabilities": ["store", "events", "lifecycle", "terminal", "commands", "builtins", "agents", "exec", "os", "power"],
   "os_access": {"programs": ["/sbin/route", "/usr/sbin/networksetup"], "network": false},
   "subscriptions": {"channels": ["omd_awake/apply"]},
-  "compatibility": {"required_features": ["agent_lifecycle_v1", "builtins_features_v1", "builtins_v1", "events_v1", "exec_v1", "lifecycle_events_v1", "power_hold_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1", "unrestricted_process_v1"]},
+  "compatibility": {"required_features": ["agent_lifecycle_v1", "builtins_features_v1", "builtins_v1", "events_v1", "exec_v1", "lifecycle_events_v1", "power_hold_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1", "unrestricted_process_v1", "package_contributes_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {
