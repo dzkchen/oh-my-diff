@@ -7,10 +7,11 @@ a successful release dry run on the same commit. Nightly prereleases publish aut
 
 ## Before you start
 
-- The `codex-omd` and `codex-omd-runner` crate versions equal the release version on `main`. The host reports its
-  crate version as the OMD release, and `mise run release` and `release.yml` refuse a mismatch. To set them, change
-  both in a scratch tree, run `build.py sync` and merge that first (see
-  [Change the patched Codex code](runtime.md)).
+- `mise run release:status -- VERSION` reports the latest nightly on `main` and the release's next step.
+- The `codex-omd` and `codex-omd-runner` crate versions must equal the release version when it is tagged. The host
+  reports its crate version as the OMD release, and tagging and `release.yml` refuse a mismatch. Bump both on the
+  release pull request's branch: change them in a scratch tree and run `build.py sync` (see
+  [Change the patched Codex code](runtime.md)), then `build.py locks`.
 
 ## Publish a release
 

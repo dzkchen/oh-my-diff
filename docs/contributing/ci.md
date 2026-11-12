@@ -27,7 +27,8 @@ intentionally unselected or exactly reused native job may be skipped. `main` req
 ### When native checks run
 
 `scripts/pr_ci.py` selects the native job. A pull request skips it only when every change is in Markdown, `docs/`,
-mod examples, first-party packages, plugins, or the Python and Node `tests/`. Anything else selects it, including
+mod examples, first-party packages, plugins, the Python and Node `tests/`, or the release metadata a release pull
+request writes (`release/changelog.json`, `extensions/index.json`, `runtime/release.lock.json`). Anything else selects it, including
 unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Every change in the
 `runtime/omd/` and `runtime/native/` mirrors selects it, Markdown included, to detect patch drift.
 

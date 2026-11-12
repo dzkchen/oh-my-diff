@@ -69,5 +69,8 @@ run = "python3 scripts/mod_host_check.py"
 [tasks."release"]
 run = "python3 scripts/release.py prepare"
 
+[tasks."release:status"]
+run = "python3 scripts/release.py status"
+
 [tasks."release:check"]
 run = "python3 scripts/release.py check"
