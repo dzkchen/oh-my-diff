@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
 import functools
 import hashlib
 import http.client
@@ -104,6 +105,7 @@ def setup(args):
             git(tree, "tag", base_tag())
             prepare(tree, commit)
         print(run(sys.executable, ROOT / "scripts/apply_runtime_patch.py", tree).decode().strip())
+        record_patch(work)
     if not (tree / "mods").exists():
         (tree / "mods").symlink_to(ROOT / "mods")
     print(tree)
@@ -257,23 +259,41 @@ def patched(tree):
     return {name: sha((tree / name).read_bytes()) if (tree / name).is_file() else None for name in sorted(names)}
 
 
-def refresh(work):
-    tree, applied = work / "codex", work / "applied-patch.json"
-    if git(tree, "rev-parse", "HEAD").decode().strip() != pin()["commit"]:
-        raise SystemExit(f"{tree} is at another upstream pin; set up a tree under a new name")
-    target = {name: hashes["after"] for name, hashes in json.loads((ROOT / "runtime/patches/manifest.json").read_text())["files"].items()}
-    current = patched(tree)
-    if current == target:
-        applied.write_text(json.dumps(target))
-        return "current"
-    if not applied.is_file() or json.loads(applied.read_text()) != current:
-        return "edited"
+def record_patch(work):
+    (work / "applied-patch.json").write_text(json.dumps(patched(work / "codex")))
+
+
+def manifest_files(document):
+    return {name: hashes["after"] for name, hashes in json.loads(document)["files"].items()}
+
+
+def committed_patch(current):
+    commits = run("git", "log", "--format=%H", "-n", "300", "--", "runtime/patches/manifest.json", cwd=ROOT, allowed=(0, 128)).decode().split()
+    return any(manifest_files(run("git", "show", f"{commit}:runtime/patches/manifest.json", cwd=ROOT)) == current for commit in commits)
+
+
+@contextlib.contextmanager
+def replayed(work, tree, scripts=("normalize_upstream_lock.py", "apply_runtime_patch.py")):
     with tempfile.TemporaryDirectory(dir=work, prefix="replay-") as temporary:
         replay = Path(temporary) / "codex"
         run("git", "clone", "--quiet", "--shared", "--no-checkout", tree, replay)
         git(replay, "checkout", "--quiet", "--detach", pin()["commit"])
-        for script in ("normalize_upstream_lock.py", "apply_runtime_patch.py"):
-            run(sys.executable, ROOT / "scripts" / script, replay, cwd=ROOT)
+        outputs = [run(sys.executable, ROOT / "scripts" / script, replay, cwd=ROOT).decode().strip() for script in scripts]
+        yield replay, outputs
+
+
+def refresh(work):
+    tree, applied = work / "codex", work / "applied-patch.json"
+    if git(tree, "rev-parse", "HEAD").decode().strip() != pin()["commit"]:
+        raise SystemExit(f"{tree} is at another upstream pin; set up a tree under a new name")
+    target = manifest_files((ROOT / "runtime/patches/manifest.json").read_text())
+    current = patched(tree)
+    if current == target:
+        applied.write_text(json.dumps(target))
+        return "current"
+    if (json.loads(applied.read_text()) if applied.is_file() else None) != current and not committed_patch(current):
+        return "edited"
+    with replayed(work, tree) as (replay, _):
         for name in sorted(current.keys() | target.keys()):
             source, destination = replay / name, tree / name
             if not source.is_file():
@@ -297,15 +317,18 @@ def dev_refresh(args):
 
 
 def dev_run(args):
+    if unknown := dev_session.unknown(args.enable):
+        raise SystemExit(f"not a first-party mod: {', '.join(unknown)}")
     work = work_dir(args.name)
-    dev_setup(args)
+    setup(args)
     if refresh(work) == "edited":
         print("The tree has native edits that are in no patch; running them on top of the patch it was set up with.")
+    v8(args)
     status = cargo_run(work, work / "logs/dev-run.log", DEV_BUILD)
     if status:
         raise SystemExit(status)
-    store = Path(os.environ.get("OMD_DEV_STORE", work / "store")).resolve()
-    raise SystemExit(dev_session.run(work / "target/debug", store, args.enable, args.codex_args, work / "logs/dev-run-mods.log"))
+    raise SystemExit(dev_session.run(work / "target/debug", (work / "store").resolve(), args.enable, args.codex_args,
+                                     work / "logs/dev-run-mods.log"))
 
 
 def dev_mods(args):
@@ -358,10 +381,9 @@ def sync(args):
     source = work / "codex"
     base = base_tag()
     patch = git(source, "diff", "--binary", "--full-index", "--no-renames", base, "--", "codex-rs")
-    changed = set(git(source, "diff", "--name-only", "--no-renames", base, "--", "codex-rs").decode().splitlines())
+    changed = set(patched(source))
     for name in git(source, "ls-files", "--others", "--exclude-standard", "--", "codex-rs").decode().splitlines():
         patch += git(source, "diff", "--no-index", "--binary", "--full-index", "--", "/dev/null", name, allowed=(0, 1))
-        changed.add(name)
     # Git accepts an empty patch context line; omit its otherwise trailing marker space.
     patch = b"".join(b"\n" if line == b" \n" else line for line in patch.splitlines(keepends=True))
     manifest_path = ROOT / "runtime/patches/manifest.json"
@@ -401,14 +423,8 @@ def sync(args):
                 mirrors += 1
     shutil.copyfile(source / OBSERVER, ROOT / "runtime/native/src/request_observer.rs")
     run(sys.executable, ROOT / "scripts/crate_notices.py", source, cwd=ROOT)
-    checks = {}
-    with tempfile.TemporaryDirectory(dir=work, prefix="replay-") as temporary:
-        replay = Path(temporary) / "codex"
-        run("git", "clone", "--quiet", "--shared", "--no-checkout", source, replay)
-        git(replay, "checkout", "--quiet", "--detach", pin()["commit"])
-        for label, script in (("normalize", "normalize_upstream_lock.py"), ("first_apply", "apply_runtime_patch.py"),
-                              ("second_apply", "apply_runtime_patch.py")):
-            checks[label] = run(sys.executable, ROOT / "scripts" / script, replay, cwd=ROOT).decode().strip()
+    with replayed(work, source, ("normalize_upstream_lock.py", "apply_runtime_patch.py", "apply_runtime_patch.py")) as (replay, outputs):
+        checks = dict(zip(("normalize", "first_apply", "second_apply"), outputs))
         names = tracked(source, "codex-rs")
         if names != tracked(replay, "codex-rs"):
             raise SystemExit("replayed file inventory differs")
@@ -417,6 +433,7 @@ def sync(args):
                 raise SystemExit(f"replayed file differs: {name}")
     report = {"patch_sha256": sha(patch), "patch_bytes": len(patch), "patch_files": len(changed),
               "mirrors_updated": mirrors, **checks, "tree_parity": True, "files_compared": len(names)}
+    record_patch(work)
     print(json.dumps(report))
 
 

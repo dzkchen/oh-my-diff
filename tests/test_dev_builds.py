@@ -116,9 +116,12 @@ class DeveloperBuildTests(unittest.TestCase):
             for name, text in first.items():
                 (tree / name).write_text(text)
             patch(first)
+            for args in (["init", "-q"], ["add", "runtime"], ["commit", "-qm", "patch A"]):
+                subprocess.run(["git", "-c", "user.name=omd", "-c", "user.email=omd@example.invalid", *args], cwd=root, check=True, capture_output=True)
             with mock.patch.object(build, "ROOT", root), mock.patch.object(build, "base_tag", return_value="base"), \
                     mock.patch.object(build, "pin", return_value={"commit": git("rev-parse", "HEAD")}):
                 self.assertEqual(build.refresh(work), "current")
+                (work / "applied-patch.json").unlink()
                 kept = (tree / "codex-rs/kept.rs").stat().st_mtime_ns
                 patch({"codex-rs/kept.rs": "patched", "codex-rs/changed.rs": "second", "codex-rs/added.rs": "second"})
                 self.assertEqual(build.refresh(work), "refreshed")

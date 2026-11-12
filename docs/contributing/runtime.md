@@ -92,21 +92,28 @@ mise run dev:run NAME --enable omd_claude_cli -- --model gpt-6.1-terra
 starts that `codex` on the first-party mods in your checkout. Arguments after `--` go to `codex`. The first build
 of a tree compiles everything; later runs take seconds unless Rust changed.
 
-- The session uses its own mod store, `/private/tmp/omd-bNAME/store` (set `OMD_DEV_STORE` to keep it elsewhere), so
-  your installed OMD and its mods are untouched. It shares your Codex sign-in and settings.
+- The session uses its own mod store, `/private/tmp/omd-bNAME/store`, so your installed OMD and its mods are
+  untouched. It shares your Codex sign-in, `CODEX_HOME` and state database.
 - The store holds a copy of each first-party mod's shipped files in `sources/`, as an installation does. Every
-  mod is trusted. `omd_logo`, `omd_mods`, `omd_statusline` and `omd_tool_lines` start on; turn others on with
-  `--enable ID` or in `/mods`. Your choices persist between runs.
-- Save a mod file and the session loads it at the next turn, without a restart. A mod the host refuses keeps its
-  last working copy; the reason is in `/private/tmp/omd-bNAME/logs/dev-run-mods.log`.
+  mod is trusted. The profile's default mods except `omd_update` start on; turn others on with `--enable ID` or in
+  `/mods`. Your choices persist between runs, and a mod your checkout no longer has is removed from the store.
+- Save a mod file and the session loads it at the next turn, without a restart. A `mod.json` error or a missing file
+  keeps the last copy, with the reason in `/private/tmp/omd-bNAME/logs/dev-run-mods.log`; other load errors, such as
+  a TypeScript error, show in the session.
 - A native edit in the tree needs a restart: quit and run `dev:run` again.
 
-To test someone's pull request, check it out and run it:
+To test someone's pull request, check it out in a separate worktree, so your own branch and uncommitted work stay
+put, and run it there:
 
 ```sh
-gh pr checkout NUMBER
+git worktree add ../omd-pr-NUMBER && cd ../omd-pr-NUMBER && gh pr checkout NUMBER
 mise run dev:run NAME
 ```
+
+`dev:run` runs the pull request's `build.py`, `mise.toml` and build scripts, and trusts every first-party mod with
+every capability it declares, in a session that uses your Codex sign-in. Run only pull requests whose `scripts/`,
+`.github/scripts/`, `mise.toml` and mods you have read. For one that changes the state database, set `CODEX_HOME` to
+a separate folder with your `auth.json` linked in, so a migration doesn't reach your everyday Codex state.
 
 For mod and SDK tests, build just the mod engine and runner:
 
