@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_claude_cli",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "api": "1.0.0",
   "state_version": 1,
   "description": "Claude models through your official Claude CLI login as a Codex provider, with /claude login in the session",
@@ -49,7 +49,8 @@
       "events_v1",
       "package_controls_v1",
       "timers_v1",
-      "app_v1"
+      "app_v1",
+      "package_contributes_v1"
     ],
     "optional_features": ["route_status_v1"]
   },

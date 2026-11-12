@@ -52,7 +52,8 @@
       "credentials_v1",
       "secrets_v1",
       "provider_billing_v1",
-      "app_v1"
+      "app_v1",
+      "package_contributes_v1"
     ],
     "optional_features": ["route_status_v1"]
   }

@@ -69,6 +69,8 @@ Change settings in `/mods`.
 - Plan usage shows no charge. Anthropic bills Console usage, and each request's cost (the CLI's list-price figure)
   counts against your OMD budget and allowance alerts.
 - A request for a model other than the selected one is refused.
+- Claude models are picked in `/model` inside a session; `codex exec` can't run on Claude (see
+  [Switching to a provider's model](../../reference/routes.md#switching-to-a-providers-model)).
 - Requests reach Anthropic labelled `oh-my-diff` instead of as headless CLI traffic, and each one is set up to reuse the
   previous request's prompt cache (Anthropic caches only prompts above a minimum length).
 - Each request starts a fresh CLI process, adding a fraction of a second. A CLI that has not finished 30 minutes after
@@ -77,7 +79,9 @@ Change settings in `/mods`.
 - Earlier reasoning isn't sent back to Claude. Images are forwarded.
 - Setup raises the limit for each subagent (a helper agent the main agent starts for part of a task) in `host.json`
   `worker_limits` to at least 300 requests and a day, within the session's `limits`. Higher values you set are kept.
-  After upgrading, run `/claude login` again to apply them.
+- After the mod updates, the next session re-applies its setup to `host.json` for the accounts you already signed
+  in: the routes, the provider service and these limits, keeping higher limits and other routes you set. It doesn't
+  sign in again or reread the model list; run `/claude login` for that. If it fails, the session says why.
 - After a switch to Claude, OpenAI first rewrites the earlier OpenAI compaction summary as plain text, which costs one
   OpenAI request. If that fails, Claude continues without the summary and a warning shows. OpenAI's encrypted
   reasoning isn't sent.
