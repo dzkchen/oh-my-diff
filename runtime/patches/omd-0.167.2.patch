@@ -201782,10 +201782,10 @@ index 0000000000000000000000000000000000000000..e91dcbc036821600f76a9ace40dd4afb
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..307b2425bb55d3b0934ceeb57d786203ab04d3fc
+index 0000000000000000000000000000000000000000..4ae1ecbd5888842a392d09f05b1628658433b979
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,2616 @@
+@@ -0,0 +1,2618 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -203425,7 +203425,7 @@ index 0000000000000000000000000000000000000000..307b2425bb55d3b0934ceeb57d786203
 +            }
 +            let input = snapshot.input.clone();
 +            let mut retry = false;
-+            let _ = codex_omd::terminal_shared(&runtime, input, active, |terminal, configuration| {
++            let rendered = codex_omd::terminal_shared(&runtime, input, active, |terminal, configuration| {
 +                let current = requests.locked();
 +                if *current != request || !allowed() {
 +                    return;
@@ -203459,7 +203459,9 @@ index 0000000000000000000000000000000000000000..307b2425bb55d3b0934ceeb57d786203
 +                    });
 +                });
 +            });
-+            if !retry || !active() {
++            let superseded =
++                rendered.is_err_and(|error| error.to_string() == "terminal_view_stale");
++            if !(retry || superseded) || !active() {
 +                break;
 +            }
 +        }
