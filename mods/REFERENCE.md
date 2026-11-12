@@ -5944,6 +5944,9 @@ compacts it.
 ##### Switching to a provider's model
 
 - The models get Codex's standard tools: shell, freeform `apply_patch`, tool search and multi-agent v2.
+- They are picked only in `/model`. `codex -m`, `codex exec -m` and the config's default model don't route to the
+  provider: the name goes to OpenAI, which refuses it.
+- While one is selected, OpenAI's prompt to switch to a lower-cost model near the ChatGPT limit doesn't show.
 - Picking one switches the thread to that provider from the next turn.
 - The thread keeps its history, except reasoning another provider produced.
 - Codex replays an item id to the next provider only when the id contains `_`. Give items ids without `_`, and mark

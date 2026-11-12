@@ -62,8 +62,8 @@ Change settings in `/mods`.
 - Plan usage shows no charge. Anthropic bills Console usage, and each request's cost (the CLI's list-price figure)
   counts against your OMD budget and allowance alerts.
 - A request for a model other than the selected one is refused.
-- Claude models are picked in `/model` inside a session. `codex -m` and `codex exec -m` with a Claude model name
-  send it to OpenAI, which refuses it, so `codex exec` can't run on Claude.
+- Claude models are picked in `/model` inside a session; `codex exec` can't run on Claude (see
+  [Switching to a provider's model](../../reference/routes.md#switching-to-a-providers-model)).
 - Requests reach Anthropic labelled `oh-my-diff` instead of as headless CLI traffic, and each one is set up to reuse the
   previous request's prompt cache (Anthropic caches only prompts above a minimum length).
 - Each request starts a fresh CLI process, adding a fraction of a second. A CLI that has not finished 30 minutes after
