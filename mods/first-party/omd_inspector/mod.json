@@ -14,6 +14,6 @@
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_inspector" },
   "capabilities": ["agents", "commands", "contracts", "store", "terminal", "events", "lifecycle"],
   "subscriptions": { "channels": ["omd_inspector/refresh"] },
-  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1"] },
+  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1", "package_contributes_v1"] },
   "settings_schema": { "type": "object", "properties": {}, "additionalProperties": false }
 }

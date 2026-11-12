@@ -14,7 +14,7 @@ copies by hand. For the directory contents, see [runtime/README.md](../../runtim
 
 OMD is one patch on upstream Codex. These files are generated, so never edit them directly:
 
-- `runtime/patches/omd-0.167.0.patch` and `runtime/patches/manifest.json`
+- `runtime/patches/omd-0.167.1.patch` and `runtime/patches/manifest.json`
 - `runtime/omd` and `runtime/native`, copies of the `codex-rs/omd` and `codex-rs/ext/omd` crates the patch adds
 - `runtime/native/src/request_observer.rs`, a copy of the patched `codex-rs/codex-api/src/request_observer.rs`
 - `runtime/crate-notices.txt`
@@ -43,9 +43,9 @@ to the upstream pin, use a new name. Keep each tree and target exclusive to one 
 - The build target is `/private/tmp/omd-bNAME/target`. Set `OMD_WORK_ROOT` to use another directory instead of
   `/private/tmp`.
 - The tree's `mods/` is a link to your checkout, so edits to mods there are ordinary edits.
-- The tree's `normalized<version>` tag is the pinned upstream source without the patch. On Codex `0.167.0` it is
-  `normalized1670`. List it with `git -C TREE tag -l 'normalized*'` and compare a path with
-  `git -C TREE diff normalized1670 -- codex-rs/PATH`.
+- The tree's `normalized<version>` tag is the pinned upstream source without the patch. On Codex `0.167.1` it is
+  `normalized1671`. List it with `git -C TREE tag -l 'normalized*'` and compare a path with
+  `git -C TREE diff normalized1671 -- codex-rs/PATH`.
 
 The [runtime README](../../runtime/README.md#crates) lists the crates the patch adds. Rust tests are beside the code
 in `*_tests.rs` files.

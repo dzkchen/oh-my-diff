@@ -313,7 +313,7 @@ def update_acceptance(archive, version, upstream):
                                    "--bin-dir", base / "bin", "--upstream", codex], env=env)
 
         def installed(codex, expected):
-            status = json.loads(installer(codex, "status"))["profile"]
+            status = json.loads(installer(codex, "status", "--json"))["profile"]
             if status["version"] != expected or any(item["error"] or not item["pinned_source_current"] for item in status["packages"]):
                 raise ValueError(f"expected a healthy {expected} installation:\n{json.dumps(status, indent=2)}")
 

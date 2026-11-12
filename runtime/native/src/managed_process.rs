@@ -1097,7 +1097,7 @@ impl ManagedProcesses {
                     let announced = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     if let Some(notifier) = notifier.clone() {
                         let (announced, owner, session, reaped) = (
-                            announced.clone(),
+                            announced,
                             owner.clone(),
                             session.clone(),
                             Arc::clone(&reaped),
