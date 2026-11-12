@@ -1,8 +1,8 @@
 import type { Json, ModAPI, TerminalComponent, TerminalPatch, TerminalTone } from '../../api.d.ts';
 
 type Release = { version: string; prerelease?: boolean; notes?: string; page?: string; user_mods?: string[]; mod_api?: string };
-type Mods = { omd: string; serial: number; changed?: string[]; notes?: string; page?: string };
-type Changes = { retired?: string[]; left_off?: string[]; capabilities?: Record<string, string[]>; catalog_updated?: string[]; needs_review?: string[] };
+type Mods = { omd: string; serial: number; changed?: string[]; added?: string[]; notes?: string; page?: string };
+type Changes = { retired?: string[]; left_off?: string[]; capabilities?: Record<string, string[]>; catalog_updated?: string[]; needs_review?: string[]; added?: string[]; kept?: string[]; refused?: string[] };
 type Info = {
   installed?: string; checked_at?: number | null; available?: Release | null; blocked?: { version: string; reasons?: string[] } | null;
   error?: string | null; pending?: { version: string } | null; failed?: { version: string; error?: string; at: number } | null;
@@ -34,7 +34,15 @@ export default function activate(api: ModAPI) {
     ...(Object.keys(value?.capabilities ?? {}).length ? [`New permissions: ${Object.entries(value?.capabilities ?? {}).map(([name, added]) => `${visible(name, 64)} (${names(added)})`).join('; ')}.`] : []),
     ...(value?.catalog_updated?.length ? [`Updated mods you installed from the catalog: ${names(value.catalog_updated)}.`] : []),
     ...(value?.needs_review?.length ? [`These installed mods need your review before they update; run omd mods update ID for each: ${names(value.needs_review)}.`] : []),
+    ...(value?.added?.length ? [`New mods, off until you install them (omd install ID or /mods): ${names(value.added)}.`] : []),
+    ...(value?.kept?.length ? [`Kept the new mods you installed from this update: ${names(value.kept)}.`] : []),
+    ...(value?.refused?.length ? [`These mods need a newer Oh My Diff and wait for the next release: ${names(value.refused)}.`] : []),
   ].join(' ');
+  const out = (mods: Mods | null | undefined) => {
+    const updates = (mods?.changed ?? []).filter(name => !(mods?.added ?? []).includes(name));
+    return [...(updates.length ? [`Updates to first-party mods are out: ${names(updates)}.`] : []),
+      ...(mods?.added?.length ? [`New first-party mods are out: ${names(mods.added)}.`] : [])].join(' ');
+  };
   const modKey = (mods: Mods) => `mods-${mods.omd}-${mods.serial}`;
   const same = (mods: Mods, other?: { omd?: string; serial: number } | null) => other?.omd === mods.omd && other.serial === mods.serial;
   const offer = (state: Saved, info: Info | null) => info?.available?.version ?? (info?.mods && (setting(state, 'auto') !== 'on'
@@ -62,14 +70,17 @@ export default function activate(api: ModAPI) {
     if (info?.failed && info.failed.at > state.seen) banner.push(`The update to Oh My Diff ${visible(info.failed.version, 40)} failed and nothing changed. /update shows why.`);
     if (info?.last && info.last.at > state.seen) banner.push(`Oh My Diff was updated from ${visible(info.last.from, 40)} to ${visible(info.last.to, 40)}. ${changes(info.last)}`.trim());
     if (info?.failed_mods && info.failed_mods.at > state.seen) banner.push('The first-party mod update failed and nothing changed. /update shows why.');
-    if (info?.last_mods && info.last_mods.at > state.seen) banner.push(`First-party mods were updated: ${names(info.last_mods.changed)}. ${changes(info.last_mods)}`.trim());
+    if (info?.last_mods && info.last_mods.at > state.seen) {
+      banner.push([...(info.last_mods.changed?.length ? [`First-party mods were updated: ${names(info.last_mods.changed)}.`] : []), changes(info.last_mods)]
+        .filter(Boolean).join(' ') || 'The mod directory was updated.');
+    }
     const offered = offer(state, info);
     const due = offered && setting(state, 'checks') !== 'off' && state.skipped !== offered
       && !(state.snoozed?.version === offered && now < state.snoozed.until)
       && !(state.shown?.version === offered && now - state.shown.at < DAY);
     if (due) banner.push(!available ? (info?.mods && same(info.mods, info.pending_mods)
       ? `Updates to first-party mods (${names(info.mods.changed)}) are downloaded and install the next time OMD starts with no other session open.`
-      : `Updates to first-party mods are out: ${names(info?.mods?.changed)}. Run omd update in a shell, or /update.`)
+      : `${out(info?.mods)} Run omd update in a shell, or /update.`)
       : info?.pending?.version === available.version
       ? `Oh My Diff ${visible(available.version, 40)} is downloaded and installs the next time OMD starts with no other session open.`
       : `Oh My Diff ${visible(available.version, 80)}${available.prerelease ? ' (prerelease)' : ''} is out; you have ${visible(info?.installed, 80)}. Run omd update in a shell, or /update for the notes.`);
@@ -140,7 +151,7 @@ export default function activate(api: ModAPI) {
     button('skip', 'Skip this version'),
   ];
   const modUpdates = (info: Info, mods: Mods): TerminalComponent[] => [
-    line('mods_out', 'Mod updates', `Updates to first-party mods are out: ${names(mods.changed)}. Your Oh My Diff version stays the same.`, 'accent', 3),
+    line('mods_out', 'Mod updates', `${out(mods)} Your Oh My Diff version stays the same.`, 'accent', 3),
     ...(same(mods, info.pending_mods) ? [line('mods_pending', 'Downloaded', 'Downloaded and verified; they install the next time OMD starts with no other session open.', 'success', 2)] : []),
     ...(same(mods, info.held_mods) ? [line('mods_held', 'Rolled back', 'You rolled these back; automatic updates skip them. Choose Update mods to install them again.', 'muted', 2)] : []),
     ...(mods.notes ? [line('mods_notes', 'Notes', mods.notes, 'normal', 8)] : []),

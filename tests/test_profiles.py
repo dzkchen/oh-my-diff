@@ -896,7 +896,8 @@ enabled = true
                 (bundle / "sources/one/index.ts").write_text("new")
                 before = state()
                 self.assertEqual(profiles.update_mods(prefix, base / "bin", bundle, 1),
-                                 {"updated": ["catalogued", "one"], "added": ["added"], "needs_review": [], "capabilities": {"one": ["new"]}})
+                                 {"updated": ["catalogued", "one"], "added": ["added"], "kept": [], "refused": [], "needs_review": [],
+                                  "capabilities": {"one": ["new"]}})
                 self.assertEqual(state(), ({"one": "new", "two": "same", "catalogued": "new"}, "new",
                                            {"one": "sha-new", "two": "sha-same", "catalogued": "sha-new", "added": "sha-new"},
                                            "sha-new", {"serial": 1}, True, "sha-new"))
@@ -911,7 +912,8 @@ enabled = true
                 self.assertEqual(json.loads((prefix / "install.json").read_text())["management"]["files"]["runtime/mods.lock.json"],
                                  profiles.support.digest(prefix / "management/runtime/mods.lock.json"))
                 self.assertEqual(profiles.rollback_mods(prefix, base / "bin"),
-                                 {"updated": ["catalogued", "one"], "added": [], "needs_review": [], "capabilities": {"one": ["old"]}})
+                                 {"updated": ["catalogued", "one"], "added": [], "kept": [], "refused": [], "needs_review": [],
+                                  "capabilities": {"one": ["old"]}})
                 self.assertEqual(state(), before)
                 self.assertFalse((prefix / "sources/added").exists())
                 self.assertEqual(sorted(json.loads((store / "package-index.json").read_text())["packages"]), ["catalogued"])
@@ -946,6 +948,44 @@ enabled = true
                         profiles.update_mods(prefix, base / "bin", bundle, 1)
                 self.assertEqual(state(), before)
                 self.assertFalse((prefix / "mods-previous").exists())
+
+                def refusing(manager, command, target, *arguments):
+                    if command == "inspect" and Path(target).name == "added":
+                        raise RuntimeError("unknown manifest field")
+                    return invoke(manager, command, target, *arguments)
+                with patch.object(profiles, "invoke", side_effect=refusing):
+                    result = profiles.update_mods(prefix, base / "bin", bundle, 1)
+                self.assertEqual((result["updated"], result["added"], result["refused"]), (["catalogued", "one"], [], ["added"]))
+                self.assertEqual(json.loads((prefix / "install.json").read_text())["mods_refused"], {"added": "sha-new"})
+                self.assertNotIn("added", json.loads((prefix / "management/runtime/mods.lock.json").read_text())["packages"])
+                profiles.rollback_mods(prefix, base / "bin")
+                profiles.update_mods(prefix, base / "bin", bundle, 1)
+                self.assertEqual(json.loads((prefix / "install.json").read_text())["mods_refused"], {})
+
+                def installed_new(manager, command, target, *arguments):
+                    if command == "package-lock":
+                        return {"packages": {"catalogued": dict(packaged), "added": packaged | {"source": {"kind": "package", "id": "added"}}}}
+                    return invoke(manager, command, target, *arguments)
+                with patch.object(profiles, "invoke", side_effect=installed_new):
+                    self.assertEqual(profiles.rollback_mods(prefix, base / "bin")["kept"], ["added"])
+                self.assertEqual((prefix / "sources/added/index.ts").read_text(), "new")
+                self.assertIn("added", json.loads((store / "package-index.json").read_text())["packages"])
+
+    def test_catalog_shelves_no_release_backup_or_store_index_uses_are_pruned(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            for shelf in ("one/a", "one/b", "one/c", "two/d", "two/e"):
+                (root / "catalog" / shelf).mkdir(parents=True)
+            release = root / "releases" / ("1" * 32) / "prefix"
+            (release / "management/runtime").mkdir(parents=True)
+            (release / "management/runtime/mods.lock.json").write_text(json.dumps({"packages": {"one": {"package_sha256": "a"}}}))
+            (release / "mods-previous").mkdir()
+            (release / "mods-previous/mods.lock.json").write_text(json.dumps({"packages": {"one": {"package_sha256": "b"}}}))
+            (root / "stores/full").mkdir(parents=True)
+            (root / "stores/full/package-index.json").write_text(json.dumps({"packages": {
+                "two": [{"source": {"kind": "local", "path": str(root / "catalog/two/d")}}], "third": [{"source": {"kind": "repository"}}]}}))
+            profiles.prune_shelves(root)
+            self.assertEqual(sorted(str(path.relative_to(root / "catalog")) for path in root.glob("catalog/*/*")), ["one/a", "one/b", "two/d"])
 
     def test_a_catalog_copy_that_needs_approval_or_fails_to_plan_is_left_for_review(self):
         index = "/store/package-index.json"

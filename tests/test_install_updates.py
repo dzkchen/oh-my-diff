@@ -723,8 +723,10 @@ class UpdateSelection(unittest.TestCase):
     def test_a_built_mod_bundle_extracts_with_the_installer_and_matches_its_manifest(self):
         from scripts import mods_bundle
         planned = {"omd": "0.1.0", "serial": 4, "changed": ["omd_update"], "bundle": ["omd_update"], "new": ["omd_update"],
-                   "added": [], "needs_host": {}, "needs_release": [], "api_changed": [], "commits": ["abc fix"]}
-        with patch.object(mods_bundle, "plan", return_value=planned):
+                   "added": [], "needs_host": {}, "needs_release": [], "api_changed": [], "commits": ["abc fix"], "features": []}
+        with patch.object(mods_bundle, "plan", return_value=planned), patch.object(
+                mods_bundle, "directory", side_effect=lambda _version, _features, listed, first_party: {
+                    identifier: entries for identifier, entries in listed.items() if identifier not in first_party}):
             manifest = mods_bundle.build(self.root / "bundle", "c" * 40)
         self.assertEqual(list(manifest["packages"]), ["omd_update"])
         archive = self.root / "bundle" / manifest["archive"]
@@ -1120,6 +1122,11 @@ class UpdateSelection(unittest.TestCase):
                              if carried else [])
 
     def test_update_uninstall_and_status_print_text_unless_json_is_asked_for(self):
+        self.assertEqual(self.module.update_text("now", {"mods_updated": [], "added": ["omd_new"]}),
+                         "New mods, off until you install them (omd install ID or /mods): omd_new.")
+        self.assertEqual(self.module.update_text("now", {"mods_updated": [], "refused": ["omd_new"]}),
+                         "These mods need a newer Oh My Diff and wait for the next release: omd_new.")
+        self.assertEqual(self.module.update_text("now", {"mods_updated": []}), "Updated the mod directory.")
         changes = {"retired": ["omd_old"], "left_off": ["omd_new"], "capabilities": {"omd_git": ["exec", "network"]}}
         self.assertEqual(self.module.update_text("now", {"active": "/g", "version": "0.2.0", "profile_label": "OMD+", "changes": changes}),
                          "Oh My Diff 0.2.0 (OMD+) is installed. Restart codex to use it.\nRetired and turned off: omd_old.\n"
