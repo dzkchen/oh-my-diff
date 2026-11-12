@@ -31,7 +31,8 @@
       "state_scopes_v1",
       "store_thread_v1",
       "store_v1",
-      "ui_controls_v1"
+      "ui_controls_v1",
+      "package_contributes_v1"
     ]
   },
   "settings_schema": {
