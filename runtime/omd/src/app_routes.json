@@ -1799,6 +1799,7 @@
   "features.incremental_exec_tools",
   "features.incremental_tools",
   "features.incremental_tools_legacy",
+  "features.incremental_tools_legacy_gcp",
   "features.instant_interrupt",
   "features.interrupt_on_cancel",
   "features.item_ids",

@@ -21,7 +21,7 @@ before a task can finish.
 ## `omd`
 
 Run `omd` with no arguments for a short summary, `omd help --all` for every command and flag, or `omd --version`
-(`-V`) for the OMD, Codex and mod API versions, for example `oh-my-diff 1.5.1 (Codex 0.167.1, mod API 1.0.0)`.
+(`-V`) for the OMD, Codex and mod API versions, for example `oh-my-diff 1.5.2 (Codex 0.167.2, mod API 1.0.0)`.
 
 ### Mods
 
