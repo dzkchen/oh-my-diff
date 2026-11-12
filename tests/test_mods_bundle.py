@@ -46,7 +46,7 @@ class Plan(unittest.TestCase):
                                                                                 for key, value in tags[tag]["packages"].items()}),
                   patch.object(mods_bundle, "released_manifests", return_value=[{"compatibility": {"required_features": ["x_v1"]}}]),
                   patch.object(mods_bundle, "git", side_effect=lambda *args: {"tag": " ".join(["v1.0.0", *tags]),
-                                                                             "log": log if "--first-parent" in args else ""}.get(args[0], ""))):
+                                                                             "log": (log(args) if callable(log) else log) if "--first-parent" in args else ""}.get(args[0], ""))):
                 return mods_bundle.automatic(exclude) if auto else mods_bundle.plan(exclude)
 
     def test_a_revert_ships_as_the_next_bundle_and_nothing_new_is_refused(self):
@@ -119,8 +119,8 @@ class Plan(unittest.TestCase):
         self.assertEqual(sorted(changed - accepted), ['capabilities[]="brand_new"', "services.imports[].y"])
 
     def test_mods_changed_together_with_the_host_wait_for_review(self):
-        log = "\0abc1234\n\nruntime/omd/src/mods.rs\nmods/first-party/b/index.ts\nruntime/mods.lock.json\n" \
-              "\0def5678\n\nmods/first-party/a/index.ts\nruntime/mods.lock.json\n"
+        log = "\0abc1234 p0\x01fix(b): use the host\n\nruntime/omd/src/mods.rs\nmods/first-party/b/index.ts\nruntime/mods.lock.json\n" \
+              "\0def5678 p0\x01fix(a): x\n\nmods/first-party/a/index.ts\nruntime/mods.lock.json\n"
         manifests = {identifier: {"compatibility": {"required_features": []}} for identifier in "ab"}
         planned = self.plan(lock(a="a1", b="b1"), {}, features=(), manifests=manifests, log=log)
         self.assertEqual(planned["needs_runtime"], {"b": ["abc1234"]})
@@ -128,6 +128,16 @@ class Plan(unittest.TestCase):
             mods_bundle.build(Path("/nonexistent"), "c" * 40)
         planned = self.plan(lock(a="a1", b="b1"), {}, features=(), manifests=manifests, log=log, auto=True)
         self.assertEqual((planned["bundle"], planned["excluded"], planned["needs_runtime"]), (["a"], ["b"], {}))
+
+    def test_a_pull_merge_counts_each_change_it_brought_in_on_its_own(self):
+        def log(args):
+            if "p2" in args:
+                return "\0abc1234 p0\x01fix(a): x\n\nmods/first-party/a/index.ts\n\0def5678 p0\x01fix(runtime): y\n\nruntime/omd/src/mods.rs\n"
+            return ("\0aaa1111 p1 p2\x01Merge branch 'main' of https://github.com/o/r\n\nruntime/omd/src/mods.rs\nmods/first-party/a/index.ts\n"
+                    "\0bbb2222 q1 q2\x01Merge pull request #5 from o/b\n\nruntime/omd/src/mods.rs\nmods/first-party/b/index.ts\n")
+        manifests = {identifier: {"compatibility": {"required_features": []}} for identifier in "ab"}
+        planned = self.plan(lock(a="a1", b="b1"), {}, features=(), manifests=manifests, log=log)
+        self.assertEqual(planned["needs_runtime"], {"b": ["bbb2222"]})
 
     def test_an_automatic_run_with_nothing_to_ship_succeeds_without_a_bundle(self):
         nothing = {"omd": "1.0.0", "new": [], "excluded": [], "api_changed": []}
