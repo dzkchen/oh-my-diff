@@ -206128,10 +206128,10 @@ index 0000000000000000000000000000000000000000..a1d4f8b2d92f6def27cd380740c5e54b
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..aee114252bfd33a143ac7f9fe1e90c03a384f72a
+index 0000000000000000000000000000000000000000..ace26eb726c1186cc77b6a4de629e520a5ca3558
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1281 @@
+@@ -0,0 +1,1280 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -207298,8 +207298,7 @@ index 0000000000000000000000000000000000000000..aee114252bfd33a143ac7f9fe1e90c03
 +        }
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
 +        "model.complete" | "model.fork" | "session.info" | "tools.list" | "routes.list"
-+        | "routes.status"
-+        | "turns.abort" | "events.schedule" | "events.cancel" => {
++        | "routes.status" | "turns.abort" | "events.schedule" | "events.cancel" => {
 +            let thread = scope
 +                .thread
 +                .map(str::to_owned)
