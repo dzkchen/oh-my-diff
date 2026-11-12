@@ -781,7 +781,10 @@ fn select_route(lead: &Lead, caller: &str, arguments: Value) -> Result<Value, St
         .lock()
         .map_err(|_| "route_selection_poisoned")?
         .insert(lead.thread.to_string(), (route.name.clone(), persistent));
-    Ok(json!({"route": operations::route_info(&lead.host, route), "effective_at": "next_request"}))
+    let statuses = lead.host.route_status.snapshot();
+    Ok(
+        json!({"route": operations::route_info(&lead.host, route, &statuses), "effective_at": "next_request"}),
+    )
 }
 
 static SELECTIONS: Mutex<BTreeMap<String, (String, bool)>> = Mutex::new(BTreeMap::new());

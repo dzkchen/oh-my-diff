@@ -18,27 +18,43 @@ fn config() -> HostConfig {
 #[test]
 fn only_the_provider_mod_publishes_bounded_status() {
     let config = config();
-    let work = config.routes.iter().find(|r| r.name == "status-work").unwrap();
-    assert_eq!(latest(work), Value::Null);
-    let published = publish(&config, "fixture_mod", json!({"route": "status-work", "installed": true,
+    let work = config
+        .routes
+        .iter()
+        .find(|r| r.name == "status-work")
+        .unwrap();
+    let host = Published::default();
+    let published = host.publish(&config, "fixture_mod", json!({"route": "status-work", "installed": true,
         "signed_in": false, "models": ["a"], "usage": [{"label": "5h", "used_percent": 42.5, "resets_at": 1}]}))
     .unwrap();
-    let status = latest(work);
+    let status = latest(&host.snapshot(), work);
     assert_eq!(status["checked_at"], published["checked_at"]);
     assert_eq!(status["signed_in"], false);
     assert_eq!(status["usage"][0]["used_percent"], 42.5);
     assert_eq!(status.get("route"), None);
 
     assert_eq!(
-        publish(&config, "other_mod", json!({"route": "status-work", "installed": true, "signed_in": true})),
+        host.publish(
+            &config,
+            "other_mod",
+            json!({"route": "status-work", "installed": true, "signed_in": true})
+        ),
         Err("route_status_not_provider: status-work".into())
     );
     assert_eq!(
-        publish(&config, "fixture_mod", json!({"route": "status-other", "installed": true, "signed_in": true})),
+        host.publish(
+            &config,
+            "fixture_mod",
+            json!({"route": "status-other", "installed": true, "signed_in": true})
+        ),
         Err("route_status_not_provider: status-other".into())
     );
     assert_eq!(
-        publish(&config, "fixture_mod", json!({"route": "missing", "installed": true, "signed_in": true})),
+        host.publish(
+            &config,
+            "fixture_mod",
+            json!({"route": "missing", "installed": true, "signed_in": true})
+        ),
         Err("route_not_configured: missing".into())
     );
     for invalid in [
@@ -47,6 +63,28 @@ fn only_the_provider_mod_publishes_bounded_status() {
         json!({"route": "status-work", "installed": true, "signed_in": true, "detail": "x".repeat(257)}),
         json!({"route": "status-work", "installed": true, "signed_in": true, "extra": 1}),
     ] {
-        assert_eq!(publish(&config, "fixture_mod", invalid), Err("route_status_invalid".into()));
+        assert_eq!(
+            host.publish(&config, "fixture_mod", invalid),
+            Err("route_status_invalid".into())
+        );
     }
+}
+
+#[test]
+fn each_host_keeps_its_own_status() {
+    let config = config();
+    let work = config
+        .routes
+        .iter()
+        .find(|r| r.name == "status-work")
+        .unwrap();
+    let (one, other) = (Published::default(), Published::default());
+    one.publish(
+        &config,
+        "fixture_mod",
+        json!({"route": "status-work", "installed": true, "signed_in": true}),
+    )
+    .unwrap();
+    assert_eq!(latest(&one.snapshot(), work)["signed_in"], true);
+    assert_eq!(latest(&other.snapshot(), work), Value::Null);
 }

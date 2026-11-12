@@ -4,6 +4,7 @@ import { appendFile, lstat, mkdir, readFile, rename, writeFile } from 'node:fs/p
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { claim, handoff } from './handoff.mjs';
+import { limitFamily } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
 export const SDK_VERSION = '1.0.35';
@@ -205,7 +206,7 @@ export function planHeaders(plan, account = 'default') {
   const included = Number(plan?.plan_usage?.includedSpend);
   if (!Number.isFinite(spent) || !(included > 0)) return {};
   const [start, end] = [Number(plan.billing_cycle_start), Number(plan.billing_cycle_end)];
-  const family = account === 'default' ? 'cursor' : `cursor-${account}`;
+  const family = limitFamily(account);
   return { [`x-${family}-limit-name`]: account === 'default' ? 'Cursor' : `Cursor (${account})`, [`x-${family}-primary-used-percent`]: String(Math.round(spent / included * 10000) / 100),
     ...start > 0 && end > start ? { [`x-${family}-primary-window-minutes`]: String(Math.round((end - start) / 60_000)) } : {},
     ...end > 0 ? { [`x-${family}-primary-reset-at`]: String(Math.round(end / 1000)) } : {} };

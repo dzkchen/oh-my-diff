@@ -29,6 +29,7 @@ several accounts. [Manage mods](../../../docs/manage-mods.md) covers the other w
 | `/model` | Pick a Claude model; the thread switches provider from its next turn and keeps its history |
 
 An account `NAME` starts with a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 24 characters.
+Two accounts can't differ only by `_` and `-` (`my_team` and `my-team`), because Codex gives them one usage limit.
 For example, `/claude login work` signs in a second account, whose models appear in `/model` as
 `claude-opus-5-5.work`.
 
@@ -45,8 +46,9 @@ naming `/claude login`.
 Each account's route (`claude`, `claude-NAME`) publishes its status: whether the CLI is installed and supported, whether
 the account is signed in, its models, its latest 5-hour and weekly usage, and why it can't be used. `/profile` shows
 it and the subagent router skips an account that isn't usable. The mod checks a second after start and then every 10
-minutes while the last check is older than that, after `/claude`, and after a login or removal. The version check
-stops after 4 s and each sign-in check after 10 s.
+minutes while the status this OMD process last published is older than that, after `/claude`, and after a login or
+removal; on a host without route status it doesn't check. The version check and each sign-in check stop after 10 s. A
+usage window without a reset time lasts until the next check.
 
 OMD never switches between plan limits and API credits on its own. The choice is stored and changes only when you run
 `/claude login` or `/claude login api` again.

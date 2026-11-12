@@ -998,4 +998,13 @@ test('profile routes publish their sign-in status and /profile list shows every 
   assert.match(lines.find(line => line.includes(' work ')), /signed in · 1 model · checked just now/);
   assert.match(lines.find(line => line.includes(' spare ')), / · its sign-in is missing; run \/profile refresh spare · /);
   assert.match(lines.find(line => line.includes('claude-work')), / · not signed in; run \/claude login work · 2 models · 5h 42% · checked 2m ago/);
+  claude.status.detail = 'x'.repeat(256);
+  calls.length = 0;
+  invoke(state, 'command', '', 'profile');
+  const items = calls.find(call => call.operation === 'terminal.panel').args.items;
+  assert.ok(items.every(item => Buffer.byteLength(item.description) <= 256), 'a long route status still fits the panel');
+  calls.length = 0;
+  invoke({ ...state, current: 'work' }, 'app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: { limitId: 'codex', primary: { usedPercent: 95, windowDurationMins: 300, resetsAt: 2_000 } } } });
+  assert.deepEqual(calls.filter(call => call.operation === 'routes.status').map(call => call.args), [{ route: 'work', installed: true, signed_in: true, models: ['work'],
+    usage: [{ label: '5h', used_percent: 95, window_minutes: 300, resets_at: 2_000_000 }] }], 'a ChatGPT profile reports its own codex usage on its route');
 });

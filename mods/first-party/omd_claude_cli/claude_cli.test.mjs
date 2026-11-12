@@ -871,9 +871,22 @@ test('each account publishes its route status, and its own rate-limit family ref
   assert.deepEqual(probed.calls.filter(call => call.operation === 'routes.status').map(call => call.arguments), [
     { route: 'claude', installed: true, signed_in: true, version: CLI_VERSION, models: ['claude-opus-5-5'] },
     { route: 'claude-work', installed: true, signed_in: false, version: CLI_VERSION, models: ['claude-opus-5-5.work'], detail: 'not signed in; run /claude login work' }]);
-  assert.equal(probed.state.probed_at, clock, 'the probe time is kept apart from the status checked_at a usage republish refreshes');
   const timed = modEvent('command', '', { accounts, models, published: true }, call => call.operation === 'exec.run' ? { exit_code: 0, stdout: '{}', stderr: '' } : {}, 'claude');
-  assert.equal(timed.calls.find(call => call.operation === 'exec.run').arguments.timeout_ms, 25_000, 'the probe run outlasts its version and per-account sign-in checks');
+  assert.equal(timed.calls.find(call => call.operation === 'exec.run').arguments.stdin.includes("run(['--version'], '')"), true, 'the version check keeps the full sign-in timeout');
+  assert.equal(timed.calls.find(call => call.operation === 'exec.run').arguments.timeout_ms, 39_000, 'the probe run outlasts its version and per-account sign-in checks with room to start and stop');
+  const seen = { installed: true, signed_in: true, version: CLI_VERSION, models: ['claude-opus-5-5'] };
+  const timer = (routes, exec = { exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [signedIn, signedIn] }), stderr: '' }) =>
+    modEvent('timer', { key: 'probe' }, { accounts, models, published: true }, call => call.operation === 'routes.list' ? routes : call.operation === 'exec.run' ? exec : {});
+  const ran = (routes) => timer(routes).calls.some(call => call.operation === 'exec.run');
+  assert.equal(ran(['claude', 'claude-work'].map(name => ({ name, status: { ...seen, checked_at: clock - 60_000 } }))), false, 'statuses this process checked recently skip the probe');
+  assert.equal(ran(['claude', 'claude-work'].map(name => ({ name, status: { ...seen, checked_at: clock - 11 * 60_000 } }))), true, 'freshness comes from this process, not state another process shares');
+  const legacy = timer([{ name: 'claude' }, { name: 'claude-work' }]);
+  assert.equal(legacy.calls.some(call => ['exec.run', 'events.schedule', 'routes.status'].includes(call.operation)), false, 'a host without route status runs no probe and ends the timer chain');
+  const carried = timer(['claude', 'claude-work'].map(name => ({ name, status: { ...seen, checked_at: 1, usage: [
+    { label: '5h', used_percent: 50, window_minutes: 300, resets_at: clock + 60_000 }, { label: '7d', used_percent: 95, window_minutes: 10080, resets_at: null },
+    { label: 'old', used_percent: 100, window_minutes: 300, resets_at: clock - 1 }] } })));
+  assert.deepEqual(carried.calls.filter(call => call.operation === 'routes.status').map(call => call.arguments.usage.map(slot => slot.label)), [['5h'], ['5h']],
+    'a probe carries forward only windows that have not reset, never one whose age it cannot tell');
   const missing = modEvent('command', '', { accounts: [accounts[0]], models, published: true }, call => call.operation === 'exec.run'
     ? { exit_code: 0, stdout: JSON.stringify({ version: null, auth: [null] }), stderr: '' } : {}, 'claude');
   const [absent] = missing.calls.filter(call => call.operation === 'routes.status').map(call => call.arguments);
@@ -885,6 +898,22 @@ test('each account publishes its route status, and its own rate-limit family ref
   const updated = modEvent('app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: limits } }, { accounts, models }, call => call.operation === 'routes.list' ? routes : {});
   assert.deepEqual(updated.calls.filter(call => call.operation === 'routes.status').map(call => call.arguments), [{ route: 'claude-work', installed: true, signed_in: true, version: CLI_VERSION,
     models: ['claude-opus-5-5.work'], usage: [{ label: '5h', used_percent: 42, window_minutes: 300, resets_at: 1_900_000_000_000 }, { label: '7d', used_percent: 7, window_minutes: 10080, resets_at: null }] }], 'a republish sends no null fields');
+  const recovered = modEvent('app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: limits } }, { accounts, models },
+    call => call.operation === 'routes.list' ? [{ name: 'claude-work', status: { ...current, signed_in: false, detail: 'not signed in; run /claude login work' } }] : {});
+  const { signed_in, detail } = recovered.calls.find(call => call.operation === 'routes.status').arguments;
+  assert.deepEqual([signed_in, detail], [true, undefined], 'a rate-limit update clears a stale sign-in problem');
+  const merged = modEvent('app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: { limitId: 'claude_work', primary: limits.primary } } }, { accounts, models },
+    call => call.operation === 'routes.list' ? [{ name: 'claude-work', status: { ...current, usage: [{ label: '7d', used_percent: 95, window_minutes: 10080, resets_at: 1_900_000_000_000 }] } }] : {});
+  assert.deepEqual(merged.calls.find(call => call.operation === 'routes.status').arguments.usage.map(slot => slot.label), ['5h', '7d'], 'an update without the 7d header keeps the stored 7d window');
+  const underscored = [...accounts, { name: 'my_team', billing: 'subscription', config_dir: '/accounts/my_team', models: 1 }];
+  const team = modEvent('app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: { ...limits, limitId: 'claude_my_team' } } }, { accounts: underscored, models },
+    call => call.operation === 'routes.list' ? [{ name: 'claude-my_team', status: current }] : {});
+  assert.equal(team.calls.find(call => call.operation === 'routes.status')?.arguments.route, 'claude-my_team');
+  assert.deepEqual(Object.keys(limitHeaders({ 'anthropic-ratelimit-unified-5h-utilization': '0.5' }, 'note', 'my_team')).filter(key => key.includes('used')), ['x-claude-my-team-primary-used-percent'],
+    'Codex reads the family back with _ as -');
+  const twin = modEvent('channel', { channel: 'omd_claude_cli/login', data: { billing: 'subscription', account: 'my-team' } }, { accounts: underscored, models }, () => ({}));
+  assert.match(notices(twin.calls).join('\n'), /would share usage limits with account my_team/);
+  assert.equal(twin.calls.some(call => call.operation === 'exec.run'), false);
   const other = modEvent('app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: { ...limits, limitId: 'claude' } } }, { accounts, models }, call => call.operation === 'routes.list' ? [] : {});
   assert.equal(other.calls.filter(call => call.operation === 'routes.status').length, 0, 'an account never probed keeps no usage-only status');
   assert.deepEqual(Object.keys(limitHeaders({ 'anthropic-ratelimit-unified-5h-utilization': '0.5' }, 'note', 'work')).sort(),

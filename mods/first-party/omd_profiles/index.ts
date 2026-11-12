@@ -16,6 +16,8 @@ const SIZES = [128_000, 200_000, 272_000, 400_000, 1_000_000];
 const LOCAL_SIZES = [4096, 8192, 32_768, 131_072];
 const NODE_MISSING = 'Node.js was not found on PATH. Install it (brew install node, or from nodejs.org), restart OMD, then try again.';
 const PANEL = { command: 'omd_profiles:profile', args: 'panel' };
+const utf8 = new TextEncoder();
+const clip = (text: string, max: number) => text.slice(0, utf8.encodeInto(text, new Uint8Array(max)).read);
 const PROVIDERS: Record<string, { label: string; family: string; prefix: string }> = {
   omd_claude_cli: { label: 'Claude', family: 'claude', prefix: 'claude' },
   omd_cursor: { label: 'Cursor', family: 'cursor', prefix: 'cursor' },
@@ -100,21 +102,25 @@ export default function activate(api: ModAPI) {
     if (route) api.state.set({ ...saved(), current: route.name, ours: true } as unknown as Json);
     return route ? { route: route.name } : null;
   });
-  const publish = () => {
-    const owned = saved().accounts.filter(account => account.profile && account.profile.kind !== 'ollama');
+  const publish = (only?: string) => {
+    const { accounts, quota } = saved();
+    const owned = accounts.filter(account => account.profile && account.profile.kind !== 'ollama' && (!only || account.name === only));
     if (!owned.length) return;
     const credentials = api.host.tryCall('credentials.list', null);
     if (!credentials.ok) return;
     const ready = new Set(credentials.value.filter(item => item.status === 'ready').map(item => item.id));
+    const now = Date.now();
+    const published = new Map<string, RouteStatus>();
     for (const account of owned) {
       if (!account.profile) continue;
       const signed = ready.has(account.profile.credential);
-      api.host.tryCall('routes.status', { route: account.name, installed: true, signed_in: signed, models: [account.model],
-        ...signed ? {} : { detail: `its sign-in is missing; run /profile refresh ${account.name}` } });
+      const usage = (quota[account.name]?.windows ?? []).filter(slot => slot.resets !== null && slot.resets > now).slice(0, 4)
+        .map(slot => ({ label: windowName(slot.minutes), used_percent: Math.min(100, Math.max(0, slot.used)), window_minutes: slot.minutes, resets_at: slot.resets }));
+      const status = { installed: true, signed_in: signed, models: [account.model], ...usage.length ? { usage } : {},
+        ...signed ? {} : { detail: `its sign-in is missing; run /profile refresh ${account.name}` } };
+      if (api.host.tryCall('routes.status', { route: account.name, ...status }).ok) published.set(account.name, { ...status, checked_at: now });
     }
-    const routes = api.host.tryCall('routes.list', null);
-    const status = new Map(routes.ok && Array.isArray(routes.value) ? routes.value.map(route => [route.name, route.status ?? null]) : []);
-    store({ accounts: saved().accounts.map(account => status.has(account.name) ? { ...account, status: status.get(account.name) } : account) });
+    if (published.size) api.state.set({ ...saved(), accounts: saved().accounts.map(account => ({ ...account, status: published.get(account.name) ?? account.status })) } as unknown as Json);
   };
   const load = () => {
     refresh();
@@ -166,6 +172,7 @@ export default function activate(api: ModAPI) {
     if (!seen.length || (last?.windows === key && last.profile !== current)) return;
     const quota = remember(all => { all[account.name] = { windows: seen, at: Date.now() }; });
     api.state.set({ ...saved(), seen: { profile: account.name, windows: key }, ...quota ? { quota } : {} } as unknown as Json);
+    if (account.profile && last?.windows !== key) publish(account.name);
   });
   api.on('terminal', () => {
     const { accounts, current, notice, pending, ours, quota } = saved();
@@ -324,7 +331,7 @@ export default function activate(api: ModAPI) {
     const kept = accounts.filter(account => !account.profile);
     store({ accounts: [...profiles.map(profile => {
       const known = accounts.find(account => account.profile && account.name === profile.name);
-      return known ? { ...accountOf(profile), available: known.available } : accountOf(profile);
+      return known ? { ...accountOf(profile), available: known.available, status: known.status } : accountOf(profile);
     }), ...kept],
     current: profiles.some(profile => profile.name === current) || kept.some(account => account.name === current) ? current : null });
   };
@@ -523,7 +530,7 @@ export default function activate(api: ModAPI) {
     const items: TerminalPanelItem[] = [
       ...accounts.map(account => ({ id: `account:${account.name}`, kind: 'action' as const,
         label: `${account.name === current ? '●' : '○'} ${account.name}${account.name === current ? ' (this thread)' : ''}${account.name === pending ? ' (next /new)' : ''}${account.available ? '' : ' (unavailable)'}`,
-        description: describe(account, quota, now) })),
+        description: clip(describe(account, quota, now), 256) })),
       { id: 'add', kind: 'action', label: '+ Add an account…', description: 'ChatGPT, Claude or Cursor account, OpenAI or Anthropic API key, local Ollama, or another provider' },
       { id: 'window', kind: 'action', label: 'Change a context window…', description: 'How much of a thread a model sees before Codex compacts it' },
     ];

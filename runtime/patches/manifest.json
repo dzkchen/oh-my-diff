@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.1.patch",
-    "sha256": "e3df9e0d20cf26a2411506a420aa0bae272779846830b253083b23b6cffe4c3d"
+    "sha256": "ab46d7df6b67b8bf8d8bf320f2cf6fc73cd89963509c36a1733973ff5ff54922"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1279,7 +1279,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "d23f68d99ea57b758a2de9c9f4e2bb8e39b2c59204af8c50ab7d6938516ec027"
+      "after": "c5e6d046682c5e44565053c599d00a766f7a9c22349c9ed8f01c259e5ce41e1a"
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
@@ -1291,7 +1291,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "95ce9f5521ac49b81063c1d7b1d03913210ac8a101fa933ae16d130078c40e41"
+      "after": "60a77c246e4fb8988b2d0eb316d6f91e2f173d0966ac61bcb6384ec8cd27b9e7"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -1319,7 +1319,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion.rs": {
       "before": null,
-      "after": "06f7662fe7a2c09b3561470015e62bca091e01f7ae0d55236edff0b1a3ea3807"
+      "after": "fbb40be0a8f77968c2bdc2dc1ea223584bd317966a0aaead5f7ec2d503477784"
     },
     "codex-rs/ext/omd/src/mods/expansion/activity.rs": {
       "before": null,
@@ -1347,7 +1347,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "566ad6387ed53b3aef19abca623d63126000e0619f481b8b31d17c7e17f37403"
+      "after": "499e7112a6fb32800b85bb3a2ead4d6e2dc7fc052064e94d4f10c2dcea1a4fe9"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -1367,7 +1367,7 @@
     },
     "codex-rs/ext/omd/src/mods/operations.rs": {
       "before": null,
-      "after": "d713e26102e3af4c8613a724df1c1b41a25a5c8d5e5e4dfe96d9a4c4fed9c200"
+      "after": "a2bc40ac02ea08da7299f63826e54cf6d712a87c840de351c4ba93199ea999a2"
     },
     "codex-rs/ext/omd/src/mods/peering.rs": {
       "before": null,
@@ -1383,15 +1383,15 @@
     },
     "codex-rs/ext/omd/src/mods/route_status.rs": {
       "before": null,
-      "after": "a10e3ef7d0e03a5c90cf9200a2256505e0d97911f664abc4fcc78c0e52e6311f"
+      "after": "bb78b77e7c7d1031fe053d9726f394a517e59e78d504b1771b5339e5c4e63c1f"
     },
     "codex-rs/ext/omd/src/mods/route_status_tests.rs": {
       "before": null,
-      "after": "4b727eb05d3a931667def034f61d21c0f57b2734655606fc90d70d6bf192bf1a"
+      "after": "0e61982dd51c8d43f77b851401e4197143660edbb40ea799ed43faa69e1afe23"
     },
     "codex-rs/ext/omd/src/mods/services.rs": {
       "before": null,
-      "after": "794c12c7ccb9efa27b593e58aae98b171961fb57086c8f345c378c115e29461f"
+      "after": "48fdfb78a69dd0c9f195e5d3518ec4ba3260bf876a580e2da72cd7b6eed64775"
     },
     "codex-rs/ext/omd/src/mods/snapshots.rs": {
       "before": null,

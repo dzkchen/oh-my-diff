@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, handoff } from './handoff.mjs';
-import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, PLANS, cliSupported, loginCommand, signedIn, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, PLANS, cliSupported, limitFamily, loginCommand, signedIn, translateRequest, responseEvents, reasoningItem, localId } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
 const BODY_LIMIT = 64 * 1024 * 1024;
@@ -144,7 +144,7 @@ async function bodyOf(request) {
 
 // Maps the subscription's unified 5-hour and 7-day windows onto the account route's rate-limit header family for /status.
 export function limitHeaders(headers, note, account = 'default') {
-  const family = account === 'default' ? 'claude' : `claude-${account}`;
+  const family = limitFamily(account);
   const out = { [`x-${family}-limit-name`]: account === 'default' ? 'Claude' : `Claude (${account})`, 'x-omd-provider-note': note };
   for (const [window, slot, minutes] of [['5h', 'primary', 300], ['7d', 'secondary', 10080]]) {
     const used = Number(headers[`anthropic-ratelimit-unified-${window}-utilization`]);

@@ -91,18 +91,20 @@ const account = (route: RouteInfo, all: RouteInfo[]) => route.roles.includes('le
 // Codex's limit id for an account: its route name with dashes as underscores, `codex` on the built-in OpenAI provider.
 const family = (route: RouteInfo, all: RouteInfo[]) => route.provider === 'openai' ? 'codex' : account(route, all).name.replace(/-/g, '_');
 
-function usageOf(vitals: Vitals, route: RouteInfo, all: RouteInfo[]) {
+function usageOf(vitals: Vitals, route: RouteInfo, all: RouteInfo[], now: number) {
   const status = account(route, all).status;
   const published = status?.usage ?? [];
   if (!status || !published.length) return vitals.windows?.[family(route, all)] ?? null;
-  const top = published.reduce((a, b) => b.used_percent > a.used_percent ? b : a);
+  const live = published.filter(slot => !slot.resets_at || slot.resets_at > now);
+  if (!live.length) return null;
+  const top = live.reduce((a, b) => b.used_percent > a.used_percent ? b : a);
   return { used: Math.round(top.used_percent), resets: top.resets_at ?? null, at: status.checked_at };
 }
 
 function health(vitals: Vitals, route: RouteInfo, all: RouteInfo[], now: number): string | null {
   const status = account(route, all).status;
   if (status && (!status.installed || !status.signed_in || status.detail)) return status.detail ?? (status.installed ? 'not signed in' : 'not installed');
-  const usage = usageOf(vitals, route, all);
+  const usage = usageOf(vitals, route, all, now);
   if (usage && usage.used >= FULL_PERCENT && (usage.resets !== null ? usage.resets > now : now - usage.at < STALE_MS)) return `${usage.used}% of its usage limit used`;
   const failure = vitals.failed?.[family(route, all)];
   return failure && now - failure.at < COOLDOWN_MS ? `${failure.category} failure ${Math.max(1, Math.round((now - failure.at) / 60_000))} min ago` : null;
@@ -247,8 +249,8 @@ export default function activate(api: ModAPI) {
       const all = category ? routes() : [];
       const route = all.find(item => item.name === task.route);
       if (category && HARD_FAILURES.includes(category)) remember(value => ({ ...value, failed: { ...value.failed, [route ? family(route, all) : task.route.replace(/-/g, '_')]: { at: Date.now(), category } } }));
-      const usage = route && retrying && category === 'rate_limit' && task.brief && !task.retry_of ? usageOf(vitals().value, route, all) : null;
       const now = Date.now();
+      const usage = route && retrying && category === 'rate_limit' && task.brief && !task.retry_of ? usageOf(vitals().value, route, all, now) : null;
       if (usage && usage.used >= FULL_PERCENT && usage.resets !== null && usage.resets > now && usage.resets - now <= RETRY_MAX_MS) {
         next = { ...next, brief: task.brief, retry_at: usage.resets + RETRY_GRACE_MS };
         save({ ...state, tasks: { ...state.tasks, [handle]: next } });

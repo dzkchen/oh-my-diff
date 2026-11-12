@@ -455,6 +455,9 @@ test('published route status decides health per account, and a model runs on the
   assert.match(out.notices[0], /Claude Sonnet 5\.5 is skipped \(not signed in; run \/claude login\)/);
   const full = spawn({}, { state, routes: [{ ...CLAUDE_ROUTE, status: status({ usage: [{ label: '5h', used_percent: 95, window_minutes: 300, resets_at: Date.now() + 60_000 }] }) }] });
   assert.match(full.notices[0], /\(95% of its usage limit used\)/);
+  const hidden = spawn({}, { state, routes: [{ ...CLAUDE_ROUTE, status: status({ usage: [{ label: '5h', used_percent: 100, window_minutes: 300, resets_at: Date.now() - 60_000 },
+    { label: '7d', used_percent: 95, window_minutes: 10080, resets_at: Date.now() + 86_400_000 }] }) }] });
+  assert.match(hidden.notices[0] ?? '', /\(95% of its usage limit used\)/, 'a window that already reset does not hide a live full one');
   assert.equal(spawn({}, { state, routes: [{ ...CLAUDE_ROUTE, status: status({ installed: false }) }] }).notices[0].includes('(not installed)'), true);
   const accounts = [
     { name: 'claude', provider: 'omd_claude_cli', model: 'claude-opus-5-5', roles: ['lead'], available: true, tools: [], billing: 'included_subscription', status: status({ models: ['claude-opus-5-5', 'claude-sonnet-5-5'] }) },

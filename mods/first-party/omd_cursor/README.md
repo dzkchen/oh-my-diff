@@ -32,6 +32,7 @@ Removing an account doesn't revoke its key. The key stays valid at Cursor until 
 in your Cursor dashboard.
 
 An account `NAME` starts with a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 24 characters.
+Two accounts can't differ only by `_` and `-` (`my_team` and `my-team`), because Codex gives them one usage limit.
 For example, `/cursor setup work` enrolls a second account, whose models appear in `/model` as `cursor-auto.work`.
 
 Run `/cursor setup` again when the key expires or after changing the SDK dependencies. Each run is a fresh enrollment

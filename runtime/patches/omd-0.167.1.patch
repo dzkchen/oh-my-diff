@@ -78777,10 +78777,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e3c45404e8ec7972bba9ae9fe524f01805166048
+index 0000000000000000000000000000000000000000..c620c453bf19feabe7552742a1c5f3f68682db65
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,886 @@
+@@ -0,0 +1,889 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -78855,6 +78855,7 @@ index 0000000000000000000000000000000000000000..e3c45404e8ec7972bba9ae9fe524f018
 +    repository_identity: String,
 +    config: HostConfig,
 +    routes: std::sync::Mutex<RouteTable>,
++    route_status: Arc<mods::route_status::Published>,
 +    accounts: Arc<Accounts>,
 +    manager: Weak<ThreadManager>,
 +    epoch: u128,
@@ -78987,6 +78988,7 @@ index 0000000000000000000000000000000000000000..e3c45404e8ec7972bba9ae9fe524f018
 +            config: Arc::new(config.clone()),
 +            error: None,
 +        }),
++        route_status: Arc::default(),
 +        root,
 +        repository,
 +        config,
@@ -79075,6 +79077,7 @@ index 0000000000000000000000000000000000000000..e3c45404e8ec7972bba9ae9fe524f018
 +                config: routes.config.clone(),
 +                error: routes.error.clone(),
 +            }),
++            route_status: self.route_status.clone(),
 +            root: self.root.clone(),
 +            repository,
 +            config: self.config.clone(),
@@ -82384,10 +82387,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d3bc26b4a81a1d384c10a79d16d03f7f8cced107
+index 0000000000000000000000000000000000000000..59e6f4c1c50fc52554df131655f687c47afe881f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,3094 @@
+@@ -0,0 +1,3095 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -82405,7 +82408,7 @@ index 0000000000000000000000000000000000000000..d3bc26b4a81a1d384c10a79d16d03f7f
 +mod peering;
 +mod persisted;
 +mod roles;
-+mod route_status;
++pub(crate) mod route_status;
 +pub(crate) mod services;
 +mod snapshots;
 +mod tools;
@@ -83511,11 +83514,12 @@ index 0000000000000000000000000000000000000000..d3bc26b4a81a1d384c10a79d16d03f7f
 +
 +    fn routing_decision(&self, runtime: &mut ModHost, config: &mut Config) -> Result<(), String> {
 +        let (routing, _) = self.host.route_config();
++        let statuses = self.host.route_status.snapshot();
 +        let routes = routing
 +            .routes
 +            .iter()
 +            .filter(|route| route.roles.contains(&config::RouteRole::Lead))
-+            .map(|route| operations::route_info(&self.host, route))
++            .map(|route| operations::route_info(&self.host, route, &statuses))
 +            .collect::<Vec<_>>();
 +        if routes.is_empty() {
 +            return Ok(());
@@ -90619,10 +90623,10 @@ index 0000000000000000000000000000000000000000..508769308ff445e5868bbc76aed7e69a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e3dfda67b62da2837e9a251a669ddcbd7ac2691f
+index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcda04dd67e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,998 @@
+@@ -0,0 +1,1001 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -91406,7 +91410,10 @@ index 0000000000000000000000000000000000000000..e3dfda67b62da2837e9a251a669ddcbd
 +        .lock()
 +        .map_err(|_| "route_selection_poisoned")?
 +        .insert(lead.thread.to_string(), (route.name.clone(), persistent));
-+    Ok(json!({"route": operations::route_info(&lead.host, route), "effective_at": "next_request"}))
++    let statuses = lead.host.route_status.snapshot();
++    Ok(
++        json!({"route": operations::route_info(&lead.host, route, &statuses), "effective_at": "next_request"}),
++    )
 +}
 +
 +static SELECTIONS: Mutex<BTreeMap<String, (String, bool)>> = Mutex::new(BTreeMap::new());
@@ -93843,10 +93850,10 @@ index 0000000000000000000000000000000000000000..708e3e710b8c9b6974f4c32640ca2c49
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..efc930e3bc3b52cc032aa5c125b1b7476df04c14
+index 0000000000000000000000000000000000000000..3d62d524a1a8f35a207d4bde0e3f1a0a0a58725d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,7248 @@
+@@ -0,0 +1,7250 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -93949,6 +93956,7 @@ index 0000000000000000000000000000000000000000..efc930e3bc3b52cc032aa5c125b1b747
 +            config: Arc::new(config::HostConfig::default()),
 +            error: None,
 +        }),
++        route_status: Arc::default(),
 +        accounts: Arc::new(accounting::Accounts::default()),
 +        manager: std::sync::Weak::new(),
 +        epoch: 1,
@@ -94081,6 +94089,7 @@ index 0000000000000000000000000000000000000000..efc930e3bc3b52cc032aa5c125b1b747
 +            config: Arc::new(host.config.clone()),
 +            error: None,
 +        }),
++        route_status: host.route_status.clone(),
 +        accounts: host.accounts.clone(),
 +        manager: Arc::downgrade(&manager),
 +        epoch: host.epoch,
@@ -102329,10 +102338,10 @@ index 0000000000000000000000000000000000000000..c1cde7db1547ed5a37e2ab6a8f0dc8e7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1edec67beb2db39ba51f24e721a02d21fb047fb8
+index 0000000000000000000000000000000000000000..17054ff3f63ca267fb32f34c265ceb0e466d9f1e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,908 @@
+@@ -0,0 +1,916 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::ModInvokeOptions;
@@ -102424,7 +102433,11 @@ index 0000000000000000000000000000000000000000..1edec67beb2db39ba51f24e721a02d21
 +                ))
 +}
 +
-+pub(super) fn route_info(host: &Host, route: &config::Route) -> Value {
++pub(super) fn route_info(
++    host: &Host,
++    route: &config::Route,
++    statuses: &super::route_status::Statuses,
++) -> Value {
 +    let available = route.grant.as_ref().is_none_or(|grant| {
 +        accounting::worker_authorized(
 +            &grant.path,
@@ -102440,7 +102453,7 @@ index 0000000000000000000000000000000000000000..1edec67beb2db39ba51f24e721a02d21
 +        "reasoning": route.reasoning_effort, "roles": route.roles,
 +        "billing": accounting::billing(Some(&route.rates)),
 +        "tools": route.tools, "available": available, "credential": route.credential,
-+        "status": super::route_status::latest(route)})
++        "status": super::route_status::latest(statuses, route)})
 +}
 +
 +async fn authority(lead: &Lead, call: Option<&ToolCall<'_>>) -> Result<WorkspaceAuthority, String> {
@@ -102950,24 +102963,28 @@ index 0000000000000000000000000000000000000000..1edec67beb2db39ba51f24e721a02d21
 +            .await;
 +    }
 +    match operation.as_str() {
-+        "routes.list" => Ok(json!(
-+            host.route_config()
-+                .0
-+                .routes_for(caller.id)
-+                .into_iter()
-+                .map(|route| {
-+                    let mut info = route_info(host, route);
-+                    if route.provider == caller.id
-+                        && let Some(data) = &route.data
-+                    {
-+                        info["data"] = data.clone();
-+                    }
-+                    info
-+                })
-+                .collect::<Vec<_>>()
-+        )),
++        "routes.list" => {
++            let statuses = host.route_status.snapshot();
++            Ok(json!(
++                host.route_config()
++                    .0
++                    .routes_for(caller.id)
++                    .into_iter()
++                    .map(|route| {
++                        let mut info = route_info(host, route, &statuses);
++                        if route.provider == caller.id
++                            && let Some(data) = &route.data
++                        {
++                            info["data"] = data.clone();
++                        }
++                        info
++                    })
++                    .collect::<Vec<_>>()
++            ))
++        }
 +        "routes.status" => {
-+            super::route_status::publish(&host.route_config().0, caller.id, request.arguments)
++            host.route_status
++                .publish(&host.route_config().0, caller.id, request.arguments)
 +        }
 +        "ledger.settle" => {
 +            let arguments = &request.arguments;
@@ -104084,10 +104101,10 @@ index 0000000000000000000000000000000000000000..f4ec1db7bc05c39f15521baa37c8e6d1
 +}
 diff --git a/codex-rs/ext/omd/src/mods/route_status.rs b/codex-rs/ext/omd/src/mods/route_status.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab137ae0ae7249559f09233845fcf28f0d74c4ea
+index 0000000000000000000000000000000000000000..a896defeb6827ceccb6ca98ffa751b6030aa148a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/route_status.rs
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,121 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -104127,70 +104144,83 @@ index 0000000000000000000000000000000000000000..ab137ae0ae7249559f09233845fcf28f
 +    detail: Option<String>,
 +}
 +
-+static PUBLISHED: Mutex<BTreeMap<String, (String, Value)>> = Mutex::new(BTreeMap::new());
++pub(super) type Statuses = BTreeMap<String, (String, Value)>;
++
++#[derive(Default)]
++pub(crate) struct Published(Mutex<Statuses>);
 +
 +fn invalid(status: &Status) -> bool {
 +    let long = |text: &str, max: usize| text.is_empty() || text.len() > max;
-+    status.version.as_deref().is_some_and(|v| long(v, NAME_BYTES))
-+        || status.detail.as_deref().is_some_and(|d| long(d, TEXT_BYTES))
++    status
++        .version
++        .as_deref()
++        .is_some_and(|v| long(v, NAME_BYTES))
++        || status
++            .detail
++            .as_deref()
++            .is_some_and(|d| long(d, TEXT_BYTES))
 +        || status.models.as_ref().is_some_and(|models| {
 +            models.len() > MODELS || models.iter().any(|m| long(m, NAME_BYTES))
 +        })
 +        || status.usage.as_ref().is_some_and(|usage| {
 +            usage.len() > WINDOWS
-+                || usage.iter().any(|w| {
-+                    long(&w.label, NAME_BYTES) || !(0.0..=100.0).contains(&w.used_percent)
-+                })
++                || usage
++                    .iter()
++                    .any(|w| long(&w.label, NAME_BYTES) || !(0.0..=100.0).contains(&w.used_percent))
 +        })
 +}
 +
-+pub(super) fn publish(
-+    config: &crate::config::HostConfig,
-+    mod_id: &str,
-+    arguments: Value,
-+) -> Result<Value, String> {
-+    let status: Status =
-+        serde_json::from_value(arguments).map_err(|_| "route_status_invalid".to_string())?;
-+    if invalid(&status) {
-+        return Err("route_status_invalid".into());
++impl Published {
++    pub(super) fn publish(
++        &self,
++        config: &crate::config::HostConfig,
++        mod_id: &str,
++        arguments: Value,
++    ) -> Result<Value, String> {
++        let status: Status =
++            serde_json::from_value(arguments).map_err(|_| "route_status_invalid".to_string())?;
++        if invalid(&status) {
++            return Err("route_status_invalid".into());
++        }
++        let route = config
++            .routes
++            .iter()
++            .find(|route| route.name == status.route)
++            .ok_or_else(|| format!("route_not_configured: {}", status.route))?;
++        if !config
++            .services
++            .iter()
++            .any(|grant| grant.provides(mod_id, &route.provider))
++        {
++            return Err(format!("route_status_not_provider: {}", status.route));
++        }
++        let checked_at = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map_or(0, |elapsed| elapsed.as_millis() as u64);
++        let mut value = serde_json::to_value(&status).map_err(|error| error.to_string())?;
++        value["checked_at"] = json!(checked_at);
++        if let Some(object) = value.as_object_mut() {
++            object.remove("route");
++        }
++        let mut published = self.0.lock().map_err(|_| "route_status_poisoned")?;
++        published.retain(|name, _| config.routes.iter().any(|route| &route.name == name));
++        published.insert(status.route.clone(), (route.provider.clone(), value));
++        Ok(json!({"route": status.route, "checked_at": checked_at}))
 +    }
-+    let route = config
-+        .routes
-+        .iter()
-+        .find(|route| route.name == status.route)
-+        .ok_or_else(|| format!("route_not_configured: {}", status.route))?;
-+    if !config
-+        .services
-+        .iter()
-+        .any(|grant| grant.provides(mod_id, &route.provider))
-+    {
-+        return Err(format!("route_status_not_provider: {}", status.route));
++
++    pub(super) fn snapshot(&self) -> Statuses {
++        self.0
++            .lock()
++            .map(|published| published.clone())
++            .unwrap_or_default()
 +    }
-+    let checked_at = std::time::SystemTime::now()
-+        .duration_since(std::time::UNIX_EPOCH)
-+        .map_or(0, |elapsed| elapsed.as_millis() as u64);
-+    let mut value = serde_json::to_value(&status).map_err(|error| error.to_string())?;
-+    value["checked_at"] = json!(checked_at);
-+    if let Some(object) = value.as_object_mut() {
-+        object.remove("route");
-+    }
-+    let mut published = PUBLISHED.lock().map_err(|_| "route_status_poisoned")?;
-+    published.retain(|name, _| config.routes.iter().any(|route| &route.name == name));
-+    published.insert(status.route.clone(), (route.provider.clone(), value));
-+    Ok(json!({"route": status.route, "checked_at": checked_at}))
 +}
 +
-+pub(super) fn latest(route: &crate::config::Route) -> Value {
-+    PUBLISHED
-+        .lock()
-+        .ok()
-+        .and_then(|published| {
-+            published
-+                .get(&route.name)
-+                .filter(|(provider, _)| provider == &route.provider)
-+                .map(|(_, value)| value.clone())
-+        })
-+        .unwrap_or(Value::Null)
++pub(super) fn latest(statuses: &Statuses, route: &crate::config::Route) -> Value {
++    statuses
++        .get(&route.name)
++        .filter(|(provider, _)| provider == &route.provider)
++        .map_or(Value::Null, |(_, value)| value.clone())
 +}
 +
 +#[cfg(test)]
@@ -104198,10 +104228,10 @@ index 0000000000000000000000000000000000000000..ab137ae0ae7249559f09233845fcf28f
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/mods/route_status_tests.rs b/codex-rs/ext/omd/src/mods/route_status_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d15304ce82d55eccc8da90ae5c2a6c5bc833a378
+index 0000000000000000000000000000000000000000..55293893121ed871bb6d1b0a3d85c4b9aad9ecd6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/route_status_tests.rs
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,90 @@
 +use super::*;
 +use crate::config::HostConfig;
 +
@@ -104222,27 +104252,43 @@ index 0000000000000000000000000000000000000000..d15304ce82d55eccc8da90ae5c2a6c5b
 +#[test]
 +fn only_the_provider_mod_publishes_bounded_status() {
 +    let config = config();
-+    let work = config.routes.iter().find(|r| r.name == "status-work").unwrap();
-+    assert_eq!(latest(work), Value::Null);
-+    let published = publish(&config, "fixture_mod", json!({"route": "status-work", "installed": true,
++    let work = config
++        .routes
++        .iter()
++        .find(|r| r.name == "status-work")
++        .unwrap();
++    let host = Published::default();
++    let published = host.publish(&config, "fixture_mod", json!({"route": "status-work", "installed": true,
 +        "signed_in": false, "models": ["a"], "usage": [{"label": "5h", "used_percent": 42.5, "resets_at": 1}]}))
 +    .unwrap();
-+    let status = latest(work);
++    let status = latest(&host.snapshot(), work);
 +    assert_eq!(status["checked_at"], published["checked_at"]);
 +    assert_eq!(status["signed_in"], false);
 +    assert_eq!(status["usage"][0]["used_percent"], 42.5);
 +    assert_eq!(status.get("route"), None);
 +
 +    assert_eq!(
-+        publish(&config, "other_mod", json!({"route": "status-work", "installed": true, "signed_in": true})),
++        host.publish(
++            &config,
++            "other_mod",
++            json!({"route": "status-work", "installed": true, "signed_in": true})
++        ),
 +        Err("route_status_not_provider: status-work".into())
 +    );
 +    assert_eq!(
-+        publish(&config, "fixture_mod", json!({"route": "status-other", "installed": true, "signed_in": true})),
++        host.publish(
++            &config,
++            "fixture_mod",
++            json!({"route": "status-other", "installed": true, "signed_in": true})
++        ),
 +        Err("route_status_not_provider: status-other".into())
 +    );
 +    assert_eq!(
-+        publish(&config, "fixture_mod", json!({"route": "missing", "installed": true, "signed_in": true})),
++        host.publish(
++            &config,
++            "fixture_mod",
++            json!({"route": "missing", "installed": true, "signed_in": true})
++        ),
 +        Err("route_not_configured: missing".into())
 +    );
 +    for invalid in [
@@ -104251,15 +104297,37 @@ index 0000000000000000000000000000000000000000..d15304ce82d55eccc8da90ae5c2a6c5b
 +        json!({"route": "status-work", "installed": true, "signed_in": true, "detail": "x".repeat(257)}),
 +        json!({"route": "status-work", "installed": true, "signed_in": true, "extra": 1}),
 +    ] {
-+        assert_eq!(publish(&config, "fixture_mod", invalid), Err("route_status_invalid".into()));
++        assert_eq!(
++            host.publish(&config, "fixture_mod", invalid),
++            Err("route_status_invalid".into())
++        );
 +    }
++}
++
++#[test]
++fn each_host_keeps_its_own_status() {
++    let config = config();
++    let work = config
++        .routes
++        .iter()
++        .find(|r| r.name == "status-work")
++        .unwrap();
++    let (one, other) = (Published::default(), Published::default());
++    one.publish(
++        &config,
++        "fixture_mod",
++        json!({"route": "status-work", "installed": true, "signed_in": true}),
++    )
++    .unwrap();
++    assert_eq!(latest(&one.snapshot(), work)["signed_in"], true);
++    assert_eq!(latest(&other.snapshot(), work), Value::Null);
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..80174548a26a8ca58cc1a8a572619b18ff9fd946
+index 0000000000000000000000000000000000000000..b7241327fd57afbd3e09d05f0025ec4f382dde80
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1171 @@
+@@ -0,0 +1,1175 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -104340,7 +104408,11 @@ index 0000000000000000000000000000000000000000..80174548a26a8ca58cc1a8a572619b18
 +
 +impl Grant {
 +    pub(crate) fn provides(&self, mod_id: &str, provider: &str) -> bool {
-+        self.mod_id == mod_id && self.route.as_ref().is_some_and(|route| route.provider == provider)
++        self.mod_id == mod_id
++            && self
++                .route
++                .as_ref()
++                .is_some_and(|route| route.provider == provider)
 +    }
 +
 +    pub(crate) fn billed_rates(&self, provider: &str) -> Option<&crate::accounting::Rates> {

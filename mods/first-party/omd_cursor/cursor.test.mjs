@@ -535,7 +535,7 @@ test('each Cursor account runs on its own key and reports its plan usage as a ra
 test('Cursor publishes each account route status and keeps its usage through a rate-limit update', () => {
   const accounts = [{ name: 'default', expires: 9e12, secret: 'p1' }, { name: 'work', expires: 1, secret: 'p2' }];
   const state = { sdk: '1.0.35', data: '/data', published: true, accounts, models: [{ slug: 'cursor-auto' }, { slug: 'cursor-auto.work' }] };
-  const usage = [{ label: 'billing cycle', used_percent: 62.5, window_minutes: 43200, resets_at: 1761868800000 }];
+  const usage = [{ label: 'billing cycle', used_percent: 62.5, window_minutes: 43200, resets_at: 4_102_444_800_000 }];
   const listed = [{ name: 'cursor', status: { checked_at: 1, installed: true, signed_in: true, models: [], usage } }, { name: 'cursor-work', status: null }];
   const host = call => call.operation === 'credentials.list' ? [{ id: 'p1', kind: 'secret', status: 'ready' }, { id: 'p2', kind: 'secret', status: 'ready' }]
     : call.operation === 'routes.list' ? listed : {};
@@ -543,14 +543,31 @@ test('Cursor publishes each account route status and keeps its usage through a r
   assert.deepEqual(probed, [
     { route: 'cursor', installed: true, signed_in: true, version: '1.0.35', models: ['cursor-auto'], usage },
     { route: 'cursor-work', installed: true, signed_in: false, version: '1.0.35', models: ['cursor-auto.work'], detail: 'the API key expired; run /cursor setup work' }]);
-  const fresh = modEvent('timer', { key: 'probe' }, { ...state, probed_at: Date.now() }, call => call.operation === 'routes.list'
+  const ageless = modEvent('timer', { key: 'probe' }, state, call => call.operation === 'routes.list'
+    ? [{ name: 'cursor', status: { checked_at: 1, installed: true, signed_in: true, usage: [{ ...usage[0], resets_at: null }] } }, listed[1]] : host(call));
+  assert.equal(ageless.calls.find(call => call.arguments?.route === 'cursor').arguments.usage, undefined, 'a window without a reset time is not carried past its own update');
+  const started = modEvent('start', null, { ...state, published: false }, call => call.operation === 'sidecars.status' ? { running: false } : host(call));
+  assert.deepEqual(started.calls.filter(call => call.operation === 'routes.status').map(call => call.arguments.detail), [undefined, 'the API key expired; run /cursor setup work'],
+    'a provider that starts again clears its "did not start" status at once');
+  const fresh = modEvent('timer', { key: 'probe' }, state, call => call.operation === 'routes.list'
     ? listed.map(route => ({ ...route, status: { checked_at: Date.now() } })) : host(call));
   assert.deepEqual(fresh.calls.map(call => call.operation), ['routes.list', 'events.schedule']);
   const limit = (limitId, usedPercent) => ({ method: 'account/rateLimits/updated', params: { rateLimits: { limitId, primary: { usedPercent, windowDurationMins: 43200, resetsAt: 1761868800 } } } });
   const updated = modEvent('app_notification', limit('cursor', 70), state, host).calls.filter(call => call.operation === 'routes.status');
-  assert.deepEqual(updated.map(call => call.arguments), [{ installed: true, signed_in: true, models: [], usage: [{ ...usage[0], used_percent: 70 }], route: 'cursor' }]);
+  assert.deepEqual(updated.map(call => call.arguments), [{ installed: true, signed_in: true, models: [], usage: [{ ...usage[0], used_percent: 70, resets_at: 1761868800000 }], route: 'cursor' }]);
+  const recovered = modEvent('app_notification', limit('cursor', 70), state, call => call.operation === 'routes.list'
+    ? [{ name: 'cursor', status: { ...listed[0].status, signed_in: false, detail: 'no API key is stored; run /cursor setup' } }] : host(call));
+  const { signed_in, detail } = recovered.calls.find(call => call.operation === 'routes.status').arguments;
+  assert.deepEqual([signed_in, detail], [true, undefined], 'a rate-limit update clears a stale sign-in problem');
   assert.deepEqual(modEvent('app_notification', limit('other', 70), state, host).calls.filter(call => call.operation === 'routes.status'), []);
   assert.equal(accountRoute('work'), 'cursor-work');
+  const team = { ...state, accounts: [...accounts, { name: 'my_team', expires: 9e12, secret: 'p3' }] };
+  const teamed = modEvent('app_notification', limit('cursor_my_team', 70), team, call => call.operation === 'routes.list' ? [{ name: 'cursor-my_team', status: { checked_at: 1, installed: true, signed_in: true } }] : host(call));
+  assert.equal(teamed.calls.find(call => call.operation === 'routes.status')?.arguments.route, 'cursor-my_team');
+  assert.ok('x-cursor-my-team-primary-used-percent' in planHeaders({ plan_usage: { totalSpend: 1, includedSpend: 2 } }, 'my_team'), 'Codex reads the family back with _ as -');
+  const twin = modEvent('channel', { channel: 'omd_cursor/setup', data: { account: 'my-team' } }, team, () => ({}));
+  assert.match(twin.calls.find(call => call.operation === 'terminal.notice').arguments.text, /would share usage limits with account my_team/);
+  assert.equal(twin.calls.some(call => call.operation === 'process.start'), false);
 });
 
 test('Cursor transport survives aborted uploads and yields the port to a transport with a new key or route', async t => {

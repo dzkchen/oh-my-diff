@@ -95,7 +95,7 @@ published status lists it (an account's own models). A target is skipped when:
 - its route isn't available,
 - its provider mod reports the route not installed, not signed in, or unusable for a stated reason (the route status
   `/profile` shows),
-- its account's latest usage window is at 90% or more. The window comes from the route status, else from
+- its account's fullest usage window that hasn't reset is at 90% or more. The window comes from the route status, else from
   `account/rateLimits/updated` for the route's limit family (the route name with `-` as `_`, `codex` on the built-in
   OpenAI provider), or
 - a task on that account failed for authorization, rate limit or allowance in the last 15 minutes.
