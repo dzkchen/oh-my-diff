@@ -70,7 +70,9 @@ Change settings in `/mods`.
 - Earlier reasoning isn't sent back to Claude. Images are forwarded.
 - Setup raises the limit for each subagent (a helper agent the main agent starts for part of a task) in `host.json`
   `worker_limits` to at least 300 requests and a day, within the session's `limits`. Higher values you set are kept.
-  After upgrading, run `/claude login` again to apply them.
+- After the mod updates, the next session re-applies its setup to `host.json` for the accounts you already signed
+  in: the routes, the provider service and these limits, keeping higher limits and other routes you set. It doesn't
+  sign in again or reread the model list; run `/claude login` for that. If it fails, the session says why.
 - After a switch to Claude, OpenAI first rewrites the earlier OpenAI compaction summary as plain text, which costs one
   OpenAI request. If that fails, Claude continues without the summary and a warning shows. OpenAI's encrypted
   reasoning isn't sent.
