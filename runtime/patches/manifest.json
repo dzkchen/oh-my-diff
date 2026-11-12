@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.1.patch",
-    "sha256": "801e154e05110af5e1a701695b7029ce24d976718b567f5c61a689361d50e03f"
+    "sha256": "5a810472be2024d2d9aba106bb0cfe2844baeed8a97dbd7010fd54d6f5c97a0a"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -2107,7 +2107,7 @@
     },
     "codex-rs/tui/src/app/model_defaults.rs": {
       "before": "74d5b8620cc6fcb5db55cb5f0a270c8d35a20184ae8a3d40ca7e72d985889705",
-      "after": "4491030d81b834c665c8af4249be71ba6513a1a2e717ba53285650c35b879480"
+      "after": "6c03ab0080e5659e39ec9d81a7f3b585d92ea1163e18d477b75b710bbb91fc0f"
     },
     "codex-rs/tui/src/app/new_session.rs": {
       "before": "89236933782728607bc37888d89f2ce008cf00212122324d5f900baaaa55d127",
@@ -2567,7 +2567,7 @@
     },
     "codex-rs/tui/src/chatwidget/rate_limits.rs": {
       "before": "7193808550399f9a1b36b647680d90afa66fd6d7e4829979f9c52d715ba46b8d",
-      "after": "bbf815044ece8ededb28981d7f1286ecfb4733b31154ef8bc1b423a33e772a00"
+      "after": "7556d4d1c855784cd338d38c4cfe0a40e883012550ce63aa6850fba68f3e1116"
     },
     "codex-rs/tui/src/chatwidget/rendering.rs": {
       "before": "fa1d5fe53c90e6db5aed52e103f17ddfa1b43f28aba08dd02c43b12309e512a7",
@@ -2960,6 +2960,10 @@
     "codex-rs/tui/src/mod_ui_tests.rs": {
       "before": null,
       "after": "b15eeca501363865f40d2c22171ff2cbede1a060c97b653b8a84373a0710f9aa"
+    },
+    "codex-rs/tui/src/model_catalog.rs": {
+      "before": "99770da1ca19fee3409c650abd6ebece90e1de811a036ba675c5d56a510c4fba",
+      "after": "6730a0d18372d986cad4277b28ee78bbde201431caf85d7f750935f6e0c04f2f"
     },
     "codex-rs/tui/src/multi_agents.rs": {
       "before": "24935ac8e8c83093958aea6a6891dd190b94b1709290eb38322727b3bd3b3c44",

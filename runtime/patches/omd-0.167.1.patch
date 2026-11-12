@@ -40468,20 +40468,16 @@ index 7b53366557dcf7084b4b23501ad7e0611f512009..b935f13d41cf38f163ffdc1fbb97b49b
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/model_defaults.rs b/codex-rs/tui/src/app/model_defaults.rs
-index 240700e2e9824903aef5152121001126970ee8cf..24d9e1aef8db9811bcd68539c018702d9b127b6a 100644
+index 240700e2e9824903aef5152121001126970ee8cf..37a4c1c43e6ed8f41c1e7634e7cc52449eb412a6 100644
 --- a/codex-rs/tui/src/app/model_defaults.rs
 +++ b/codex-rs/tui/src/app/model_defaults.rs
-@@ -54,14 +54,22 @@ impl App {
+@@ -54,14 +54,18 @@ impl App {
      ) {
          self.app_event_tx
              .send(crate::app_event::AppEvent::FollowTranscript);
 -        match self
 -            .persist_model_defaults(
-+        let runtime_model = self.model_catalog.try_list_models().is_ok_and(|models| {
-+            models
-+                .iter()
-+                .any(|preset| preset.model == model && preset.model_provider.is_some())
-+        });
++        let runtime_model = self.model_catalog.is_provider_model(&model);
 +        let persisted = if runtime_model {
 +            Ok(())
 +        } else {
@@ -48741,7 +48737,7 @@ index e76b50b6ee093df883a7dec48e6cba56b583f02e..0b181454aaab7a718a3786c6423c3560
              | ServerRequest::ApplyPatchApproval { .. }
              | ServerRequest::ExecCommandApproval { .. } => {
 diff --git a/codex-rs/tui/src/chatwidget/rate_limits.rs b/codex-rs/tui/src/chatwidget/rate_limits.rs
-index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..932416a63704f291951cf824906f3e18ae7c5298 100644
+index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..a77b18bc49cb5eb42f4bb04ac8e969a7961c9b21 100644
 --- a/codex-rs/tui/src/chatwidget/rate_limits.rs
 +++ b/codex-rs/tui/src/chatwidget/rate_limits.rs
 @@ -366,6 +366,7 @@ impl ChatWidget {
@@ -48783,22 +48779,18 @@ index a7162b98b9357a83fbd7dca26340dff61dd8b8d1..932416a63704f291951cf824906f3e18
      pub(super) fn stop_rate_limit_poller(&mut self) {}
 
      #[cfg_attr(not(test), allow(dead_code))]
-@@ -431,6 +447,14 @@ impl ChatWidget {
+@@ -431,6 +447,10 @@ impl ChatWidget {
              .cloned()
      }
 
 +    fn current_model_has_own_provider(&self) -> bool {
-+        self.model_catalog.try_list_models().is_ok_and(|models| {
-+            models.iter().any(|preset| {
-+                preset.model == self.current_model() && preset.model_provider.is_some()
-+            })
-+        })
++        self.model_catalog.is_provider_model(self.current_model())
 +    }
 +
      fn rate_limit_switch_prompt_hidden(&self) -> bool {
          self.local_settings
              .notices
-@@ -444,6 +468,7 @@ impl ChatWidget {
+@@ -444,6 +464,7 @@ impl ChatWidget {
          }
          if self.rate_limit_switch_prompt_hidden()
              || matches!(self.current_model(), NUDGE_MODEL_SLUG | LUNA_RESERVE_MODEL)
@@ -54469,6 +54461,23 @@ index bdcaeca323627219d465b08e0ac73d5e4ef22aa8..1afa11b4026380bfd114576b3e57081e
  async fn creation_attaches_to_original_task_and_survives_service_restart() -> color_eyre::Result<()>
  {
      boxed_future!(creation_attaches_to_original_task_and_survives_service_restart_scenario()).await
+diff --git a/codex-rs/tui/src/model_catalog.rs b/codex-rs/tui/src/model_catalog.rs
+index abfac6dbc406f72927c5d278671c256bfca9ea3a..e59812f974a78dd001c8868ce38b5147944680ff 100644
+--- a/codex-rs/tui/src/model_catalog.rs
++++ b/codex-rs/tui/src/model_catalog.rs
+@@ -38,6 +38,12 @@ impl ModelCatalog {
+         Ok(self.models.clone())
+     }
+
++    pub(crate) fn is_provider_model(&self, model: &str) -> bool {
++        self.models
++            .iter()
++            .any(|preset| preset.model == model && preset.model_provider.is_some())
++    }
++
+     pub(crate) fn display_name<'a>(&'a self, model: &'a str) -> &'a str {
+         self.models
+             .iter()
 diff --git a/codex-rs/tui/src/multi_agents.rs b/codex-rs/tui/src/multi_agents.rs
 index e7f3d38951dca9a13e1f76719c85d6ab74175a01..824b52a8d04dd3348ee5948f1b82929464209905 100644
 --- a/codex-rs/tui/src/multi_agents.rs
