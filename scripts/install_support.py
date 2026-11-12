@@ -41,6 +41,17 @@ def run(arguments, cwd=None, env=None, capture=True):
     return result
 
 
+def catalog(document):
+    curated = {entry["id"]: entry for entry in document["packages"]
+               if entry["extension_type"] == "mod" and entry["support_status"] in ("experimental", "reviewed_candidate", "supported")}
+    published = {identifier: [{"version": entry["version"], "integrity": entry["published"]["sha256"],
+                               "source": {"kind": "repository", "repository": entry["published"]["repository"],
+                                          "revision": entry["published"]["revision"], "subdirectory": entry["source"]},
+                               "description": entry["capability"], "support": entry["support_status"]}]
+                 for identifier, entry in curated.items() if "published" in entry}
+    return curated, published
+
+
 def output(arguments, cwd=None, env=None):
     return run(arguments, cwd=cwd, env=env).stdout.strip()
 
