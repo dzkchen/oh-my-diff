@@ -27,7 +27,8 @@ class Plan(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "extensions").mkdir()
-            (root / "extensions/index.json").write_text(json.dumps({"release_pin": {"omd": "1.0.0"}}))
+            (root / "extensions/index.json").write_text(json.dumps({"release_pin": {"omd": "1.0.0"}, "packages": [
+                {"id": identifier, "extension_type": "mod", "support_status": "experimental", "capability": identifier} for identifier in "abc"]}))
             (root / mods_bundle.OPERATIONS).parent.mkdir(parents=True)
             (root / mods_bundle.OPERATIONS).write_text(json.dumps(operations))
             for identifier in main["packages"]:
@@ -48,8 +49,15 @@ class Plan(unittest.TestCase):
 
     def test_a_revert_ships_as_the_next_bundle_and_nothing_new_is_refused(self):
         planned = self.plan(lock(a="a0", b="b0", c="c0"), {"mods-1.0.0-1": lock(a="a1", b="b0")})
-        self.assertEqual({key: planned[key] for key in ("serial", "changed", "bundle", "new", "needs_release", "needs_host")},
-                         {"serial": 2, "changed": [], "bundle": ["a"], "new": ["a"], "needs_release": ["c"], "needs_host": {}})
+        self.assertEqual({key: planned[key] for key in ("serial", "changed", "bundle", "new", "added", "needs_release", "needs_host")},
+                         {"serial": 2, "changed": [], "bundle": ["a", "c"], "new": ["a", "c"], "added": ["c"], "needs_release": [],
+                          "needs_host": {}})
+        planned = self.plan(lock(a="a0", b="b0", c="c0"), {"mods-1.0.0-1": lock(a="a0", b="b0", c="c0")})
+        self.assertEqual((planned["bundle"], planned["new"], planned["added"]), (["c"], [], []))
+        planned = self.plan(lock(a="a0", b="b0", c="c0", d="d0"), {})
+        self.assertEqual((planned["bundle"], planned["added"], planned["needs_release"]), (["c"], ["c"], ["d"]))
+        planned = self.plan(lock(a="a0", b="b0", c="c0"), {}, features=())
+        self.assertEqual((planned["bundle"], planned["added"], planned["needs_release"]), ([], [], ["c"]))
         planned = self.plan(lock(a="a0", b="b0"), {"mods-1.0.0-1": lock(a="a1", b="b0"), "mods-1.0.0-2": lock(a="a0", b="b0")})
         self.assertEqual((planned["serial"], planned["bundle"], planned["new"]), (3, ["a"], []))
         with (patch.object(mods_bundle, "plan", return_value=planned),
@@ -95,6 +103,11 @@ class Plan(unittest.TestCase):
             self.plan(lock(a="a0", b="b2"), {"mods-1.0.0-1": lock(a="a0", b="b1")}, features=(), manifests={
                 "a": {"compatibility": {"required_features": []}}, "b": {"contributes": {}}}, auto=True)
 
+    def test_an_added_mod_the_release_cannot_run_is_held_without_failing(self):
+        manifests = {"a": {"compatibility": {"required_features": []}}, "c": {"contributes": {}}}
+        planned = self.plan(lock(a="a1", b="b0", c="c0"), {}, features=(), manifests=manifests, auto=True)
+        self.assertEqual((planned["bundle"], planned["added"], planned["excluded"]), (["a"], [], ["c"]))
+
     def test_new_enum_values_and_list_item_fields_count_as_manifest_changes(self):
         accepted = mods_bundle.manifest_keys({"capabilities": ["store"], "services": {"imports": [{"name": "x"}]}})
         changed = mods_bundle.manifest_keys({"capabilities": ["store", "brand_new"], "services": {"imports": [{"name": "x", "y": 1}]}})
@@ -127,6 +140,22 @@ class Plan(unittest.TestCase):
         with (patch.object(mods_bundle, "pinned", return_value="1.0.0"), patch.object(mods_bundle, "git", return_value="v1.0.0"),
               patch.object(mods_bundle, "automatic", return_value=nothing | {"new": ["a"], "api_changed": ["mods/api.d.ts"]})):
             self.assertIn("api_reviewed", mods_bundle.build(Path("/nonexistent"), "c" * 40, auto=True)["reason"])
+
+
+class Directory(unittest.TestCase):
+    def test_an_entry_that_needs_a_newer_host_falls_back_to_the_release_entry_or_is_left_out(self):
+        def entry(revision):
+            return {"id": "port", "version": revision, "extension_type": "mod", "support_status": "supported", "capability": "c",
+                    "source": "mods/ports/port", "published": {"repository": "r", "revision": revision, "sha256": revision}}
+        features = {"old": [], "new": ["later_v1"]}
+        released = {"packages": [entry("old"), entry("old") | {"id": "gone"}]}
+        _, listed = mods_bundle.support.catalog({"packages": [entry("new"), entry("new") | {"id": "fresh"},
+                                                              entry("old") | {"id": "fine"}, entry("old") | {"id": "omd_x"}]})
+        with (patch.object(mods_bundle, "at", return_value=released),
+              patch.object(mods_bundle, "git", side_effect=lambda _show, ref: json.dumps(
+                  {"compatibility": {"required_features": features[ref.split(":")[0]]}}))):
+            chosen = mods_bundle.directory("1.0.0", {"x_v1"}, listed, {"omd_x"})
+        self.assertEqual({identifier: entries[0]["version"] for identifier, entries in chosen.items()}, {"port": "old", "fine": "old"})
 
 
 if __name__ == "__main__":

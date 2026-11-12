@@ -90,17 +90,19 @@ queues and fresh compilation still affect elapsed time; the reuse path needs a h
 Fixes to `mods/first-party` reach users of the current release without a new release. The Mods workflow builds
 a bundle from `main` and publishes it as the GitHub release `mods-VERSION-N`, where VERSION is `release_pin.omd` in
 `extensions/index.json` and N counts up. The bundle holds every mod that differs from the `vVERSION` tag or that an
-earlier bundle changed. Installs of exactly that VERSION take the mods that differ from what they have.
+earlier bundle changed, plus mods added since the release, which arrive in the catalog turned off. It also
+carries the curated directory's entries for other publishers' mods. Installs of exactly that VERSION take the mods
+that differ from what they have.
 
 Every push to `main` that changes `mods/first-party` or `runtime/mods.lock.json` runs the workflow with `--auto`. It
-leaves out each changed mod the release can't run and publishes the rest. A mod is left out when it needs host
+leaves out each changed or added mod the release can't run and publishes the rest. A mod is left out when it needs host
 features the release lacks (`needs_host`), uses a `mod.json` field, list-item field or capability, state scope or app
 subscription value that no first-party manifest at the tag used (`needs_manifest`), calls a host operation whose
 schema changed since the tag (`needs_api`) or changed in a commit or merged pull request that also changed `runtime/`
-or `mods/api.d.ts` (`needs_runtime`). Those mods, and mods new since the release, wait for the next release. The run
-publishes nothing, and still passes, when no mod is new, the release isn't tagged yet, `main` hosts a different mod
-API, or `mods/api.d.ts` changed since the tag (run it by hand with `api_reviewed` once you have checked no bundled mod
-uses the change). When a mod an earlier bundle shipped can no longer be shipped, the run fails: cut a release.
+or `mods/api.d.ts` (`needs_runtime`). Those mods wait for the next release. The run publishes nothing, and still
+passes, when no mod is new, the release isn't tagged yet, `main` hosts a different mod API, or `mods/api.d.ts` changed
+since the tag (run it by hand with `api_reviewed` once you have checked no bundled mod uses the change). When a mod an
+earlier bundle shipped can no longer be shipped, the run fails: cut a release.
 
 To publish by hand, for example to exclude a mod:
 
@@ -111,9 +113,10 @@ To publish by hand, for example to exclude a mod:
    ```
 
    `bundle` lists the mods it would ship, `new` the ones that changed since the last bundle (the build refuses when
-   it is empty), `needs_host`, `needs_manifest` and `needs_api` the mods the release can't run (the build refuses them),
-   `needs_runtime` the mods that changed together with host code (the build refuses them unless you pass
-   `--api-reviewed`) and `needs_release` new mods it skips. `api_changed` lists the host operations whose arguments or results
+   it is empty), `added` the bundled mods the release didn't have, `needs_host`, `needs_manifest` and `needs_api` the
+   mods the release can't run (the build refuses them), `needs_runtime` the mods that changed together with host code
+   (the build refuses them unless you pass `--api-reviewed`) and `needs_release` new mods it skips because they need
+   a newer host. `api_changed` lists the host operations whose arguments or results
    changed, and `mods/api.d.ts` when it changed; the build refuses a changed API unless you pass `--api-reviewed`
    after leaving out every mod that depends on the change with `--exclude ID...` (`plan` takes `--exclude` too).
 2. Optional: dry-run it. It checks, builds and signs, then prints the publish command:

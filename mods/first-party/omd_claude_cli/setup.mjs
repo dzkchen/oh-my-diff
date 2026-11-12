@@ -134,14 +134,15 @@ async function setup(name, action, login) {
   const cached = basename(dirname(dirname(mod))) === 'package-cache';
   if (!cached && basename(dirname(mod)) !== 'sources') throw new Error('setup_must_run_from_installed_mod');
   const store = cached ? dirname(dirname(dirname(mod))) : dirname(dirname(mod));
-  if (!ACCOUNT.test(name ?? '') || name === 'api') throw new Error('claude_account_name_invalid: a letter, then lowercase letters, digits, _ or - (at most 24)');
+  if (action !== 'refresh' && (!ACCOUNT.test(name ?? '') || name === 'api')) throw new Error('claude_account_name_invalid: a letter, then lowercase letters, digits, _ or - (at most 24)');
   const directory = join(store, 'routes', 'claude');
   const routePath = join(directory, 'route.json');
   const tokenPath = join(directory, 'local-token');
   let previous = {};
   try { previous = JSON.parse(await readFile(routePath, 'utf8')); } catch {}
   const known = (previous.accounts ?? []).find(account => account.name === name);
-  let accounts = (previous.accounts ?? []).filter(account => account.name !== name);
+  const kept = account => account.name !== name;
+  let accounts = (previous.accounts ?? []).filter(kept);
   const home = homedir();
   const username = userInfo().username;
   let host = {};
@@ -149,7 +150,7 @@ async function setup(name, action, login) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   const taken = (routes, adding = 0) => {
     const others = (routes ?? []).filter(route => route.provider !== PROVIDER);
-    if (action !== 'remove' && others.some(other => other.name === routeName(name))) throw new Error(`claude_route_name_taken: another route is named ${routeName(name)}`);
+    if (!['remove', 'refresh'].includes(action) && others.some(other => other.name === routeName(name))) throw new Error(`claude_route_name_taken: another route is named ${routeName(name)}`);
     if (others.length + accounts.length + adding > 32) throw new Error('host_route_limit: host.json holds at most 32 routes');
     return others;
   };
@@ -167,7 +168,7 @@ async function setup(name, action, login) {
       if (!signedOut) throw new Error(`claude_sign_out_failed: ${name} and its sign-in were kept; check Claude CLI and Keychain access, then retry /claude remove ${name}`);
       await rm(known.config_dir, { recursive: true, force: true });
     }
-  } else {
+  } else if (action !== 'refresh') {
     if (!['subscription', 'api'].includes(action)) throw new Error('claude_billing_must_be_subscription_or_api');
     const config = name === 'default' ? null : login || join(directory, 'accounts', name);
     if (config && !known) discard = async () => {
@@ -207,7 +208,7 @@ async function setup(name, action, login) {
   const merge = async host => {
     let current = {};
     try { current = JSON.parse(await readFile(routePath, 'utf8')); } catch {}
-    accounts = (current.accounts ?? []).filter(account => account.name !== name);
+    accounts = (current.accounts ?? []).filter(kept);
     if (added) accounts.splice(name === 'default' ? 0 : accounts.length, 0, added);
     else claude = current.claude ?? null;
     const port = current.port ?? await unusedPort();
@@ -251,7 +252,8 @@ async function setup(name, action, login) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [name, action, login] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const [name, action, login] = args.length === 1 ? [null, ...args] : args;
   try {
     console.log(JSON.stringify(await setup(name, action, login)));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
