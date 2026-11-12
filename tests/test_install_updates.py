@@ -570,12 +570,12 @@ class UpdateSelection(unittest.TestCase):
         (self.current / "prefix/management/runtime/mods.lock.json").write_text(json.dumps({"packages": {
             "omd_btw": {"package_sha256": "0" * 64}, "omd_files": {"package_sha256": "2" * 64}}}))
 
-    def test_mod_bundles_verify_in_their_own_namespace_and_offer_only_changed_installed_mods(self):
+    def test_mod_bundles_verify_in_their_own_namespace_and_offer_changed_and_new_mods(self):
         self.bundled()
         self.published = [release("0.0.9"), mods(1), mods(2), mods(3, omd="0.0.9")]
         found = self.check()["mods"]
-        self.assertEqual((found["serial"], found["changed"], found["notes"]), (2, ["omd_btw"], "mods 2"))
-        self.assertEqual(self.module.notice(self.module.state(self.root))["mods"]["changed"], ["omd_btw"])
+        self.assertEqual((found["serial"], found["changed"], found["notes"]), (2, ["omd_btw", "omd_new"], "mods 2"))
+        self.assertEqual(self.module.notice(self.module.state(self.root))["mods"]["changed"], ["omd_btw", "omd_new"])
         self.published = [mods(1)]
         self.assertIsNone(self.check()["mods"])
         for published, settings, error in (([mods(2, mod_api="2.0.0")], {}, None),
@@ -723,8 +723,10 @@ class UpdateSelection(unittest.TestCase):
     def test_a_built_mod_bundle_extracts_with_the_installer_and_matches_its_manifest(self):
         from scripts import mods_bundle
         planned = {"omd": "0.1.0", "serial": 4, "changed": ["omd_update"], "bundle": ["omd_update"], "new": ["omd_update"],
-                   "needs_host": {}, "needs_release": [], "api_changed": [], "commits": ["abc fix"]}
-        with patch.object(mods_bundle, "plan", return_value=planned):
+                   "added": [], "needs_host": {}, "needs_release": [], "api_changed": [], "commits": ["abc fix"], "features": []}
+        with patch.object(mods_bundle, "plan", return_value=planned), patch.object(
+                mods_bundle, "directory", side_effect=lambda _version, _features, listed, first_party: {
+                    identifier: entries for identifier, entries in listed.items() if identifier not in first_party}):
             manifest = mods_bundle.build(self.root / "bundle", "c" * 40)
         self.assertEqual(list(manifest["packages"]), ["omd_update"])
         archive = self.root / "bundle" / manifest["archive"]
@@ -732,6 +734,8 @@ class UpdateSelection(unittest.TestCase):
         payload = self.module.extract(archive, self.root / "unpacked")
         lock = json.loads((payload / "mods.lock.json").read_text())
         self.assertEqual({identifier: package["package_sha256"] for identifier, package in lock["packages"].items()}, manifest["packages"])
+        self.assertEqual(sorted(lock["catalog"]["omd_update"]), ["description", "support"])
+        self.assertTrue(lock["index"] and all(entries[0]["source"]["kind"] == "repository" for entries in lock["index"].values()))
         for identifier, package in lock["packages"].items():
             for name, sha256 in package["files"].items():
                 self.assertEqual(self.module.digest(payload / "sources" / identifier / name), sha256)
@@ -1118,6 +1122,11 @@ class UpdateSelection(unittest.TestCase):
                              if carried else [])
 
     def test_update_uninstall_and_status_print_text_unless_json_is_asked_for(self):
+        self.assertEqual(self.module.update_text("now", {"mods_updated": [], "added": ["omd_new"]}),
+                         "New mods, off until you install them (omd install ID or /mods): omd_new.")
+        self.assertEqual(self.module.update_text("now", {"mods_updated": [], "refused": ["omd_new"]}),
+                         "These mods need a newer Oh My Diff and wait for the next release: omd_new.")
+        self.assertEqual(self.module.update_text("now", {"mods_updated": []}), "Updated the mod directory.")
         changes = {"retired": ["omd_old"], "left_off": ["omd_new"], "capabilities": {"omd_git": ["exec", "network"]}}
         self.assertEqual(self.module.update_text("now", {"active": "/g", "version": "0.2.0", "profile_label": "OMD+", "changes": changes}),
                          "Oh My Diff 0.2.0 (OMD+) is installed. Restart codex to use it.\nRetired and turned off: omd_old.\n"

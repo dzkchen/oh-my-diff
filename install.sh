@@ -1163,8 +1163,9 @@ def mod_changes(current, record, bundle):
     if bundle["mod_api"] != record.get("mod_api"):
         return []
     locked = read_json(current / "prefix/management/runtime/mods.lock.json", {}).get("packages", {})
+    refused = record.get("mods_refused") or {}
     return sorted(identifier for identifier, sha256 in bundle["packages"].items()
-                  if identifier in locked and identifier in record["packages"] and locked[identifier].get("package_sha256") != sha256)
+                  if locked.get(identifier, {}).get("package_sha256") != sha256 and refused.get(identifier) != sha256)
 
 
 def mod_key(mods):
@@ -1225,7 +1226,7 @@ def notice(saved):
     available, mods = saved.get("available"), saved.get("mods")
     value["available"] = available and {key: available.get(key) for key in ("version", "prerelease", "notes", "page", "user_mods")} | {
         "mod_api": available["manifest"]["mod_api"]}
-    value["mods"] = mods and {key: mods.get(key) for key in ("omd", "serial", "changed", "notes", "page")}
+    value["mods"] = mods and {key: mods.get(key) for key in ("omd", "serial", "changed", "added", "notes", "page")}
     value["last"], value["last_mods"] = (value["last"] and dict(value["last"])), (value["last_mods"] and dict(value["last_mods"]))
     for owner, key in ((value["last"] or {}, "capabilities"), (value["last_mods"] or {}, "capabilities"),
                        (value["available"] or {}, "notes"), (value["mods"] or {}, "notes"), (value, "blocked"), (value, "failed"),
@@ -1297,7 +1298,8 @@ def probe(args, root, current):
         bundle = None if pin else mod_bundle(release_source(details.get("releases_url") or RELEASES_URL), record["version"],
                                              record.get("mods_bundle", {}).get("serial", 0))
         changed = bundle and mod_changes(current, record, bundle)
-        result["mods"] = bundle | {"changed": changed} if changed else None
+        locked = read_json(current / "prefix/management/runtime/mods.lock.json", {}).get("packages", {}) if changed else {}
+        result["mods"] = bundle | {"changed": changed, "added": [identifier for identifier in changed if identifier not in locked]} if changed else None
     except (OSError, ValueError, *NETWORK_ERRORS) as error:
         result["error"] = result["error"] or text(str(error), 300)
     return result
@@ -1433,10 +1435,12 @@ def apply_mods(args, root, current, mods):
         raise
     (update_dir(root) / "staged" / f"{mods['sha256']}.tar.xz").unlink(missing_ok=True)
     save(root, mods=None, pending_mods=None, failed_mods=None, held_mods=None,
-         last_mods={"serial": mods["serial"], "changed": result["updated"], "at": int(time.time()),
-                    "capabilities": result.get("capabilities") or {}, "needs_review": result.get("needs_review") or []})
-    return {"mods_updated": result["updated"], "version": mods["omd"], "serial": mods["serial"],
-            "capabilities": result.get("capabilities") or {}, "needs_review": result.get("needs_review") or []}
+         last_mods={"serial": mods["serial"], "changed": result["updated"], "at": int(time.time())} | carried(result))
+    return {"mods_updated": result["updated"], "version": mods["omd"], "serial": mods["serial"]} | carried(result)
+
+
+def carried(result):
+    return {key: result.get(key) or ({} if key == "capabilities" else []) for key in ("capabilities", "needs_review", "added", "kept", "refused")}
 
 
 def forget_backup(root, current):
@@ -1465,7 +1469,9 @@ def rollback_mods(args, root, current):
     finally:
         (root / "update/journal.json").unlink(missing_ok=True)
     save(root, last_mods=None)
-    report(args, {"restored_mods": result["updated"]}, f"Restored the previous first-party mods: {', '.join(result['updated'])}.")
+    report(args, {"restored_mods": result["updated"]}, "\n".join(
+        [f"Restored the previous first-party mods: {', '.join(result['updated'])}." if result["updated"] else "Undid the last first-party mod update.",
+         *change_lines({key: result.get(key) for key in ("kept",)})]))
 
 
 def confirmed(args, available):
@@ -1693,8 +1699,11 @@ def change_lines(changes):
             *([f"New default mods, left off (turn them on in /mods): {', '.join(changes['left_off'])}."] if changes.get("left_off") else []),
             *([f"New permissions: {'; '.join(granted)}."] if granted else []),
             *([f"Updated mods you installed from the catalog: {', '.join(changes['catalog_updated'])}."] if changes.get("catalog_updated") else []),
+            *([f"New mods, off until you install them (omd install ID or /mods): {', '.join(changes['added'])}."] if changes.get("added") else []),
             *([f"These installed mods need your review before they update; run omd mods update ID for each: {', '.join(changes['needs_review'])}."]
-              if changes.get("needs_review") else [])]
+              if changes.get("needs_review") else []),
+            *([f"Kept the new mods you installed from this update: {', '.join(changes['kept'])}."] if changes.get("kept") else []),
+            *([f"These mods need a newer Oh My Diff and wait for the next release: {', '.join(changes['refused'])}."] if changes.get("refused") else [])]
 
 
 def update_text(action, result):
@@ -1712,7 +1721,8 @@ def update_text(action, result):
     if "staged_mods" in result:
         return f"First-party mod updates ({', '.join(result['staged_mods'])}) are downloaded and install {result['applies']}."
     if "mods_updated" in result:
-        return "\n".join([f"Updated first-party mods: {', '.join(result['mods_updated'])}.", *change_lines(result)])
+        lines = [*([f"Updated first-party mods: {', '.join(result['mods_updated'])}."] if result["mods_updated"] else []), *change_lines(result)]
+        return "\n".join(lines or ["Updated the mod directory."])
     if "active" in result:
         return "\n".join([f"Oh My Diff {result['version']} ({result['profile_label']}) is installed. Restart codex to use it.",
                           *change_lines(result["changes"])])

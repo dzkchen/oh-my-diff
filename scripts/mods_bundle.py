@@ -62,29 +62,49 @@ def plan(exclude=()):
     shipped = {}
     for _, tag in bundles:
         shipped |= {identifier: sha256 for identifier, sha256 in published(tag).items()
-                    if identifier in released and (identifier in shipped or sha256 != released[identifier]["package_sha256"])}
-    current = {identifier: package["package_sha256"] for identifier, package in lock["packages"].items() if identifier in released}
-    changed = sorted(identifier for identifier, sha256 in current.items() if sha256 != released[identifier]["package_sha256"])
-    if unchanged := sorted(set(exclude) - set(changed)):
+                    if identifier not in released or identifier in shipped or sha256 != released[identifier]["package_sha256"]}
+    current = {identifier: package["package_sha256"] for identifier, package in lock["packages"].items()}
+    features = set(at(f"v{version}", "mods/conformance/compatibility.json")["host"]["features"])
+    curated, _ = support.catalog(json.loads((ROOT / "extensions/index.json").read_text()))
+    arrived = sorted(current.keys() - released.keys())
+    waiting = [identifier for identifier in arrived
+               if identifier not in shipped and (identifier not in curated or required_features(identifier) - features)]
+    changed = sorted(identifier for identifier in released.keys() & current.keys() if current[identifier] != released[identifier]["package_sha256"])
+    if unchanged := sorted(set(exclude) - set(changed) - set(arrived)):
         raise ValueError(f"only mods changed since OMD {version} can be excluded: {', '.join(unchanged)}")
     if shipped_excluded := sorted(set(exclude) & shipped.keys()):
         raise ValueError(f"mods shipped in an earlier bundle cannot be excluded; revert them instead: {', '.join(shipped_excluded)}")
     if removed := sorted(shipped.keys() - current.keys()):
         raise ValueError(f"mods shipped in an earlier bundle were removed from main; cut a release instead: {', '.join(removed)}")
-    bundle = sorted((set(changed) | shipped.keys()) - set(exclude))
+    bundle = sorted((set(changed) | shipped.keys() | set(arrived)) - set(exclude) - set(waiting))
     released_operations, operations_now = operations(at(f"v{version}", OPERATIONS)), operations(json.loads((ROOT / OPERATIONS).read_text()))
     api_changed = sorted(name for name in released_operations.keys() | operations_now.keys()
                          if released_operations.get(name) != operations_now.get(name))
     api_changed += git("diff", "--name-only", f"v{version}", "--", "mods/api.d.ts").splitlines()
-    features = set(at(f"v{version}", "mods/conformance/compatibility.json")["host"]["features"])
-    return {"omd": version, "serial": (bundles[-1][0] if bundles else 0) + 1, "changed": changed, "bundle": bundle,
+    return {"omd": version, "serial": (bundles[-1][0] if bundles else 0) + 1, "changed": changed, "bundle": bundle, "features": sorted(features),
             "new": sorted(identifier for identifier in bundle
-                          if current[identifier] != shipped.get(identifier, released[identifier]["package_sha256"])),
+                          if current[identifier] != shipped.get(identifier, released.get(identifier, {}).get("package_sha256"))),
             "needs_host": {identifier: sorted(missing) for identifier in bundle if (missing := required_features(identifier) - features)},
-            "needs_release": sorted(lock["packages"].keys() - released.keys()), "excluded": sorted(exclude), "api_changed": api_changed,
+            "added": sorted((set(arrived) - shipped.keys()) & set(bundle)), "needs_release": waiting, "excluded": sorted(exclude), "api_changed": api_changed,
             "host_changed": git("diff", "--name-only", f"v{version}..HEAD", "--", "mods/api.d.ts", "runtime/").splitlines(),
             "commits": git("log", "--no-merges", "--format=%h %s", f"v{version}..HEAD", "--",
                            *(f"mods/first-party/{identifier}" for identifier in bundle)).splitlines() if bundle else []}
+
+
+def directory(version, features, listed, first_party):
+    _, released = support.catalog(at(f"v{version}", "extensions/index.json"))
+
+    def suits(entry):
+        source = entry["source"]
+        manifest = json.loads(git("show", f"{source['revision']}:{source['subdirectory']}/mod.json"))
+        return not set(manifest.get("compatibility", {}).get("required_features", [])) - features
+    chosen = {}
+    for identifier in sorted(listed.keys() - first_party):
+        for entries in (listed[identifier], released.get(identifier)):
+            if entries and suits(entries[0]):
+                chosen[identifier] = entries
+                break
+    return chosen
 
 
 def build(output, commit, exclude=(), api_reviewed=False):
@@ -97,7 +117,11 @@ def build(output, commit, exclude=(), api_reviewed=False):
         raise ValueError(f"the mod host API changed since OMD {planned['omd']}: {', '.join(planned['api_changed'])}; cut a release, "
                          "or exclude the mods that depend on it and pass --api-reviewed")
     lock = support.mods_lock()
-    lock = lock | {"packages": {identifier: lock["packages"][identifier] for identifier in planned["bundle"]}}
+    curated, listed = support.catalog(json.loads((ROOT / "extensions/index.json").read_text()))
+    lock = lock | {"packages": {identifier: lock["packages"][identifier] for identifier in planned["bundle"]},
+                   "catalog": {identifier: {"description": curated[identifier]["capability"], "support": curated[identifier]["support_status"]}
+                               for identifier in planned["bundle"] if identifier in curated},
+                   "index": directory(planned["omd"], set(planned["features"]), listed, lock["packages"].keys())}
     output.mkdir(parents=True, exist_ok=True)
     archive = output / f"omd-mods-{planned['omd']}-{planned['serial']}.tar.xz"
 
@@ -115,11 +139,12 @@ def build(output, commit, exclude=(), api_reviewed=False):
                 "archive": archive.name, "sha256": support.digest(archive),
                 "packages": {identifier: package["package_sha256"] for identifier, package in lock["packages"].items()}}
     (output / "omd-mods.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    lines = [f"First-party mod updates for Oh My Diff {planned['omd']}: {', '.join(planned['new'])}.", "",
+    lines = [f"First-party mod updates for Oh My Diff {planned['omd']}: {', '.join(planned['new'])}.",
+             *([f"New mods, off until you install them: {', '.join(planned['added'])}."] if planned["added"] else []), "",
              "Installed by `omd update` or **Update mods** in `/update`, and automatically when automatic updates are on.",
              "`omd update rollback` undoes it.", "", *(f"- {line}" for line in planned["commits"][:30])]
     (output / "notes.md").write_text("\n".join(lines) + "\n")
-    return manifest | {"new": planned["new"], "needs_release": planned["needs_release"]}
+    return manifest | {"new": planned["new"], "added": planned["added"], "needs_release": planned["needs_release"]}
 
 
 def main():

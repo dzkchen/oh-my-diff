@@ -93,3 +93,14 @@ test('a waiting first-party mod update opens a dialog whose ids are all unique',
   assert.equal(new Set(ids).size, ids.length, ids.join(' '));
   assert.ok(ids.includes('omd_update_mods_out') && ids.includes('omd_update_mods'));
 });
+
+test('a mod update that only adds mods or refreshes the directory names no empty update list', () => {
+  const mods = { omd: '1.4.2', serial: 2, changed: ['omd_new'], added: ['omd_new'] };
+  const offered = run('start', {}, null, { info: { installed: '1.4.2', checked_at: 1, mods } }).state;
+  assert.deepEqual(offered.banner, ['New first-party mods are out: omd_new. Run omd update in a shell, or /update.']);
+  const children = run('terminal', {}, { ...offered, open: true }).value.sites.dialog.components[1].children;
+  assert.match(children.find(item => item.id === 'omd_update_mods_out').text.replace(/\n/g, ' '), /^New first-party mods are out: omd_new\. Your/);
+  const banner = last_mods => run('start', {}, null, { info: { installed: '1.4.2', checked_at: 1, last_mods } }).state.banner;
+  assert.deepEqual(banner({ serial: 2, changed: [], at: 6, added: ['omd_new'] }), ['New mods, off until you install them (omd install ID or /mods): omd_new.']);
+  assert.deepEqual(banner({ serial: 2, changed: [], at: 6 }), ['The mod directory was updated.']);
+});
