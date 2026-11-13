@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.167.2.patch",
-    "sha256": "72aed8bc780cf42d4f15342fea04564467380b5b4f506d180984a496ff69d80f"
+    "sha256": "94d3ab8a61cef24a413a8cadd97afbc762f57ab284d1cbbb0731f434f7007a35"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -2337,6 +2337,10 @@
       "before": "8899ba90c476d2882218e7ecded59fd39729513073436f8936643a6b7ae1b6f4",
       "after": "38a374f4f8e2d16566d146c4eb11fb700a6bf6d996ef5139087c7433dc219b4f"
     },
+    "codex-rs/tui/src/app/tests/streaming_interleave_e2e.rs": {
+      "before": "a9880f3bcacab7adfc8c4d0dda55958f0f3c40e11959e342584de3491f623c56",
+      "after": "9db747bd7613cb4ca16a6f3f8c65363cc3970ce81cee513871e90c8e8c306312"
+    },
     "codex-rs/tui/src/app/tests/turn_submission.rs": {
       "before": "d80daf737b702f904c4aed378342af7d0f1282ee941f0008ca66f3684aef0a16",
       "after": "7adc19c06ee1054db2a44cb78259bd597af80d32296a02e249a483d018003939"
@@ -2547,7 +2551,7 @@
     },
     "codex-rs/tui/src/chatwidget/command_lifecycle.rs": {
       "before": "b1d3b4ebea8655884afd747583644f8276b858ba9ef7c95e74ca225ef26dca94",
-      "after": "652646406a55dcbc633f589704549b663450ce2dd22226de7f73f9e5df590b33"
+      "after": "05feaa439417168cf27c08d629f2736987e4a9f739e3b75bcb58ca42f1d22f56"
     },
     "codex-rs/tui/src/chatwidget/constructor.rs": {
       "before": "728f0d6304df6522713fe849605f3b9b4d3cd8e5d7b9a8dc21e431edb4d4c99a",
@@ -2575,7 +2579,7 @@
     },
     "codex-rs/tui/src/chatwidget/interrupts.rs": {
       "before": "fcc4fd95568a693c660b57785c91e8cb9a6e0748107f66d95e4b242cc5cbc7c5",
-      "after": "61f2793a0be9329af3b006ddf6aa05286feb6b11a0c8ec91aac984dc1cc7a0e6"
+      "after": "44fa180fe06fcfea29bf451f549d4eb803851070b6d19c0437aaa08c1df042d5"
     },
     "codex-rs/tui/src/chatwidget/mod_commands.rs": {
       "before": null,
@@ -2599,7 +2603,7 @@
     },
     "codex-rs/tui/src/chatwidget/protocol.rs": {
       "before": "aae08d06d7d5183d5df62ff95c6ab972ed8a68dba0c61a55e508e0753f490b34",
-      "after": "fcbbe2322a6e0fee641363eeb7b1afafb836e8118f3af6ad9afdbf38bb501509"
+      "after": "e3b0be812454248fb3f5b67503e77c1d1b3f7b38e7453e98b5130e58b358b7c0"
     },
     "codex-rs/tui/src/chatwidget/protocol_requests.rs": {
       "before": "045836384417a3f6066cb39d23c1f4a2ee0e4a87f39e25212d15397c1e107b45",
@@ -2679,7 +2683,7 @@
     },
     "codex-rs/tui/src/chatwidget/tests/exec_flow.rs": {
       "before": "51b42672a8ae5e62faacde3f055ea695c6abb32e8a0864f6132f80f4bd55cf42",
-      "after": "3ae1e44132131720868e013b00d88c483926fc02bdf2152970336eb32532a6e0"
+      "after": "b5ab4a2735e7bb36da64f8ec1e65d15ea20ec8e1de033a71658c698ca24107c3"
     },
     "codex-rs/tui/src/chatwidget/tests/helpers.rs": {
       "before": "66d88aa99abdcf0158efa43e1e3af28a3c7436333cea923bc300f9254299e07a",
