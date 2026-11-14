@@ -471,6 +471,20 @@ def identity(binary):
     return result
 
 
+def upstream_search_path(binary):
+    package = Path(binary).parent.parent
+    vendor = Path("vendor/aarch64-apple-darwin")
+    for root in (package, package / vendor, package / "node_modules/@openai/codex-darwin-arm64" / vendor,
+                 package.parent / "codex-darwin-arm64" / vendor):
+        try:
+            folder = root / json.loads((root / "codex-package.json").read_text())["pathDir"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if (folder / "rg").is_file():
+            return str(folder)
+    return None
+
+
 def release_lock(upstream, patch, mods):
     record = json.loads((ROOT / "runtime/release.lock.json").read_text())
     if (record.get("schema") != SCHEMA or record.get("product") != PRODUCT
@@ -571,6 +585,8 @@ def selected_text(record):
     aside, control = shlex.quote(str(Path(store) / "mods.json.corrupt")), shlex.quote(str(Path(record["bin_dir"]) / "omd-package"))
     lines.append(f"if [ -e {aside} ]; then {control} reconcile --summary >&2"
                  " || echo 'Oh My Diff could not restore your mods after the reset; run omd doctor.' >&2; fi")
+    if record.get("upstream_search_path"):
+        lines.append(f'PATH="$PATH":{shlex.quote(record["upstream_search_path"])}; export PATH')
     lines.append("unset OMD_INSTALL_PROFILE OMD_MOD_STORE")
     lines.append(f"export OMD_INSTALL_PROFILE={'platform_only' if record['profile'] == 'platform' else 'full'}")
     if selection == "direct":
@@ -1207,6 +1223,7 @@ def install(args):
                   "management": {"files": management_files},
                   "tools": tools,
                   "upstream_fallback": fallback_id,
+                  "upstream_search_path": upstream_search_path(fallback_id["path"]),
                   "upstream_commit": upstream_lock["commit"],
                   "runtime_patch_sha256": patch_lock["patch"]["sha256"],
                   "shared_state": {"codex_home": str(home), "codex_sqlite_home": str(sqlite),
