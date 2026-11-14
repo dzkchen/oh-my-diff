@@ -419,11 +419,11 @@
         "client.ts": "041d9b06ad87e716bdceb17450cf361661f58186b9d9a6ed6e8774ce30298c2d",
         "index.ts": "bdb66d8fbf3b2ac4325729016a08be6086e487bc86033c3d502dedfcc4a5eb28",
         "mod.json": "23521da9ac7570a36e4d56cbdf40e63c143c8372d8df8aecb5e559a72d6ae009",
-        "protocol.ts": "7166c88e0813dc32d1034f6d3c184ee68d33327bcdf8b8c2b07a47ffcc450f4c",
+        "protocol.ts": "ddf6f7bece0e6e8978bf8629c73bc575d1f8d683bc4edd8118994b3c80d5da04",
         "semantic.ts": "5b98bb9323fa252010eb812b21cb49e74bc34f582090da7196bbdcc605ac54be"
       },
       "id": "omd_lsp_sync",
-      "package_sha256": "3fc12c840cdca55c278e6a73a164126d8aabc4d7ca0729ae0d47d350d644dc29",
+      "package_sha256": "01d65d05d65dd3bb1da6fc2ba1799c6c5d6bf7913b126f36714dfd6f1c55f8f2",
       "source": "mods/first-party/omd_lsp_sync",
       "version": "1.0.1"
     },
