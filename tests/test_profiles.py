@@ -116,6 +116,38 @@ class ProfileModeTests(unittest.TestCase):
                   "activation": {"selection": "direct"}}
         self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
 
+    def test_the_upstream_package_search_folder_is_found_for_homebrew_and_npm_layouts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            vendor = "vendor/aarch64-apple-darwin"
+            layouts = {"Caskroom/codex/0.167.1": "bin/codex",
+                       "npm/@openai/codex/node_modules/@openai/codex-darwin-arm64/" + vendor: "../../../../../bin/codex.js",
+                       "pnpm/@openai/codex-darwin-arm64/" + vendor: "../../../codex/bin/codex.js"}
+            for root, binary in layouts.items():
+                package = base / root
+                (package / "codex-path").mkdir(parents=True)
+                (package / "codex-path/rg").write_text("")
+                (package / "codex-package.json").write_text(json.dumps({"pathDir": "codex-path"}))
+                self.assertEqual(profiles.upstream_search_path((package / binary).resolve()), str(package / "codex-path"))
+            (base / "Caskroom/codex/0.167.1/codex-path/rg").unlink()
+            self.assertIsNone(profiles.upstream_search_path(base / "Caskroom/codex/0.167.1/bin/codex"))
+            self.assertIsNone(profiles.upstream_search_path(base / "elsewhere/bin/codex"))
+
+    def test_the_launcher_appends_the_upstream_search_folder_to_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            (base / "bin").mkdir()
+            (base / "codex-real").write_text("#!/bin/sh\nprintf '%s' \"$PATH\"\n")
+            (base / "codex-real").chmod(0o755)
+            record = {"bin_dir": str(base / "bin"), "binary": {"installed_path": str(base / "codex-real")},
+                      "store": str(base / "store"), "profile": "full", "activation": {"selection": "full"},
+                      "upstream_search_path": str(base / "it's codex-path")}
+            launcher = base / "codex"
+            launcher.write_text(profiles.selected_text(record))
+            result = subprocess.run(["sh", launcher], check=True, capture_output=True, text=True,
+                                    env={"PATH": "/usr/bin:/bin"})
+            self.assertEqual(result.stdout, f"/usr/bin:/bin:{base}/it's codex-path")
+
     def test_a_route_launch_refreshes_a_catalog_that_lacks_routes_added_in_a_session(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
