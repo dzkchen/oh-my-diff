@@ -43892,6 +43892,184 @@ index 9fe4a7663bdbd4555fd1d4679dd56bd55f517514..44317197a6d77d2b2963e883b519648c
      );
      // The source remains available to terminal scrollback in both presentation modes.
      for mode in [HistoryRenderMode::Rich, HistoryRenderMode::Raw] {
+diff --git a/codex-rs/tui/src/app/tests/streaming_interleave_e2e.rs b/codex-rs/tui/src/app/tests/streaming_interleave_e2e.rs
+index 63d9de8dd3eeab75d56e1f02caba7ec1769d3f70..aa5ea6ab8994ab8f740c93f3666e48e03a542458 100644
+--- a/codex-rs/tui/src/app/tests/streaming_interleave_e2e.rs
++++ b/codex-rs/tui/src/app/tests/streaming_interleave_e2e.rs
+@@ -16,6 +16,173 @@ use tokio::time::timeout;
+
+ const PREAMBLE: &str = "I’ll inspect the relevant streaming path first.";
+
++#[tokio::test]
++async fn interleaved_tool_notifications_preserve_one_complete_message() -> Result<()> {
++    let fixtures = [
++        (
++            serde_json::json!({"type":"webSearch","id":"web","query":"fixture query","action":null}),
++            false,
++        ),
++        (
++            serde_json::json!({"type":"webSearch","id":"web","query":"fixture query","action":null}),
++            true,
++        ),
++        (
++            serde_json::json!({"type":"commandExecution","id":"exec","command":"echo fixture","cwd":"/tmp","status":"inProgress","commandActions":[]}),
++            true,
++        ),
++        (
++            serde_json::json!({"type":"imageView","id":"image","path":"/tmp/fixture.png"}),
++            false,
++        ),
++        (
++            serde_json::json!({"type":"imageGeneration","id":"image","status":"completed","result":""}),
++            false,
++        ),
++        (
++            serde_json::json!({"type":"collabAgentToolCall","id":"collab","tool":"wait","status":"completed","senderThreadId":"parent","receiverThreadIds":[],"agentsStates":{}}),
++            false,
++        ),
++    ];
++    let mut app_server = {
++        let app = crate::app::test_support::make_test_app().await;
++        Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?
++    };
++    let answer =
++        "The process is the strongest suspect.\n\nIts footprint includes compressed memory.";
++    for (fixture, started) in fixtures {
++        for (prefix, suffix) in [
++            ("The process is the strongest suspect.", ""),
++            (
++                "The process is the strongest suspect.",
++                "\n\nIts footprint includes compressed memory.",
++            ),
++            (answer, ""),
++        ] {
++            for owned in [false, true] {
++                let (mut app, mut events, _ops) = make_test_app_with_channels().await;
++                let mut tui = crate::tui::test_support::make_test_tui()?;
++                tui.set_owned_screen(owned)?;
++                let thread_id = ThreadId::new().to_string();
++                let notify_delta = |app: &mut App, text: &str| {
++                    app.chat_widget.handle_server_notification(
++                        ServerNotification::AgentMessageDelta(
++                            codex_app_server_protocol::AgentMessageDeltaNotification {
++                                thread_id: thread_id.clone(),
++                                turn_id: "turn".into(),
++                                item_id: "message".into(),
++                                delta: text.into(),
++                            },
++                        ),
++                        None,
++                    );
++                };
++                notify_delta(&mut app, prefix);
++                app.chat_widget.on_commit_tick();
++                let item = serde_json::from_value(fixture.clone())?;
++                let notification = if started {
++                    ServerNotification::ItemStarted(
++                        codex_app_server_protocol::ItemStartedNotification::new(
++                            thread_id.clone(),
++                            "turn".into(),
++                            item,
++                            0,
++                        ),
++                    )
++                } else {
++                    ServerNotification::ItemCompleted(
++                        codex_app_server_protocol::ItemCompletedNotification::new(
++                            thread_id.clone(),
++                            "turn".into(),
++                            item,
++                            None,
++                            1250,
++                        ),
++                    )
++                };
++                app.chat_widget
++                    .handle_server_notification(notification, None);
++                if started {
++                    let mut completed = fixture.clone();
++                    if completed["type"] == "commandExecution" {
++                        completed["status"] = "completed".into();
++                    }
++                    app.chat_widget.handle_server_notification(
++                        ServerNotification::ItemCompleted(
++                            codex_app_server_protocol::ItemCompletedNotification::new(
++                                thread_id.clone(),
++                                "turn".into(),
++                                serde_json::from_value(completed)?,
++                                None,
++                                2500,
++                            ),
++                        ),
++                        None,
++                    );
++                }
++                if !suffix.is_empty() {
++                    notify_delta(&mut app, suffix);
++                    app.chat_widget.on_commit_tick();
++                }
++                app.chat_widget.handle_server_notification(
++                    ServerNotification::ItemCompleted(
++                        codex_app_server_protocol::ItemCompletedNotification::new(
++                            thread_id.clone(),
++                            "turn".into(),
++                            ThreadItemPayload::AgentMessage {
++                                id: "message".into(),
++                                text: answer.into(),
++                                phase: Some(codex_protocol::models::MessagePhase::Commentary),
++                                memory_citation: None,
++                                delivery: None,
++                                questions: None,
++                            },
++                            None,
++                            2000,
++                        ),
++                    ),
++                    None,
++                );
++                while let Ok(event) = events.try_recv() {
++                    app.handle_event(&mut tui, &mut app_server, event).await?;
++                }
++                let text = app
++                    .transcript_cells
++                    .iter()
++                    .flat_map(|cell| cell.display_lines(100))
++                    .map(|line| line.to_string())
++                    .collect::<Vec<_>>()
++                    .join("\n");
++                assert_eq!(
++                    text.matches("The process is the strongest suspect.")
++                        .count(),
++                    1,
++                    "{fixture}: {text}"
++                );
++                assert_eq!(
++                    text.matches("Its footprint includes compressed memory.")
++                        .count(),
++                    1,
++                    "{fixture}: {text}"
++                );
++                assert!(
++                    app.transcript_cells
++                        .iter()
++                        .any(|cell| cell.copy_source() == Some(answer)),
++                    "{fixture}: {text}"
++                );
++                assert!(
++                    app.transcript_cells.len() > 1,
++                    "tool activity was lost: {fixture}: {text}"
++                );
++                tui.set_owned_screen(false)?;
++            }
++        }
++    }
++    app_server.shutdown().await?;
++    Ok(())
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn command_start_before_message_completion_does_not_duplicate_preamble() -> Result<()> {
+     core_test_support::skip_if_no_network!(Ok(()));
 diff --git a/codex-rs/tui/src/app/tests/turn_submission.rs b/codex-rs/tui/src/app/tests/turn_submission.rs
 index e04fc3da5d0c7eb12584f0ead760d02e7c558825..45b8fb6c4a179e2cbe5f01be887fbd181b474f06 100644
 --- a/codex-rs/tui/src/app/tests/turn_submission.rs
@@ -48408,10 +48586,18 @@ index e769319de7d8bb2e1dc4ab6cc9d71675c739bc48..85826fbf2d58d515fa7dbb340a3620d0
              std::mem::take(&mut previous.rate_limit_snapshots_by_limit_id);
          self.usage_notice_state = std::mem::take(&mut previous.usage_notice_state);
 diff --git a/codex-rs/tui/src/chatwidget/command_lifecycle.rs b/codex-rs/tui/src/chatwidget/command_lifecycle.rs
-index c65cae1fec1092dc652912db3c74ab8b2daf51c3..b91ad2b520c3e035f521414354e6bd550234c220 100644
+index c65cae1fec1092dc652912db3c74ab8b2daf51c3..ad8b1ba95fdd53c8c7de4f870bc48d5e69634d2c 100644
 --- a/codex-rs/tui/src/chatwidget/command_lifecycle.rs
 +++ b/codex-rs/tui/src/chatwidget/command_lifecycle.rs
-@@ -41,7 +41,7 @@ impl ChatWidget {
+@@ -31,7 +31,6 @@ impl ChatWidget {
+             return;
+         };
+         let (_command, parsed_cmd) = command_execution_command_and_parsed(command, command_actions);
+-        self.flush_answer_stream_with_separator();
+         if is_unified_exec_source(*source) {
+             if *source == ExecCommandSource::UnifiedExecStartup {
+                 self.track_unified_exec_process_begin(id, process_id.as_deref(), command);
+@@ -41,7 +40,7 @@ impl ChatWidget {
              }
              // Unified exec may be parsed as Unknown; keep the working indicator visible regardless.
              self.bottom_pane.ensure_status_indicator();
@@ -48420,6 +48606,88 @@ index c65cae1fec1092dc652912db3c74ab8b2daf51c3..b91ad2b520c3e035f521414354e6bd55
                  return;
              }
          }
+@@ -58,6 +57,14 @@ impl ChatWidget {
+             return;
+         }
+
++        self.defer_or_handle(
++            (call_id.to_owned(), delta.to_owned()),
++            |queue, (call_id, delta)| queue.push_exec_output(call_id, delta),
++            |chat, (call_id, delta)| chat.handle_exec_output_now(&call_id, &delta),
++        );
++    }
++
++    pub(super) fn handle_exec_output_now(&mut self, call_id: &str, delta: &str) {
+         let Some(cell) = self
+             .transcript
+             .active_cell
+@@ -86,22 +93,33 @@ impl ChatWidget {
+             return;
+         }
+
++        self.defer_or_handle(
++            (process_id, stdin, command_display),
++            |queue, (process_id, stdin, command_display)| {
++                queue.push_terminal_interaction(process_id, stdin, command_display);
++            },
++            |chat, (process_id, stdin, command_display)| {
++                chat.handle_terminal_interaction_now(process_id, stdin, command_display);
++            },
++        );
++    }
++
++    pub(super) fn handle_terminal_interaction_now(
++        &mut self,
++        process_id: String,
++        stdin: String,
++        command_display: Option<String>,
++    ) {
+         self.flush_answer_stream_with_separator();
+         if stdin.is_empty() {
+             // Empty stdin means we are polling for background output.
+             // Surface this in the status indicator (single "waiting" surface) instead of
+             // the transcript. Keep the header short so the interrupt hint remains visible.
+-            self.bottom_pane.ensure_status_indicator();
+-            self.bottom_pane
+-                .set_interrupt_hint_visible(/*visible*/ true);
+-            self.status_state.terminal_title_status_kind =
+-                TerminalTitleStatusKind::WaitingForBackgroundTerminal;
+-            self.set_status(
+-                "Waiting for background terminal".to_string(),
+-                command_display.clone(),
+-                StatusDetailsCapitalization::Preserve,
+-                /*details_max_lines*/ 1,
+-            );
++            let process_running = self
++                .unified_exec_processes
++                .iter()
++                .any(|process| process.key == process_id);
++            let details = command_display.clone();
+             match &mut self.unified_exec_wait_streak {
+                 Some(wait) if wait.process_id == process_id => {
+                     wait.update_command_display(command_display);
+@@ -116,6 +134,21 @@ impl ChatWidget {
+                         Some(UnifiedExecWaitStreak::new(process_id, command_display));
+                 }
+             }
++            if !process_running {
++                self.flush_unified_exec_wait_streak();
++                return;
++            }
++            self.bottom_pane.ensure_status_indicator();
++            self.bottom_pane
++                .set_interrupt_hint_visible(/*visible*/ true);
++            self.status_state.terminal_title_status_kind =
++                TerminalTitleStatusKind::WaitingForBackgroundTerminal;
++            self.set_status(
++                "Waiting for background terminal".to_string(),
++                details,
++                StatusDetailsCapitalization::Preserve,
++                /*details_max_lines*/ 1,
++            );
+             self.request_redraw();
+         } else {
+             if self
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
 index 6e405d201e550a151303851a2c4af4ba5089b947..aa806be01bb349e4d35589ae46fc94d4fe184790 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
@@ -48694,19 +48962,58 @@ index 7d0c7403b50611b9b1a15fb4eb8a695bb3f3a3be..dda6d8a128c742854ffd4a2b2c5a283d
 
          // Persist the submitted text to cross-session message history. Mentions are encoded into
 diff --git a/codex-rs/tui/src/chatwidget/interrupts.rs b/codex-rs/tui/src/chatwidget/interrupts.rs
-index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..11876a4bc769a4afdac0c6f71e2ed7efb344b065 100644
+index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..682a52fa027c4212357365b3241c0c66a528f35a 100644
 --- a/codex-rs/tui/src/chatwidget/interrupts.rs
 +++ b/codex-rs/tui/src/chatwidget/interrupts.rs
-@@ -26,7 +26,7 @@ pub(crate) enum QueuedInterrupt {
+@@ -9,11 +9,31 @@ use crate::approval_events::ApplyPatchApprovalRequestEvent;
+ use crate::approval_events::ExecApprovalRequestEvent;
+ use codex_app_server_protocol::McpServerElicitationRequestParams;
+ use codex_app_server_protocol::RequestId as AppServerRequestId;
++use codex_app_server_protocol::ServerNotification;
+ use codex_app_server_protocol::ThreadItemPayload;
+ use codex_app_server_protocol::ToolRequestUserInputParams;
+ use codex_protocol::request_permissions::RequestPermissionsEvent;
+
+ use super::ChatWidget;
++use super::ReplayKind;
++
++pub(super) fn is_activity_notification(notification: &ServerNotification) -> bool {
++    let item = match notification {
++        ServerNotification::ItemStarted(notification) => &notification.item.payload,
++        ServerNotification::ItemCompleted(notification) => &notification.item.payload,
++        ServerNotification::HookStarted(_)
++        | ServerNotification::HookCompleted(_)
++        | ServerNotification::TurnPlanUpdated(_) => return true,
++        _ => return false,
++    };
++    matches!(
++        item,
++        ThreadItemPayload::CollabAgentToolCall { .. }
++            | ThreadItemPayload::WebSearch(_)
++            | ThreadItemPayload::ImageView { .. }
++            | ThreadItemPayload::ImageGeneration(_)
++    )
++}
+
+ #[derive(Debug)]
+ pub(crate) enum QueuedInterrupt {
+@@ -26,7 +46,14 @@ pub(crate) enum QueuedInterrupt {
      RequestPermissions(RequestPermissionsEvent),
      RequestUserInput(ToolRequestUserInputParams),
      ItemStarted(ThreadItemPayload),
 -    ItemCompleted(ThreadItemPayload),
 +    ItemCompleted(ThreadItemPayload, Option<u64>),
++    ActivityNotification(Box<ServerNotification>, Option<ReplayKind>),
++    ExecOutput(String, String),
++    TerminalInteraction {
++        process_id: String,
++        stdin: String,
++        command_display: Option<String>,
++    },
  }
 
  #[derive(Default)]
-@@ -92,7 +92,16 @@ impl InterruptManager {
+@@ -92,7 +119,45 @@ impl InterruptManager {
      }
 
      pub(crate) fn push_item_completed(&mut self, item: ThreadItemPayload) {
@@ -48721,10 +49028,39 @@ index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..11876a4bc769a4afdac0c6f71e2ed7ef
 +    ) {
 +        self.queue
 +            .push_back(QueuedInterrupt::ItemCompleted(item, duration_ms));
++    }
++
++    pub(super) fn push_activity_notification(
++        &mut self,
++        notification: ServerNotification,
++        replay_kind: Option<ReplayKind>,
++    ) {
++        self.queue.push_back(QueuedInterrupt::ActivityNotification(
++            Box::new(notification),
++            replay_kind,
++        ));
++    }
++
++    pub(super) fn push_exec_output(&mut self, call_id: String, delta: String) {
++        self.queue
++            .push_back(QueuedInterrupt::ExecOutput(call_id, delta));
++    }
++
++    pub(super) fn push_terminal_interaction(
++        &mut self,
++        process_id: String,
++        stdin: String,
++        command_display: Option<String>,
++    ) {
++        self.queue.push_back(QueuedInterrupt::TerminalInteraction {
++            process_id,
++            stdin,
++            command_display,
++        });
      }
 
      /// Settle background activity at turn end without opening queued prompts.
-@@ -101,8 +110,8 @@ impl InterruptManager {
+@@ -101,9 +166,20 @@ impl InterruptManager {
          while let Some(queued) = self.queue.pop_front() {
              match queued {
                  QueuedInterrupt::ItemStarted(item) => chat.handle_queued_item_started_now(item),
@@ -48732,10 +49068,22 @@ index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..11876a4bc769a4afdac0c6f71e2ed7ef
 -                    chat.handle_queued_item_completed_now(item);
 +                QueuedInterrupt::ItemCompleted(item, duration_ms) => {
 +                    chat.handle_queued_item_completed_now(item, duration_ms);
++                }
++                QueuedInterrupt::ActivityNotification(notification, replay_kind) => {
++                    chat.handle_server_notification_now(*notification, replay_kind);
++                }
++                QueuedInterrupt::ExecOutput(call_id, delta) => {
++                    chat.handle_exec_output_now(&call_id, &delta);
                  }
++                QueuedInterrupt::TerminalInteraction {
++                    process_id,
++                    stdin,
++                    command_display,
++                } => chat.handle_terminal_interaction_now(process_id, stdin, command_display),
                  prompt => pending_prompts.push_back(prompt),
              }
-@@ -131,8 +140,8 @@ impl InterruptManager {
+         }
+@@ -131,9 +207,20 @@ impl InterruptManager {
                  QueuedInterrupt::RequestPermissions(ev) => chat.handle_request_permissions_now(ev),
                  QueuedInterrupt::RequestUserInput(ev) => chat.handle_request_user_input_now(ev),
                  QueuedInterrupt::ItemStarted(item) => chat.handle_queued_item_started_now(item),
@@ -48743,15 +49091,31 @@ index 7b1d1b6802e88ff096c0436fb96f748fb2fae1e4..11876a4bc769a4afdac0c6f71e2ed7ef
 -                    chat.handle_queued_item_completed_now(item);
 +                QueuedInterrupt::ItemCompleted(item, duration_ms) => {
 +                    chat.handle_queued_item_completed_now(item, duration_ms);
++                }
++                QueuedInterrupt::ActivityNotification(notification, replay_kind) => {
++                    chat.handle_server_notification_now(*notification, replay_kind);
++                }
++                QueuedInterrupt::ExecOutput(call_id, delta) => {
++                    chat.handle_exec_output_now(&call_id, &delta);
                  }
++                QueuedInterrupt::TerminalInteraction {
++                    process_id,
++                    stdin,
++                    command_display,
++                } => chat.handle_terminal_interaction_now(process_id, stdin, command_display),
              }
          }
-@@ -164,7 +173,7 @@ impl QueuedInterrupt {
+     }
+@@ -164,7 +251,11 @@ impl QueuedInterrupt {
                  matches!(request, ResolvedAppServerRequest::UserInput { call_id }
                      if ev.item_id == call_id.as_str())
              }
 -            QueuedInterrupt::ItemStarted(_) | QueuedInterrupt::ItemCompleted(_) => false,
-+            QueuedInterrupt::ItemStarted(_) | QueuedInterrupt::ItemCompleted(_, _) => false,
++            QueuedInterrupt::ItemStarted(_)
++            | QueuedInterrupt::ItemCompleted(_, _)
++            | QueuedInterrupt::ActivityNotification(_, _)
++            | QueuedInterrupt::ExecOutput(_, _)
++            | QueuedInterrupt::TerminalInteraction { .. } => false,
          }
      }
  }
@@ -49013,13 +49377,35 @@ index 92ef60bada2767a6678d19f8b2f6588889c10d55..a13fd2bae2f7a105a2e9fe82c096fb6e
              return;
          }
 diff --git a/codex-rs/tui/src/chatwidget/protocol.rs b/codex-rs/tui/src/chatwidget/protocol.rs
-index 7a084963739d14dd928e60f241259d42e1ec8725..f38b89d1c41c9363c7c6af24297f44c66053b68a 100644
+index 7a084963739d14dd928e60f241259d42e1ec8725..5fe1861f8e419081b50287bdaa0c0ca51d87f841 100644
 --- a/codex-rs/tui/src/chatwidget/protocol.rs
 +++ b/codex-rs/tui/src/chatwidget/protocol.rs
-@@ -6,6 +6,29 @@ impl ChatWidget {
+@@ -6,6 +6,51 @@ impl ChatWidget {
          notification: ServerNotification,
          replay_kind: Option<ReplayKind>,
      ) {
++        if interrupts::is_activity_notification(&notification)
++            && (self.turn_lifecycle.agent_turn_running || self.stream_controller.is_some())
++        {
++            self.defer_or_handle(
++                (notification, replay_kind),
++                |queue, (notification, replay_kind)| {
++                    queue.push_activity_notification(notification, replay_kind);
++                },
++                |chat, (notification, replay_kind)| {
++                    chat.handle_server_notification_now(notification, replay_kind);
++                },
++            );
++        } else {
++            self.handle_server_notification_now(notification, replay_kind);
++        }
++    }
++
++    pub(super) fn handle_server_notification_now(
++        &mut self,
++        notification: ServerNotification,
++        replay_kind: Option<ReplayKind>,
++    ) {
 +        if replay_kind.is_none() {
 +            let pending_start =
 +                self.input_queue.user_turn_pending_start && !self.turn_lifecycle.agent_turn_running;
@@ -49046,7 +49432,7 @@ index 7a084963739d14dd928e60f241259d42e1ec8725..f38b89d1c41c9363c7c6af24297f44c6
          // Reject misrouted child updates before shared notification handling mutates parent state.
          if let ServerNotification::McpServerStatusUpdated(notification) = &notification
              && let (Some(notification_thread_id), Some(thread_id)) =
-@@ -372,6 +395,19 @@ impl ChatWidget {
+@@ -372,6 +417,19 @@ impl ChatWidget {
                      self.on_realtime_conversation_closed(notification.reason);
                  }
              }
@@ -49066,7 +49452,7 @@ index 7a084963739d14dd928e60f241259d42e1ec8725..f38b89d1c41c9363c7c6af24297f44c6
              ServerNotification::ServerRequestResolved(_)
              | ServerNotification::AccountUpdated(_)
              | ServerNotification::GatewayOAuthChanged(_)
-@@ -381,6 +417,9 @@ impl ChatWidget {
+@@ -381,6 +439,9 @@ impl ChatWidget {
              | ServerNotification::ThreadReadStateChanged(_)
              | ServerNotification::ThreadSectionChanged(_)
              | ServerNotification::ThreadReverted(_)
@@ -49076,7 +49462,7 @@ index 7a084963739d14dd928e60f241259d42e1ec8725..f38b89d1c41c9363c7c6af24297f44c6
              | ServerNotification::ThreadQueueChanged(_)
              | ServerNotification::ThreadPredictionUpdated(_)
              | ServerNotification::ThreadArchived(_)
-@@ -625,9 +664,7 @@ impl ChatWidget {
+@@ -625,9 +686,7 @@ impl ChatWidget {
              item @ ThreadItemPayload::CommandExecution { .. } => {
                  self.on_command_execution_started(item)
              }
@@ -49087,7 +49473,7 @@ index 7a084963739d14dd928e60f241259d42e1ec8725..f38b89d1c41c9363c7c6af24297f44c6
              item @ ThreadItemPayload::McpToolCall { .. } => self.on_mcp_tool_call_started(item),
              item @ ThreadItemPayload::DynamicToolCall { .. } => self.on_dynamic_tool_item(item),
              ThreadItemPayload::WebSearch(item) => {
-@@ -697,14 +734,16 @@ impl ChatWidget {
+@@ -697,14 +756,16 @@ impl ChatWidget {
          {
              return;
          }
@@ -50962,7 +51348,7 @@ index 47c6985de141758b5627e7ba914136db95bac3ba..184db30ca26c9f4edc1f8072c7199812
  async fn reconnect_keeps_queue_paused_after_pending_compact() {
      let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
 diff --git a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
-index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac791c021da9 100644
+index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..194ad2ced630835d30778c721db0b071d868eb96 100644
 --- a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
 @@ -2,6 +2,61 @@ use super::*;
@@ -51045,7 +51431,116 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac79
 
          complete_assistant_message(
              &mut chat,
-@@ -1628,12 +1683,12 @@ async fn apply_patch_events_emit_history_cells() {
+@@ -892,6 +947,108 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
+     }
+ }
+
++#[tokio::test]
++async fn command_output_during_assistant_stream_retains_process_and_recent_output() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
++    handle_turn_started(&mut chat, "turn-1");
++    handle_agent_message_delta(&mut chat, "Answer in progress.");
++    let command = serde_json::from_value(serde_json::json!({
++        "type": "commandExecution", "id": "command", "processId": "process",
++        "command": "cat fixture.txt", "cwd": chat.config.cwd,
++        "source": ExecCommandSource::UnifiedExecStartup, "status": "inProgress",
++        "commandActions": [{"type": "read", "command": "cat fixture.txt",
++            "name": "fixture.txt", "path": "/tmp/fixture.txt"}]
++    }))
++    .unwrap();
++    handle_exec_begin(&mut chat, command);
++    chat.handle_server_notification(
++        ServerNotification::CommandExecutionOutputDelta(
++            codex_app_server_protocol::CommandExecutionOutputDeltaNotification {
++                thread_id: "thread-1".into(),
++                turn_id: "turn-1".into(),
++                item_id: "command".into(),
++                delta: "fixture output\n".into(),
++            },
++        ),
++        None,
++    );
++    assert_eq!(chat.unified_exec_processes.len(), 1);
++    assert_eq!(chat.unified_exec_processes[0].key, "process");
++    assert_eq!(
++        chat.unified_exec_processes[0].recent_chunks,
++        vec!["fixture output"]
++    );
++    complete_assistant_message(
++        &mut chat,
++        "msg-1",
++        "Answer in progress. Complete.",
++        Some(MessagePhase::Commentary),
++    );
++    let transcript = chat.active_cell_transcript_lines(80).unwrap();
++    assert!(lines_to_single_string(&transcript).contains("fixture output"));
++    assert_eq!(
++        chat.unified_exec_processes[0].recent_chunks,
++        vec!["fixture output"]
++    );
++}
++
++#[tokio::test]
++async fn terminal_interaction_during_stream_retains_context_after_process_exit() {
++    for stdin in ["input\n", ""] {
++        for complete_turn in [false, true] {
++            let (mut chat, mut events, _ops) = make_chatwidget_manual(None).await;
++            handle_turn_started(&mut chat, "turn-1");
++            let command = begin_unified_exec_startup(&mut chat, "command", "process", "cat");
++            handle_agent_message_delta(&mut chat, "Answer in progress.");
++            terminal_interaction(&mut chat, "interaction", "process", stdin);
++            end_exec(&mut chat, command, "", "", 0);
++            assert!(chat.unified_exec_processes.is_empty());
++            assert!(chat.stream_controller.is_some());
++
++            if complete_turn {
++                handle_turn_completed(&mut chat, "turn-1", None);
++            } else {
++                complete_assistant_message(
++                    &mut chat,
++                    "message",
++                    "Answer in progress. Complete.",
++                    Some(MessagePhase::Commentary),
++                );
++            }
++            assert_ne!(
++                chat.status_state.current_status.header,
++                "Waiting for background terminal"
++            );
++            chat.flush_active_cell();
++            let history = drain_insert_history_with(&mut events, |cell| {
++                let mut lines = cell.raw_lines();
++                lines.extend(cell.transcript_lines(120));
++                lines
++            });
++            let text = history
++                .iter()
++                .map(|lines| lines_to_single_string(lines))
++                .collect::<String>();
++            let action = if stdin.is_empty() {
++                "Waited for"
++            } else {
++                "Interacted with"
++            };
++            assert!(
++                text.contains(&format!("{action} background terminal: cat")),
++                "stdin={stdin:?}, complete_turn={complete_turn}: {text}"
++            );
++            assert!(
++                text.contains(&format!("{action} background terminal · cat")),
++                "stdin={stdin:?}, complete_turn={complete_turn}: {text}"
++            );
++            if !stdin.is_empty() {
++                assert!(text.contains("input"), "{text}");
++            }
++        }
++    }
++}
++
+ #[tokio::test]
+ async fn unified_exec_wait_status_header_updates_on_late_command_display() {
+     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+@@ -1628,12 +1785,12 @@ async fn apply_patch_events_emit_history_cells() {
          grant_root: None,
      };
      handle_apply_patch_approval_request(&mut chat, "s1", ev);
@@ -51062,7 +51557,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac79
      let mut changes2 = HashMap::new();
      changes2.insert(
          PathBuf::from("foo.txt"),
-@@ -1642,8 +1697,24 @@ async fn apply_patch_events_emit_history_cells() {
+@@ -1642,8 +1799,24 @@ async fn apply_patch_events_emit_history_cells() {
          },
      );
      handle_patch_apply_begin(&mut chat, "c1", "turn-c1", changes2);
@@ -51088,7 +51583,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac79
      let blob = lines_to_single_string(cells.last().unwrap());
      insta::assert_snapshot!(blob, @"
      • Added foo.txt (+16 -0)
-@@ -1664,27 +1735,6 @@ async fn apply_patch_events_emit_history_cells() {
+@@ -1664,27 +1837,6 @@ async fn apply_patch_events_emit_history_cells() {
          15 +line 15
          16 +line 16
      ");
@@ -51116,7 +51611,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac79
  }
 
  #[tokio::test]
-@@ -1718,7 +1768,15 @@ async fn apply_patch_manual_approval_adjusts_header() {
+@@ -1718,7 +1870,15 @@ async fn apply_patch_manual_approval_adjusts_header() {
              content: "hello\n".to_string(),
          },
      );
@@ -51133,7 +51628,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac79
 
      let cells = drain_insert_history(&mut rx);
      assert!(!cells.is_empty(), "expected apply block cell to be sent");
-@@ -1752,9 +1810,10 @@ async fn apply_patch_manual_flow_snapshot() {
+@@ -1752,9 +1912,10 @@ async fn apply_patch_manual_flow_snapshot() {
          },
      );
      let history_before_apply = drain_insert_history(&mut rx);
@@ -51147,7 +51642,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac79
      );
 
      let mut apply_changes = HashMap::new();
-@@ -1764,7 +1823,15 @@ async fn apply_patch_manual_flow_snapshot() {
+@@ -1764,7 +1925,15 @@ async fn apply_patch_manual_flow_snapshot() {
              content: "hello\n".to_string(),
          },
      );
@@ -51164,7 +51659,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac79
      let approved_lines = drain_insert_history(&mut rx)
          .pop()
          .expect("approved patch cell");
-@@ -1970,9 +2037,10 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
+@@ -1970,9 +2139,10 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
          },
      );
 
@@ -51178,7 +51673,7 @@ index 5d2f4693dcb2af2d4c520b57081fa61571ccdb0d..f299d03680340910196037005600ac79
      );
 
      let area = Rect::new(0, 0, 80, chat.desired_height(/*width*/ 80));
-@@ -1991,3 +2059,35 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
+@@ -1991,3 +2161,35 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
 
      Ok(())
  }
