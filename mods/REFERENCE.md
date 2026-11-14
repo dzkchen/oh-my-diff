@@ -809,6 +809,13 @@ In a package made with `create`, the `pnpm` scripts (`check`, `test`, `run`, `de
 the 512 KiB limit per entrypoint, asset or lifecycle file and the 1 MiB combined entrypoint/UTF-8 asset limit,
 including when TypeScript is absent.
 
+The scaffold's `tsconfig.json` type-checks every `.ts` and `.tsx` file in the package against ES2022 plus the globals
+the mod runtime provides (`console`, `TextEncoder` and `crypto`, from the SDK's `globals.d.ts`), so `document`,
+`window`, `fetch` and `setTimeout` fail the check. `check` type-checks `*.test.ts` files separately with Node's types
+once `@types/node` is installed (`pnpm add -D @types/node`), and says so when it isn't. `pnpm run package` refuses a
+`mod.json` whose `provenance` still says `CHANGE ME`. `create` also writes a `.gitignore` for `node_modules/`, `.omd/`
+and `dist/`.
+
 `pnpm test` runs, in order:
 
 1. every scenario in `mod.test.json`, with no provider requests
