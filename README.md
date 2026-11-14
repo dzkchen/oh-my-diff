@@ -27,6 +27,10 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Codex with a theme scene, /mods, a mod blocking a force-push, and the same mod's /standup command" width="100%">
+</p>
+
 You still run `codex`, with your settings, sign-in and sessions, and you can go back to plain Codex at any time with
 nothing to migrate. OMD is in beta and runs only on Apple Silicon macOS.
 
@@ -35,6 +39,22 @@ nothing to migrate. OMD is in beta and runs only on Apple Silicon macOS.
 A mod is a small TypeScript program. It can add a slash command, give the model a new tool, add context to a request,
 draw a status line, panel or dialog, or react when the agent runs a tool. Before a mod runs, OMD shows its source,
 license and the permissions it asks for. You control which mods run, subject to any administrator policy.
+
+This mod, from the demo, blocks force-pushes and adds a `/standup` command:
+
+```ts
+import type { ModAPI } from '@oh-my-diff/mod-api';
+
+export default function activate(api: ModAPI) {
+  api.intercept('tool', { match: { tool: 'exec_command', arguments: { cmd: /\bgit\s+push\b.*\s(--force|-f)\b/ } } },
+    () => ({ deny: 'Force-pushing is off in this repo. Push to a new branch instead.' }));
+
+  api.command('standup', () => ({ submit: 'From git log since yesterday, write my standup as three short bullets.' }),
+    { description: 'Ask the agent for a standup from recent commits' });
+}
+```
+
+The full mod, with its `mod.json`, is in [`mods/examples/repo_rules`](mods/examples/repo_rules).
 
 [How OMD works](docs/how-omd-works.md) · [Trust and permissions](docs/trust-and-permissions.md) ·
 [Write your first mod](docs/mod-authors/first-mod.md)
@@ -47,6 +67,7 @@ OMD+ comes with these, among others:
 - **[Status line](mods/first-party/omd_statusline/README.md)**: configurable, edited with `/statusline`.
 - **[Privacy](mods/first-party/omd_privacy/README.md)**: redacts text that matches its secret and personal-data rules in requests sent to the model. Web search, transcripts and logs aren't covered (off; turn on in `/mods`).
 - **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request (off; turn on in `/mods`).
+- **[Themes](mods/first-party/omd_theme/README.md)**: animated scenes behind the conversation, picked with `/theme` (off; turn on in `/mods`).
 - **[Auto-continue](mods/first-party/omd_auto_continue/README.md)**: off until you turn it on; an unanswered approval or question no longer stalls the turn.
 
 Experimental mods add other providers, a workspace dock, `/undo` and language-server feedback. The
