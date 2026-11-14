@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../tests/mod_runner.mjs';
+import { languageId } from './protocol.ts';
 
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -583,4 +584,9 @@ test('LSP installed Python server synchronizes document open, change and close',
     host.session?.close?.();
     rmSync(repository, { recursive: true, force: true });
   }
+});
+
+test('LSP language IDs mark TSX and JSX so the server parses them as React', () => {
+  const ids = Object.fromEntries(['a.py', 'a.pyi', 'a.ts', 'a.tsx', 'a.mts', 'a.cts', 'a.js', 'a.jsx', 'a.mjs', 'a.cjs', 'a.rs', 'a.java'].map(path => [path.slice(2), languageId(path)]));
+  assert.deepEqual(ids, { py: 'python', pyi: 'python', ts: 'typescript', tsx: 'typescriptreact', mts: 'typescript', cts: 'typescript', js: 'javascript', jsx: 'javascriptreact', mjs: 'javascript', cjs: 'javascript', rs: 'rust', java: 'java' });
 });

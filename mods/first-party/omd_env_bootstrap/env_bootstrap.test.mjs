@@ -15,10 +15,10 @@ const request = { source: read('./index.ts'), filename: fileURLToPath(new URL('.
 const section = (id, role, group) => ({ id, kind: id, role, group, protected: false, text: id, bytes: id.length, truncated: false });
 const sections = [section('instructions', 'system', 'instructions'), section('agents_md.instructions', 'user', '1'), section('environments.environment_context', 'user', '1'), section('skill:x', 'user', '3')];
 
-function send(state, exec) {
+function send(state, exec, scope = { thread_id: 't1', agent_id: null, kind: 'main' }) {
   const calls = [];
   let sent = null;
-  const input = { request_id: 'r', attempt: 1, scope: { thread_id: 't1', agent_id: null, kind: 'main' }, routes: [], original: {}, route: 'lead', model: 'm', provider: 'p', effort: null, sections, tools: [] };
+  const input = { request_id: 'r', attempt: 1, scope, routes: [], original: {}, route: 'lead', model: 'm', provider: 'p', effort: null, sections, tools: [] };
   const output = callback({ ...request, state, event: 'intercept', name: '0', payload: { surface: 'model_request', input, original: input, origin: { caller: 'engine' } } }, ({ operation, arguments: args }) => {
     calls.push(operation);
     if (operation === 'exec.run') return exec(args);
@@ -61,4 +61,10 @@ test('the file listing keeps names with spaces or glob characters whole', () => 
   const { stdout } = spawnSync('sh', ['-s'], { input: SNAPSHOT, cwd: dir, encoding: 'utf8' });
   rmSync(dir, { recursive: true });
   assert.match(stdout, /^files \(2\): \* my notes\.txt$/m);
+});
+
+test('a subagent thread takes its own snapshot', () => {
+  const subagent = send(null, () => ({ exit_code: 0, stdout: 'os: Linux\n', timed_out: false }), { thread_id: 't2', agent_id: 'a', kind: 'subagent' });
+  assert.deepEqual(subagent.calls, ['exec.run', 'continuation.next']);
+  assert.ok(subagent.sent.some(item => item.id === 'mod:omd_env_bootstrap'));
 });
