@@ -1294,6 +1294,30 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(self.module.pointer(self.root, "previous"), self.current)
         self.assertEqual(os.readlink(bin_dir / "codex"), str(self.root / "current/bin/codex"))
 
+    def test_status_and_rollback_work_after_the_upstream_codex_is_removed(self):
+        older = self.root / "releases" / ("1" * 32)
+        (older / "prefix").mkdir(parents=True)
+        (older / "receipt.json").write_text(json.dumps({"schema": 1, "generation": older.name, "profile": "platform", "version": "0.0.9"}))
+        receipt = json.loads((self.current / "receipt.json").read_text()) | {
+            "version": "0.1.0", "upstream": {"path": str(self.root / "removed/codex")}}
+        (self.current / "receipt.json").write_text(json.dumps(receipt))
+        (self.root / "previous").symlink_to(older)
+        self.module.upstream_binary = lambda *arguments, **keywords: self.module.fail("no upstream codex")
+        self.assertEqual(self.module.recorded_upstream(self.current), Path("/nonexistent/codex"))
+        upstream = Path(tempfile.mkdtemp(dir=self.root)) / "codex"
+        upstream.write_text("")
+        (self.current / "receipt.json").write_text(json.dumps(receipt | {"upstream": {"path": str(upstream)}}))
+        self.assertEqual(self.module.recorded_upstream(self.current), upstream)
+        upstream.unlink()
+        with patch.object(self.module, "status", return_value={"profile": "platform"}) as checked, \
+                patch.object(self.module, "package") as packaged, \
+                patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
+            self.module.rollback(types.SimpleNamespace(json=True, session=None, upstream=None), self.root,
+                                 self.root / "bin", self.current)
+        self.assertEqual({call.args[1] for call in checked.call_args_list + packaged.call_args_list},
+                         {Path("/nonexistent/codex")})
+        self.assertEqual(self.module.pointer(self.root, "current"), older)
+
     def test_interrupted_uninstall_finishes_on_the_next_start(self):
         real_unlink, real_rmdir = Path.unlink, Path.rmdir
         for point in ("launcher", "receipt", "pointer"):
