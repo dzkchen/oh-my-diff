@@ -959,25 +959,21 @@ async fn request_output(_config: &Config, _command: Vec<String>) -> Result<Value
 
 #[cfg(target_os = "macos")]
 async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, String> {
-    use codex_sandboxing::seatbelt::{
-        CreateSeatbeltCommandArgsParams, MACOS_PATH_TO_SEATBELT_EXECUTABLE,
-        create_seatbelt_command_args,
-    };
+    use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt};
     let profile = config.permissions.effective_permission_profile();
-    let argv = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+    let argv = crate::managed_process::seatbelt_command(
+        codex_sandboxing::SandboxManager::new(),
+        &profile,
         command,
-        file_system_sandbox_policy: &profile.file_system_sandbox_policy(),
-        network_sandbox_policy: profile.network_sandbox_policy(),
-        sandbox_policy_cwd: config.cwd.as_path(),
-        enforce_managed_network: false,
-        managed_network: None,
-        environment_id: None,
-        network: None,
-        extra_allow_unix_sockets: &[],
-    })?;
+        config.cwd.as_path(),
+        None,
+    )?;
+    if argv.first().map(String::as_str) != Some(MACOS_PATH_TO_SEATBELT_EXECUTABLE) {
+        return Err("service_sandbox_unavailable".into());
+    }
     let mut child = tokio::process::Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
-        .args(argv)
+        .args(&argv[1..])
         .current_dir(&config.cwd)
         .env_clear()
         .envs(config.permissions.shell_environment_policy.r#set.iter())

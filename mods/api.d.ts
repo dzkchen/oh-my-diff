@@ -554,7 +554,7 @@ export interface Events {
   assistant_message: { input: { thread_id: string; turn_id: string; message_id: string; text: string; truncated: boolean }; output: void };
   turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: AgentFailure; evidence?: ResourceRef }; output: void };
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
-  compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto'; outcome: 'compacted' | 'replaced' | 'skipped' | 'deferred' | 'failed'; by: string | null; provider_call: boolean }; output: void };
+  compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto'; outcome: 'compacted' | 'replaced' | 'skipped' | 'stopped' | 'deferred' | 'failed'; by: string | null; provider_call: boolean }; output: void };
   agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string; failure?: AgentFailure | null; text?: string; sha256?: string }; output: void };
   contract: { input: { gate: 'complete' | 'integrate'; outcome: 'passed' | 'refused'; missing: ContractRequirement[]; candidate_sha256: string }
     | { gate: 'complete'; outcome: 'refused'; reason: 'unresolved_blocking_findings'; outstanding_findings: string[]; candidate_sha256: string }; output: void };

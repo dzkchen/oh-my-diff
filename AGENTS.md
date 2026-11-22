@@ -1,6 +1,6 @@
 # Agent instructions
 
-Oh My Diff (OMD) patches Codex `0.167.2` with a host for TypeScript mods.
+Oh My Diff (OMD) patches Codex `0.171.0` with a host for TypeScript mods.
 
 ## Build a mod
 

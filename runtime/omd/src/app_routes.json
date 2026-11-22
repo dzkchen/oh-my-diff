@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.167.2",
-  "commit": "ce21072c90d32c40af7a55b60b2fb35c84a43a6a"
+  "tag": "rust-v0.171.0",
+  "commit": "ccf9be8cc458bd6b8336fe84d68d8893f2691a5e"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -19,7 +19,9 @@
     "user",
     "event"
    ],
-   "fields": []
+   "fields": [
+    "modelProvider"
+   ]
   },
   "account/rateLimits/read": {
    "class": "account",
@@ -41,6 +43,14 @@
    "fields": [
     "refreshToken"
    ]
+  },
+  "account/securitySetup/read": {
+   "class": "account",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": []
   },
   "account/usage/read": {
    "class": "account",
@@ -429,6 +439,7 @@
    "fields": [
     "cursor",
     "detail",
+    "environmentId",
     "limit",
     "serverName",
     "threadId"
@@ -461,10 +472,19 @@
    "fields": [
     "cursor",
     "includeHidden",
-    "limit"
+    "limit",
+    "modelProvider"
    ]
   },
   "modelProvider/capabilities/read": {
+   "class": "model",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": []
+  },
+  "modelProvider/list": {
    "class": "model",
    "contexts": [
     "user",
@@ -927,6 +947,7 @@
    "scope": "visible",
    "fields": [
     "cursor",
+    "deferOutput",
     "limit",
     "sortDirection",
     "threadId",
@@ -956,9 +977,12 @@
     "ancestorThreadId",
     "archived",
     "attachedToThreadId",
+    "currentAccountOnly",
     "cursor",
     "cwd",
     "excludedThreadIds",
+    "includeAttachedThreads",
+    "includedThreadIds",
     "limit",
     "modelProviders",
     "originators",
@@ -1042,6 +1066,7 @@
    "fields": [
     "clientUserMessageId",
     "input",
+    "responsesapiClientMetadata",
     "threadId"
    ]
   },
@@ -1101,6 +1126,7 @@
    "fields": [
     "input",
     "queuedSubmissionId",
+    "responsesapiClientMetadata",
     "threadId"
    ]
   },
@@ -1126,6 +1152,27 @@
     "expectedRevision",
     "operation",
     "threadId"
+   ]
+  },
+  "thread/realtime/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible",
+   "fields": [
+    "afterPosition",
+    "cursor",
+    "eventId",
+    "fromObservedAtMs",
+    "limit",
+    "order",
+    "requiredThroughPosition",
+    "sessionId",
+    "snapshotEnd",
+    "threadId",
+    "toObservedAtMs"
    ]
   },
   "thread/realtime/listVoices": {
@@ -1194,6 +1241,7 @@
    ],
    "scope": "current",
    "fields": [
+    "allowInProgressTurn",
     "disableMcp",
     "effort",
     "expectedTurnId",
@@ -1213,7 +1261,27 @@
    ],
    "fields": [
     "archived",
+    "currentAccountOnly",
     "cursor",
+    "includeAttachedThreads",
+    "limit",
+    "searchTerm",
+    "sortDirection",
+    "sortKey",
+    "sourceKinds"
+   ]
+  },
+  "thread/search/stream": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": [
+    "archived",
+    "currentAccountOnly",
+    "cursor",
+    "includeAttachedThreads",
     "limit",
     "searchTerm",
     "sortDirection",
@@ -1537,6 +1605,7 @@
   "thread/realtime/transcript/done",
   "thread/reverted",
   "thread/rewritten",
+  "thread/search/partial",
   "thread/section/changed",
   "thread/settings/updated",
   "thread/started",
@@ -1570,8 +1639,6 @@
   "auto_review.circuit_break_action",
   "auto_review.conversation_history_max_output_tokens",
   "auto_review.experimental_conversation_history_prompt",
-  "auto_review.experimental_policy_template",
-  "auto_review.extra_policy",
   "auto_review.policy",
   "auto_review.timeout_ms",
   "browser_use",
@@ -1590,6 +1657,7 @@
   "experimental_thread_store",
   "features.auth_elicitation",
   "features.browser_use_full_cdp_access",
+  "features.cli_resume_account_check",
   "features.credential_masking",
   "features.elevated_windows_sandbox",
   "features.enable_experimental_windows_sandbox",
@@ -1597,9 +1665,12 @@
   "features.experimental_windows_sandbox",
   "features.guardian_approval",
   "features.guardian_conversation_history_tools",
+  "features.guardian_denial_reconsideration",
   "features.guardian_enhanced_node_repl_transcripts",
   "features.guardian_ext",
+  "features.guardian_include_additional_context",
   "features.guardian_native_multi_agent_history",
+  "features.guardian_nested_approval_context",
   "features.guardian_node_repl_transcript_images",
   "features.guardian_recorded_items",
   "features.guardian_reuse_parent_compaction",
@@ -1608,6 +1679,7 @@
   "features.guardianv2",
   "features.guardianv2_decisions_comparison",
   "features.guardianv3",
+  "features.hosted_search_policy",
   "features.login_shell_package_path",
   "features.mcp_oauth_refresh_coordination",
   "features.network_proxy",
@@ -1662,6 +1734,8 @@
   "otel",
   "otel.environment",
   "otel.exporter",
+  "otel.headers_helper",
+  "otel.headers_helper_refresh_interval_ms",
   "otel.log_agent_responses",
   "otel.log_guardian_assessments",
   "otel.log_sse_deltas",
@@ -1690,6 +1764,8 @@
   "shell_environment_policy.inherit",
   "shell_environment_policy.set",
   "sqlite_home",
+  "tui.default_hosts",
+  "tui.status_line_provider",
   "windows",
   "windows.sandbox"
  ],
@@ -1712,6 +1788,8 @@
   "check_for_update_on_startup",
   "cloud",
   "cloud.skills",
+  "code_mode",
+  "code_mode.heartbeat_interval_s",
   "compact_prompt",
   "daybreak",
   "desktop",
@@ -1725,6 +1803,7 @@
   "experimental_use_unified_exec_tool",
   "features",
   "features.agent_message_board",
+  "features.agent_message_board_mcp",
   "features.analytics_plan_history",
   "features.api_key_cyber_access_programs",
   "features.api_key_model_discovery",
@@ -1736,11 +1815,13 @@
   "features.apps_early_resource_discovery",
   "features.apps_mcp_path_override",
   "features.async_compaction",
+  "features.async_compaction_root_only",
   "features.background_paginated_rollout_migration",
   "features.bedrock_setup_wizard",
   "features.browser_annotation_api",
   "features.browser_use",
   "features.browser_use_external",
+  "features.catalog_apps_instructions",
   "features.chronicle",
   "features.cli_daybreak",
   "features.code_mode",
@@ -1759,6 +1840,7 @@
   "features.codex_hooks",
   "features.collab",
   "features.collaboration_modes",
+  "features.command_sessions_world_state",
   "features.compaction_image_budget",
   "features.computer_use",
   "features.concurrent_reasoning_summaries",
@@ -1769,6 +1851,7 @@
   "features.current_time_reminder",
   "features.cwd_relative_turn_diffs",
   "features.daemon_auto_start",
+  "features.daybreak_program_propagation",
   "features.default_mode_request_user_input",
   "features.defer_mailbox_preemption",
   "features.deferred_executor",
@@ -1783,11 +1866,14 @@
   "features.external_agent_memory_import",
   "features.external_migration",
   "features.fast_mode",
+  "features.file_backed_tool_audio",
+  "features.gateway_setup_wizard",
   "features.gcp_setup_wizard",
   "features.goals",
   "features.hooks",
   "features.image_detail_original",
   "features.image_generation",
+  "features.image_generation_animation",
   "features.image_resize_notice",
   "features.imagegenext",
   "features.in_app_browser",
@@ -1809,6 +1895,8 @@
   "features.local_thread_store_shared_compression",
   "features.mcp_2026_07_28",
   "features.mcp_connection_sharing",
+  "features.mcp_lazy_stdio_startup",
+  "features.mcp_shared_repl_cwd",
   "features.mcp_tool_list_changed",
   "features.memories",
   "features.memory_tool",
@@ -1819,11 +1907,13 @@
   "features.multi_agent_v2",
   "features.multi_agent_v2_dynamic_tools",
   "features.multi_env_copy_file",
+  "features.multi_environment_mcp",
   "features.non_prefixed_mcp_tool_names",
   "features.nonfatal_clock_read_errors",
   "features.omit_app_server_notification_media",
   "features.omit_skill_descriptions",
   "features.output_token_replay",
+  "features.per_environment_context",
   "features.personality",
   "features.plugin_discovery_prefetch",
   "features.plugin_hooks",
@@ -1841,11 +1931,13 @@
   "features.resize_all_images",
   "features.responses_websockets",
   "features.responses_websockets_v2",
+  "features.restored_history_prewarm",
   "features.retain_client_developer_messages",
   "features.retain_client_tool_outputs",
   "features.rollout_budget",
   "features.runtime_agent_instances",
   "features.runtime_metrics",
+  "features.safe_image_decoder",
   "features.search_tool",
   "features.send_async_message",
   "features.send_message_to_user_async",
@@ -1879,6 +1971,7 @@
   "features.tui_app_server",
   "features.tui_extensions_statusline",
   "features.tui_multi_backend",
+  "features.tui_workspace",
   "features.ultrafast_mode",
   "features.unavailable_dummy_tools",
   "features.unbounded_connection_retries",
@@ -1886,6 +1979,7 @@
   "features.unified_exec",
   "features.unified_exec_tty",
   "features.unified_image_budget",
+  "features.utc_environment_date",
   "features.view_image",
   "features.wake_on_agent_messages",
   "features.web_search",
@@ -1967,8 +2061,13 @@
   "realtime.type",
   "realtime.version",
   "realtime.voice",
+  "responses",
+  "responses.process_mode",
   "responses_api_metadata",
   "review_model",
+  "rollout_trace",
+  "rollout_trace.max_bytes",
+  "rollout_trace.max_payload_bytes",
   "service_tier",
   "show_raw_agent_reasoning",
   "skills",
@@ -1983,6 +2082,7 @@
   "tool_suggest.disabled_tools",
   "tool_suggest.discoverables",
   "tools",
+  "tools.client_search_provider",
   "tools.experimental_request_user_input",
   "tools.update_plan",
   "tools.web_search",
@@ -1991,6 +2091,7 @@
   "tui.alternate_screen",
   "tui.animations",
   "tui.auto_recap",
+  "tui.collapse_turn_details",
   "tui.copy_on_select",
   "tui.copy_on_select_clear_selection",
   "tui.disable_paste_burst",
@@ -2014,6 +2115,7 @@
   "tui.session_picker_view",
   "tui.show_server_version_notice",
   "tui.show_tooltips",
+  "tui.sidebar_width_percent",
   "tui.status_line",
   "tui.status_line_use_colors",
   "tui.terminal_resize_reflow_max_rows",
