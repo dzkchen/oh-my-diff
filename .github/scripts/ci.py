@@ -25,9 +25,10 @@ from scripts.release import REPOSITORY
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 TREE = "nightly"
 CRATES = ["codex-omd", "codex-omd-runner", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
-HELPERS = ["codex-omd-runner", "codex-rmcp-client", "codex-cli", "codex-code-mode-host"]
-HELPER_BINS = ["omd-runner", "codex", "codex-code-mode-host", "rmcp_test_server", "test_stdio_server",
-               "test_streamable_http_server", "test_mcp_2026_stdio_server", "test_mcp_2026_discovery_stdio_server"]
+HELPERS = ["codex-omd-runner", "codex-rmcp-client", "codex-cli", "codex-code-mode-host", "codex-message-board-mcp"]
+HELPER_BINS = ["omd-runner", "codex", "codex-code-mode-host", "codex-message-board-mcp", "rmcp_test_server",
+               "test_stdio_server", "test_streamable_http_server", "test_mcp_2026_stdio_server",
+               "test_mcp_2026_discovery_stdio_server"]
 SUITE_CRATES = {"native": CRATES, "core": ["codex-core"], "core-integration": ["codex-core"]}
 SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
 
