@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "id": "omd_tool_lines",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "Compact command groups and one-line tool results; expand a row for the full native output",
+  "description": "App-style transcript: command groups as one summary line, other tools as one step line; expand a row for the full native output",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_tool_lines"},
   "capabilities": ["terminal", "builtins"],
