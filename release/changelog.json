@@ -1,5 +1,39 @@
 [
   {
+    "version": "1.5.4",
+    "date": "2026-11-22",
+    "title": "Oh My Diff 1.5.4",
+    "summary": "Codex 0.171.0, app-style tool activity rows, and a fix for the theme and status line flickering.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Summarize tool activity in Codex app style (#571)",
+          "Group tool activity into one row per run for mods (#574)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Retry a mod render superseded by a host reload (#565)",
+          "Find upstream Codex's bundled rg; accurate OMD+ prompt (#567)",
+          "Prevent duplicate assistant text during tool activity (#566)",
+          "Publish the shown thread's view so theme and status line stop flashing (#572)"
+        ]
+      }
+    ],
+    "commits": [
+      "a60ff64",
+      "43e6f25",
+      "ee309cb",
+      "cac8b9a",
+      "be580d5",
+      "20afce2",
+      "13b5719",
+      "a9d37b3"
+    ]
+  },
+  {
     "version": "1.5.3",
     "date": "2026-11-12",
     "title": "Oh My Diff 1.5.3",

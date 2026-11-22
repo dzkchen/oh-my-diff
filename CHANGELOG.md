@@ -2,6 +2,22 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.4](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.4) — 2026-11-22
+
+Codex 0.171.0, app-style tool activity rows, and a fix for the theme and status line flickering.
+
+### New
+
+- Summarize tool activity in Codex app style (#571)
+- Group tool activity into one row per run for mods (#574)
+
+### Fixed
+
+- Retry a mod render superseded by a host reload (#565)
+- Find upstream Codex's bundled rg; accurate OMD+ prompt (#567)
+- Prevent duplicate assistant text during tool activity (#566)
+- Publish the shown thread's view so theme and status line stop flashing (#572)
+
 ## [1.5.3](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.3) — 2026-11-12
 
 Codex 0.167.2 and per-account provider routes.
