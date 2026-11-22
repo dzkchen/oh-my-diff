@@ -17,7 +17,7 @@ The status words on this page:
 | [`omd_mods`](../mods/first-party/omd_mods/README.md) | OMD Core, OMD+ | The `/mods` screen and a short welcome card |
 | [`omd_update`](../mods/first-party/omd_update/README.md) | OMD Core, OMD+ | Update notices and the `/update` screen |
 | [`omd_logo`](../mods/first-party/omd_logo/README.md) | OMD Core, OMD+ | The OMD logo in the session header |
-| [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | Groups adjacent shell commands and shortens other tool calls; open a row for the full output |
+| [`omd_tool_lines`](../mods/first-party/omd_tool_lines/README.md) | OMD+ | Summarizes adjacent shell commands in one line and shortens other tool calls; open a row for the full output |
 | [`omd_statusline`](../mods/first-party/omd_statusline/README.md) | OMD+ | A configurable status line; `/statusline` edits it |
 
 ## Off by default
