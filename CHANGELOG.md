@@ -8,15 +8,22 @@ Codex 0.171.0, app-style tool activity rows, and a fix for the theme and status 
 
 ### New
 
-- Summarize tool activity in Codex app style (#571)
-- Group tool activity into one row per run for mods (#574)
+- Tool lines: tool activity between agent messages collapses into one row, such as "Read files, ran commands, searched the web", with the running step shown live and each step listed when opened; subagent rows merge, such as "Papers, Code and Prior started working"
+- Mods: the `group_tools` builtin, the `presentation` prop and `subagent` tool steps let a mod draw a turn's tool activity as one row
+- Mods: a compaction that a PreCompact hook stops ends with outcome `stopped`
+
+### Changed
+
+- Upstream: Codex 0.171.0
 
 ### Fixed
 
-- Retry a mod render superseded by a host reload (#565)
-- Find upstream Codex's bundled rg; accurate OMD+ prompt (#567)
-- Prevent duplicate assistant text during tool activity (#566)
-- Publish the shown thread's view so theme and status line stop flashing (#572)
+- Themes and status lines no longer flash in and out while subagents work
+- Search works on Macs without a system `rg`: OMD finds upstream Codex's bundled one
+- Assistant messages no longer repeat text when tool activity arrives mid-message
+- Mods: a render dropped by a host reload is drawn again
+- Mods: approval middleware also runs for `request_permissions` and for MCP calls that guardian review allows without a prompt; shell snapshots respect OMD's denied paths
+- Mods: mod segments show again in front of extension status lines
 
 ## [1.5.3](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.3) — 2026-11-12
 
