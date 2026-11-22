@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.171.0.patch",
-    "sha256": "26d806926df06e39309e7cb7083b887333995afef78e0d048b2ef7524b89a243"
+    "sha256": "d3c8cab98a8a4d2786b04791d7af1a5e6b99231f4579579655bda00ed3309dd9"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -519,7 +519,7 @@
     },
     "codex-rs/core/src/client.rs": {
       "before": "04a2cf7510f503f6c8e65660d883fdcfcc262cb3efa32082b0b370afbad6a302",
-      "after": "0f0c93661b32bd6d3a51a1e45a5188590b35a2f611506b5e3a858a8457751aab"
+      "after": "b723ff8dfee0f56ba8b93ab3092714c22e2a09d321761580978d0451ae6afc86"
     },
     "codex-rs/core/src/client_runtime_auth_tests.rs": {
       "before": "175ebdbbaec14a5deb04008429b6002e78cd84bd1ae1808364c6355de0692af9",
@@ -671,7 +671,7 @@
     },
     "codex-rs/core/src/session/input_queue.rs": {
       "before": "9232f4b0ec2106f367e1f94a0fa78de05b536b5a4b75230a6677c15748cb386b",
-      "after": "b22586036a2b513492935dfecad9681cd68bc3828f63afa599fa14a9685b664a"
+      "after": "70f2be669e60d5e2d2a873b554ecf8c6f5edb3f5b4c6aabee725cbf372656a2e"
     },
     "codex-rs/core/src/session/mcp.rs": {
       "before": "ef2d2df9926e6ba58ec131009b738fa7d488c7223aada5719bc0ec6f228ca989",
@@ -719,7 +719,7 @@
     },
     "codex-rs/core/src/session/session.rs": {
       "before": "62344ade1ddb075835be063a8507337ad4607499c6e0f50af7804348df488889",
-      "after": "ac186e2a6ebfaaee87d4a2122376e1c8af369c13f1494fe14a3b8c6f20ada2b6"
+      "after": "3b2b9b6a74052bcd5af4d44f388224e81d8b6b41a5c4e3e0899e56a4ad1847dc"
     },
     "codex-rs/core/src/session/startup_prewarm.rs": {
       "before": "b701928111e2ed7b76026d3d1e472e5ae8580b8eda268655c7fd4d069d2fa94c",
@@ -2199,7 +2199,7 @@
     },
     "codex-rs/tui/src/app/sidebar_agent_status_tests.rs": {
       "before": "0507183ce97ba3190476e40c3cba6efab6bc4de3cabe1b145ee88796976271bd",
-      "after": "3839d0b4710f34ffd5fd9978155ded2cd9aa6d75f2904b0b2a319ac90f2e5ed2"
+      "after": "d5f754275694e4e6c265b173ef899a716f18ecdc828656a071d651112a0f7051"
     },
     "codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__daemon_cli_confirmation.snap": {
       "before": "65c04718783a2e8bd6ae5818739c8a85f78528b1fce067908862dfe58ce226ef",
@@ -2208,6 +2208,10 @@
     "codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap": {
       "before": "d118cd737a04dd2564f6b9bd9434e4bd34be05071a77e35a570f5e150690071e",
       "after": "4e5c9d15dc5e8b847eb877dda35f6e1a105c7dd625959c9da1ff09a34ae2522a"
+    },
+    "codex-rs/tui/src/app/snapshots/codex_tui__app__sidebar_subagents__status__tests__watch_only_subagent.snap": {
+      "before": "bfa57e3391f2b64d49470268f9ffbf9302ab7ee0968431ec44a0cbf1ad382acb",
+      "after": "1236173a1ad172c66d99d075b826ca50ab0750a71b47a5f67ef933a51531213e"
     },
     "codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap": {
       "before": "5aa9903385fddab5452f57b11e50bf19ccd374228e2cc6002a16a91df50c150b",
@@ -2391,7 +2395,7 @@
     },
     "codex-rs/tui/src/app/user_turn_submission.rs": {
       "before": "011a3f32e2ea3cca984f083bacb8e02f5f937bf51fe45fc209b8d31a22d386a7",
-      "after": "3e5e3b3f1bff166997532d4d16a6b860cefbd145b900e2d3b5c04d3c63e6b9e8"
+      "after": "57afba488b3bd37441232b956df9d2227511707edafcaaa4b16120431b8d4182"
     },
     "codex-rs/tui/src/app/warning_notice_tests.rs": {
       "before": "eb16d3685275ee71bb5f3d36f83b848f1cadc2c1b7692cc867b79e6ca96ebb93",
@@ -2407,11 +2411,11 @@
     },
     "codex-rs/tui/src/app_event.rs": {
       "before": "0d1cd3e3e6aab7116ecc541ccffe77f86b050d61dc51b9801c9ab745a02f919f",
-      "after": "da42fd946e98a942275f0e267ce7d7740d1a9ff15b67431e349150e225d25742"
+      "after": "be2f1dab6ef0c93a9fbd0b67fe95b8ade9bcb9c8a7c14a24663d0c7de4ea9340"
     },
     "codex-rs/tui/src/app_server_session.rs": {
       "before": "b2c246c001fbfa5814e6d27e6f291593d7c9403385fa96aba28916c750fd7a78",
-      "after": "7a3a45da75d4853813d8cb8fb32585f99c58f35145aa8b9669f54e928cb73007"
+      "after": "c756be7137314e4871a1b3e385b6753f8cbaa49a7a2924d9f66c5edd51968271"
     },
     "codex-rs/tui/src/app_server_session/history.rs": {
       "before": "18c03f44f2f20aaf65ce223d5ea854c48d6957792a152b39eeec4b9524858875",
@@ -2551,7 +2555,7 @@
     },
     "codex-rs/tui/src/chatwidget.rs": {
       "before": "8b090db89fcfd3d33f4b4d53c6b4ccb52a2e44a33ddf4039275b722c0e418e1d",
-      "after": "34ad5385b44fb4e7b61733b37b5c23bbef436ded40169078cdf160ec16230ca3"
+      "after": "3fa3d4b2c3ecd4f58f1840b6d4fa301bb05e32b0784f6581c33c7e0275b7ea53"
     },
     "codex-rs/tui/src/chatwidget/activity_groups.rs": {
       "before": "c6631603300bf8d4288acfe2272e2f22259dfa8a6daec02e41607fa2fbaebf62",
@@ -2707,7 +2711,7 @@
     },
     "codex-rs/tui/src/chatwidget/tests/exec_flow.rs": {
       "before": "df71da8f5aab3d30b0882a82c72c0597966bf46d13f2118d25af2d04e9750717",
-      "after": "a9713cab8a2e9d8d3328fc5f442853b01f49391eeb9fb5258d11949681374856"
+      "after": "2abdc56c055beb3d3c3d3b01f6913c1e2eb4f066a3db4f0faaad3f0d1dd81867"
     },
     "codex-rs/tui/src/chatwidget/tests/helpers.rs": {
       "before": "e13eb645d2d8b34ee62d1aa215c7c6e16dc7b511c8b5b3e0bb9d389c101d633f",
