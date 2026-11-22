@@ -21,6 +21,7 @@ GENERIC_LITERALS = {
     "watch_git_unavailable": "error of the generic workspace.watch Git metadata option",
     "workspace_watch_git_v1": "host feature of the generic workspace.watch Git metadata option",
 }
+UPSTREAM_IDENTIFIERS = ("scope_model_picker_event",)
 NATIVE_SOURCES = ("runtime/omd/src", "runtime/omd/runner/src", "runtime/native/src")
 RUNNER_SCRIPTS = ("runtime/omd/runner/src/bootstrap.js", "runtime/omd/runner/src/dispatch.js", "runtime/omd/runner/src/step.js")
 PACKAGE_MANIFESTS = ("mods/first-party/*/mod.json", "plugins/**/mod.json")
@@ -261,6 +262,8 @@ def patched(root, identifiers):
                 line = int(re.search(r"\+(\d+)", text).group(1)) - 1
             elif path and text[:1] in ("+", " "):
                 line += 1
+                for name in UPSTREAM_IDENTIFIERS:
+                    text = text.replace(name, " " * len(name))
                 for match in pattern.finditer(text, 1) if text[0] == "+" else ():
                     findings.append({"path": path, "line": line, "surface": "first_party_id",
                                      "name": match.group(), "feature": match.group()})
