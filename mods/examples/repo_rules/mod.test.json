@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "steps": [
+    {"type": "invoke", "mod": "repo_rules", "event": "command", "name": "standup", "payload": "", "expect": {"submit": "From git log since yesterday, write my standup as three short bullets."}}
+  ]
+}
