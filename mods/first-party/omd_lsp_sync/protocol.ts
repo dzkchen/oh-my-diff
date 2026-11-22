@@ -37,7 +37,9 @@ export const adapterFor = (path: string): Adapter | null => path.length > 240 ? 
     : /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(path) ? 'typescript'
       : path.endsWith('.rs') ? 'rust'
         : path.endsWith('.java') ? 'java' : null;
-export const languageId = (path: string) => /\.(?:js|jsx|mjs|cjs)$/.test(path) ? 'javascript' : adapterFor(path);
+export const languageId = (path: string) => path.endsWith('.tsx') ? 'typescriptreact'
+  : path.endsWith('.jsx') ? 'javascriptreact'
+    : /\.(?:js|mjs|cjs)$/.test(path) ? 'javascript' : adapterFor(path);
 export const object = (value: Json): Record<string, Json> | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 export const string = (value: Json): string | null => typeof value === 'string' ? value : null;
 export const number = (value: Json): number | null => typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
