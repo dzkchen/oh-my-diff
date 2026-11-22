@@ -113,6 +113,9 @@ These changes ship in OMD 1.6.0.
   fix; a mod that runs such a program needs it installed outside the repository (or outside the session directory).
 - `workspace.*` without `root` fails with `workspace_unavailable` when the session directory is `/`, the home
   directory or a directory above it and isn't in a Git work tree. Other directories behave as before.
+- `compaction_end` (frozen in Mod API `1.0.0`) reports `outcome: "stopped"` when a `PreCompact` hook stops the
+  compaction; before, it reported `skipped`. The new value is additive: a mod that counts only `compacted` and
+  `replaced` needs no change.
 
 These changes ship in OMD 1.4.0.
 

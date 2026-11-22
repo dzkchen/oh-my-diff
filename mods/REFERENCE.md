@@ -3,7 +3,7 @@
 This is every [mod API reference page](reference/README.md) in one file, for agents and search. Generated from
 the pages in the order of their contents table; edit the pages, not this file.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.167.2`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.171.0`.
 `omd-mod status` reports the OMD release as `host.omd`. A package's `compatibility.releases` is matched against that
 version. The host loads only mods for this API version. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
@@ -404,7 +404,7 @@ Use it when you check whether a design fits the host. Each row gives one limit a
 states the exact rule and the error a call gets. The `host.json` limits an operator can change are under
 [Host limits](#host-limits).
 
-Values are those of Mod API `1.0.0` on Codex `0.167.2`; limits of experimental entries may change in any release.
+Values are those of Mod API `1.0.0` on Codex `0.171.0`; limits of experimental entries may change in any release.
 
 ### Limits by area
 
@@ -730,6 +730,9 @@ These changes ship in OMD 1.6.0.
   fix; a mod that runs such a program needs it installed outside the repository (or outside the session directory).
 - `workspace.*` without `root` fails with `workspace_unavailable` when the session directory is `/`, the home
   directory or a directory above it and isn't in a Git work tree. Other directories behave as before.
+- `compaction_end` (frozen in Mod API `1.0.0`) reports `outcome: "stopped"` when a `PreCompact` hook stops the
+  compaction; before, it reported `skipped`. The new value is additive: a mod that counts only `compacted` and
+  `replaced` needs no change.
 
 These changes ship in OMD 1.4.0.
 
@@ -6651,9 +6654,9 @@ Interrupting the turn cancels a waiting chain. The installed result persists as 
 so resume reads it.
 
 `compaction_start {turn_id, trigger}` (`manual` or `auto`) fires before the `compaction` interceptors run, whatever
-they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`),
-`by` and `provider_call`. Both are observe-only events of the `lifecycle` capability: a handler cannot change or
-stop the compaction.
+they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `stopped`, `deferred` or
+`failed`), `by` and `provider_call`; `stopped` means a `PreCompact` hook stopped the compaction. Both are
+observe-only events of the `lifecycle` capability: a handler cannot change or stop the compaction.
 
 #### Evidence across compaction
 

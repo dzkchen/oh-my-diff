@@ -647,6 +647,7 @@ mod history_tests {
                 message: "é".repeat(2048),
                 codex_error_info: code,
                 misalignment: None,
+                rejected_audio_file_ids: Vec::new(),
             };
             let failure = classify_error(&error.codex_error_info, &error.message);
             assert_eq!(failure["category"], category);
@@ -663,6 +664,7 @@ mod history_tests {
                     .into(),
             codex_error_info: Some(Kind::Other),
             misalignment: None,
+            rejected_audio_file_ids: Vec::new(),
         };
         assert_eq!(
             classify_error(&disconnected.codex_error_info, &disconnected.message)["category"],

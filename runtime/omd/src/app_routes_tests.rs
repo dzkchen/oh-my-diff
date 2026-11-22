@@ -317,14 +317,17 @@ fn config_writes_refuse_authority_and_unknown_keys() {
         "app_config_key_refused"
     );
     assert_eq!(table("agents", json!({"max_depth": 2})), "ok");
-    assert_eq!(table("tui", json!({"theme": "x"})), "ok");
+    assert_eq!(
+        table("tui", json!({"theme": "x"})),
+        "app_config_key_refused"
+    );
     assert_eq!(
         f.code(
             "config/batchWrite",
             json!({"edits": [{"keyPath": "tui", "value": {"theme": "x", "keymap": {"global": {"copy": "c"}}}}]}),
             User
         ),
-        "ok"
+        "app_config_key_refused"
     );
     assert_eq!(
         f.code(

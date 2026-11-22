@@ -12,11 +12,7 @@ use codex_protocol::permissions::FileSystemSandboxPolicy;
 #[cfg(target_os = "macos")]
 use codex_protocol::permissions::NetworkSandboxPolicy;
 #[cfg(target_os = "macos")]
-use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
-#[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
-#[cfg(target_os = "macos")]
-use codex_sandboxing::seatbelt::create_seatbelt_command_args;
 #[cfg(target_os = "macos")]
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::process_group::kill_process_group;
@@ -589,6 +585,51 @@ fn send_message(stdin: &mut impl Write, message: &Value) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+#[cfg(target_os = "macos")]
+pub(crate) fn seatbelt_command(
+    manager: codex_sandboxing::SandboxManager,
+    permissions: &codex_protocol::models::PermissionProfile,
+    argv: Vec<String>,
+    cwd: &Path,
+    managed_network: Option<ManagedNetworkSandboxContext>,
+) -> Result<Vec<String>, String> {
+    use codex_protocol::config_types::WindowsSandboxLevel;
+    use codex_sandboxing::SandboxCommand;
+    use codex_sandboxing::SandboxNetwork;
+    use codex_sandboxing::SandboxSelection;
+    use codex_sandboxing::SandboxTransformRequest;
+    use codex_sandboxing::SandboxType;
+    let (program, args) = argv.split_first().ok_or("exec_command_empty")?;
+    let cwd = codex_utils_path_uri::PathUri::from_host_native_path(cwd)
+        .map_err(|error| error.to_string())?;
+    let enforce_managed_network = managed_network.is_some();
+    let wrapped = manager
+        .transform(SandboxTransformRequest {
+            command: SandboxCommand {
+                program: program.into(),
+                args: args.to_vec(),
+                cwd: cwd.clone(),
+                env: Default::default(),
+                managed_network,
+                additional_permissions: None,
+            },
+            permissions,
+            workspace_roots: Some(&[]),
+            runtime_readable_paths: None,
+            selection: SandboxSelection::Explicit(SandboxType::MacosSeatbelt),
+            network: SandboxNetwork::new(enforce_managed_network, None, None),
+            sandbox_policy_cwd: &cwd,
+            sandbox_exe: None,
+            use_legacy_landlock: false,
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(wrapped
+        .into_command_request()
+        .map_err(|error| error.to_string())?
+        .command)
+}
+
 pub(crate) fn read_policy(
     policy: &FileSystemSandboxPolicy,
     scratch: &Path,
@@ -956,25 +997,29 @@ impl ManagedProcesses {
                                 allow_local_binding: true,
                                 ..Default::default()
                             });
-                            let mut argv =
-                                create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
-                                    command,
-                                    file_system_sandbox_policy: &scope,
-                                    network_sandbox_policy: NetworkSandboxPolicy::Restricted,
-                                    sandbox_policy_cwd: repository,
-                                    enforce_managed_network: loopback_network,
-                                    managed_network: loopback.as_ref(),
-                                    environment_id: None,
-                                    network: None,
-                                    extra_allow_unix_sockets: &[],
-                                })?;
-                            if argv.first().map(String::as_str) != Some("-p") || argv.len() < 2 {
+                            let permissions =
+                                codex_protocol::models::PermissionProfile::from_runtime_permissions(
+                                    &scope,
+                                    NetworkSandboxPolicy::Restricted,
+                                );
+                            let mut argv = seatbelt_command(
+                                codex_sandboxing::SandboxManager::new(),
+                                &permissions,
+                                command,
+                                repository,
+                                loopback,
+                            )?;
+                            if argv.first().map(String::as_str)
+                                != Some(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
+                                || argv.get(1).map(String::as_str) != Some("-p")
+                                || argv.len() < 3
+                            {
                                 return Err("managed_process_requires_native_sandbox".into());
                             }
-                            codex_omd::host::deny_protected(&mut argv[1], protected)?;
+                            codex_omd::host::deny_protected(&mut argv[2], protected)?;
                             let mut command = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE);
                             command
-                                .args(argv)
+                                .args(&argv[1..])
                                 .env_clear()
                                 .env("PATH", std::env::var_os("PATH").unwrap_or_default())
                                 .env("HOME", &scratch);
