@@ -82948,10 +82948,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..59e6f4c1c50fc52554df131655f687c47afe881f
+index 0000000000000000000000000000000000000000..bcc9bb1b0d4306e040bcf0a7c31c0107c202b2b4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,3095 @@
+@@ -0,0 +1,3106 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -83787,8 +83787,18 @@ index 0000000000000000000000000000000000000000..59e6f4c1c50fc52554df131655f687c4
 +                access::release_servers(lead, *generation, None).await;
 +            }
 +        }
-+        let ledger = lead.map(Lead::ledger).unwrap_or(Value::Null);
 +        let thread = lead.map(|lead| lead.thread.to_string());
++        // The view is the current lead thread's; handlers keep the event's own thread.
++        let shown = self
++            .expansion
++            .current()
++            .or_else(|| lead.filter(|lead| lead.owner == "lead").cloned())
++            .or_else(|| {
++                let named = ThreadId::from_string(payload["thread_id"].as_str()?).ok()?;
++                self.expansion.lead(named)
++            });
++        let ledger = shown.as_ref().map(Lead::ledger).unwrap_or(Value::Null);
++        let shown = shown.map(|lead| lead.thread.to_string());
 +        let flag = cancelled.clone();
 +        let job = tokio::task::spawn_blocking(move || {
 +            let _thread = codex_omd::StateThread::enter(thread);
@@ -83823,6 +83833,7 @@ index 0000000000000000000000000000000000000000..59e6f4c1c50fc52554df131655f687c4
 +            let Ok(mut runtime) = runtime.lock() else {
 +                return fragments;
 +            };
++            let _shown = codex_omd::StateThread::enter(shown);
 +            publish(
 +                &mut runtime,
 +                &host,
@@ -94411,10 +94422,10 @@ index 0000000000000000000000000000000000000000..708e3e710b8c9b6974f4c32640ca2c49
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..846fa31321c2b942439623ac11a8376587f44512
+index 0000000000000000000000000000000000000000..272f07f7830a0c462277d4b55f00aadc67f870e3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,7343 @@
+@@ -0,0 +1,7386 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -101757,6 +101768,49 @@ index 0000000000000000000000000000000000000000..846fa31321c2b942439623ac11a83765
 +        .unwrap();
 +    assert_eq!(log[0]["content"]["token"], "[redacted]");
 +    assert_eq!(mods.elicitations.lock().unwrap().len(), 2);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn events_publish_the_current_lead_thread_view() {
++    let Some(fixture) = fixture(&[Package {
++        id: "themed",
++        capabilities: &["terminal"],
++        manifest: json!({"state_scope": "thread"}),
++        source: "export default api => { api.on('terminal', input => ({title: String(input.ledger?.thread_id)})); }",
++    }]) else {
++        return;
++    };
++    let lead = fixture.lead.thread.to_string();
++    let title = || {
++        fixture
++            .core
++            .views
++            .published()
++            .and_then(|view| view.view.title.clone())
++    };
++    delivery::lead_started(&fixture.core, &fixture.lead, None);
++    fixture
++        .core
++        .event("session", json!({"phase": "idle", "thread_id": lead}), None)
++        .await;
++    assert_eq!(title().as_deref(), Some(lead.as_str()));
++    let subagent = Lead {
++        thread: ThreadId::new(),
++        owner: "agent:child".into(),
++        depth: 1,
++        ..fixture.lead.clone()
++    };
++    fixture.core.expansion.thread_started(&subagent);
++    let named = json!({"thread_id": subagent.thread.to_string()});
++    fixture.core.event("tool_result", named.clone(), None).await;
++    assert_eq!(title().as_deref(), Some(lead.as_str()));
++    fixture
++        .core
++        .event("tool_result", named, Some(&subagent))
++        .await;
++    assert_eq!(title().as_deref(), Some(lead.as_str()));
++    fixture.core.event("contract", Value::Null, None).await;
++    assert_eq!(title().as_deref(), Some(lead.as_str()));
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
