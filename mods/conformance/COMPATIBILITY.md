@@ -66,6 +66,7 @@ the API version matches. Each list holds at most 32 features.
 | `tools.original` | `tool_original_v1` |
 | `api.builtins` `features.remove` | `builtins_features_v1` |
 | `api.builtins` `group_exec` | `transcript_exec_groups_v1` |
+| `api.builtins` `group_tools`, `tool_call` `presentation` and the `run` and `subagent` kinds | `transcript_tool_groups_v1` |
 | `success_per_call` on a `tool_batch` merge | `tool_batch_success_v1` |
 | `value` in code-mode `tool` results and answers | `code_mode_values_v1` |
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |

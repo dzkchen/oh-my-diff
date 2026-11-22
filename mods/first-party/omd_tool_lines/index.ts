@@ -1,4 +1,4 @@
-import type { Json, ModAPI, RenderEvent, RenderExecCall, RenderToolCall, TerminalComponent, TerminalSpan } from '../../api.d.ts';
+import type { Json, ModAPI, RenderEvent, RenderExecCall, RenderToolStep, TerminalComponent, TerminalSpan } from '../../api.d.ts';
 
 const ASCII = /^[\x20-\x7e]*$/;
 const bytes = (text: string) => { let size = 0; for (const char of text) { const point = char.codePointAt(0)!; size += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4; } return size; };
@@ -39,6 +39,7 @@ const fit = (text: string, cells: number, chars = cells, limit = 240) => {
 };
 
 type Row = { text: string; marker?: string | null; failed: boolean; running: boolean };
+type Step = Exclude<RenderToolStep, { kind: 'explore' }>;
 
 const names = (agents: string[]) => agents.length > 1 ? `${agents.slice(0, -1).join(', ')} and ${agents.at(-1)}` : agents[0] ?? 'an agent';
 const capital = (text: string) => text[0].toUpperCase() + text.slice(1);
@@ -56,7 +57,7 @@ const kind = (call: RenderExecCall) => {
 const STEP: Record<string, [string, string]> = { read: ['Read', 'Reading'], list_files: ['Listed', 'Listing'], search: ['Searched for', 'Searching for'] };
 const step = (call: RenderExecCall, running = call.status === 'running') => {
   const type = kind(call);
-  if (type === 'command') return `${running ? 'Running' : 'Ran'} ${call.command}`;
+  if (type === 'command') return running ? `Running ${call.command}` : call.command;
   const args = call.parsed.map(parsed => parsed.type === 'read' ? parsed.name ?? ''
     : parsed.type === 'list_files' ? parsed.path ?? '.'
     : parsed.type === 'search' ? `${parsed.query ?? ''}${parsed.path ? ` in ${parsed.path}` : ''}`.trim() : parsed.cmd).join(', ');
@@ -92,8 +93,10 @@ const web = (action: string, query: string, running: boolean) => {
   return `${running ? live : done} ${query}`.trim();
 };
 const AGENT: Record<string, [string, string]> = { send_input: ['Messaged', 'Messaging'], resume_agent: ['Resumed', 'Resuming'], wait: ['Waited for', 'Waiting for'], close_agent: ['Closed', 'Closing'], agent: ['Ran', 'Running'] };
+const LIFE: Record<string, string> = { started: 'started working', completed: 'finished', interrupted: 'stopped' };
+const life = (activity: string, who: string) => activity === 'interacted' ? `messaged ${who}` : `${who} ${LIFE[activity]}`;
 
-const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null => {
+const row = (props: Step): Row | null => {
   const running = props.status === 'running';
   const failed = props.status === 'failed' || props.status === 'interrupted';
   const done = (text: string, error?: string | null): Row => ({ text, marker: failed ? error || props.status : null, failed, running });
@@ -118,8 +121,53 @@ const row = (props: Exclude<RenderToolCall, { kind: 'explore' }>): Row | null =>
     case 'mcp': return done(`${running ? 'Calling' : 'Called'} ${props.server}.${props.tool} ${argument(props.arguments)}`.trim(), props.error);
     case 'dynamic': return done(`${running ? 'Calling' : 'Called'} ${props.tool} ${argument(props.arguments)}`.trim(), props.error);
     case 'image': return props.tool === 'view_image' ? null : done(`${running ? 'Generating' : 'Generated'} image ${props.path ?? props.prompt ?? ''}`.trim());
+    case 'subagent': return { text: capital(life(props.activity, props.agent ?? 'an agent')), failed: false, running: false };
     default: return null;
   }
+};
+
+const STEPS: Record<string, [string, string]> = { web: ['searched the web', 'searched the web'], patch: ['edited a file', 'edited files'], tool: ['called a tool', 'called tools'],
+  view_image: ['viewed an image', 'viewed images'], image_generation: ['generated an image', 'generated images'], spawn_agent: ['started an agent', 'started agents'],
+  send_input: ['messaged an agent', 'messaged agents'], wait: ['waited for an agent', 'waited for agents'], resume_agent: ['resumed an agent', 'resumed agents'],
+  close_agent: ['closed an agent', 'closed agents'], agent: ['used an agent', 'used agents'] };
+const phrase = (call: Exclude<Step, { kind: 'subagent' }>): [string, number] => {
+  switch (call.kind) {
+    case 'exec': { const type = kind(call); return [type, type === 'command' ? 1 : call.parsed.length]; }
+    case 'web_search': return ['web', 1];
+    case 'patch': return ['patch', Math.max(1, call.file_count)];
+    case 'mcp': case 'dynamic': return ['tool', 1];
+    case 'image': return [call.tool, 1];
+    case 'agent': return [call.tool, Math.max(1, call.agents.length)];
+    default: return ['tool', 1];
+  }
+};
+const summary = (calls: Step[]) => {
+  const parts: { key?: string; count: number; text?: string }[] = [];
+  for (let index = 0; index < calls.length; index++) {
+    const call = calls[index];
+    if (call.kind === 'subagent') {
+      const agents = [call.agent ?? 'an agent'];
+      for (let next = calls[index + 1]; next?.kind === 'subagent' && next.activity === call.activity; next = calls[++index + 1]) agents.push(next.agent ?? 'an agent');
+      parts.push({ count: 1, text: life(call.activity, names(agents)) });
+      continue;
+    }
+    const [key, count] = phrase(call);
+    const part = parts.find(part => part.key === key);
+    if (part) part.count += count; else parts.push({ key, count });
+  }
+  return parts.map(part => part.text ?? (PHRASES[part.key!] ?? STEPS[part.key!])[part.count === 1 ? 0 : 1]).join(', ');
+};
+const run = (calls: Step[], status: string): Row => {
+  const failed = calls.filter(call => call.status === 'failed');
+  const interrupted = calls.filter(call => call.status === 'interrupted').length;
+  const live = calls.filter(call => call.status === 'running').at(-1);
+  const last = failed.at(-1);
+  const exit = last?.kind === 'exec' ? last.exit_code : null;
+  return {
+    text: (live && row(live)?.text) || capital(summary(calls)),
+    marker: [failed.length ? `${failed.length} failed` : null, exit ? `exit ${exit}` : null, interrupted ? `${interrupted} interrupted` : null].filter(Boolean).join(' · '),
+    failed: failed.length + interrupted > 0 || status === 'failed', running: !!live,
+  };
 };
 
 const line = (item: Row, columns: number): TerminalComponent => {
@@ -135,12 +183,13 @@ const line = (item: Row, columns: number): TerminalComponent => {
 };
 
 export default function activate(api: ModAPI) {
-  api.builtins({ group_exec: true });
+  api.builtins({ group_exec: true, group_tools: true });
   api.intercept('render', { match: { component: 'tool_call' } }, (event, next) => {
     const { props, viewport } = event as RenderEvent<'tool_call'>;
-    if (props.expanded || (props.kind === 'exec' && props.user_shell)) return next(event);
+    if (props.presentation === 'transcript' || (props.expanded && props.kind !== 'run') || (props.kind === 'exec' && props.user_shell)) return next(event);
     try {
-      const item = props.kind === 'explore' ? props.calls.length > 1 ? group(props.calls) : props.calls[0] && exec(props.calls[0]) : row(props);
+      const item = props.kind === 'run' ? run(props.calls, props.status)
+        : props.kind === 'explore' ? props.calls.length > 1 ? group(props.calls) : props.calls[0] && exec(props.calls[0]) : row(props);
       if (item) return { tree: [line(item, viewport.columns)] };
     } catch {}
     return next(event);

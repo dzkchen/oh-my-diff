@@ -78,4 +78,9 @@ fn command_grouping_is_opt_in_and_combines_owners() {
     );
     assert!(!BuiltinSnapshot::from_controls(&[]).group_exec);
     assert!(BuiltinControls::parse(&json!({"group_exec": "yes"})).is_err());
+    let tools = BuiltinControls::parse(&json!({"group_tools": true})).unwrap();
+    let snapshot = BuiltinSnapshot::from_controls(&[("one".into(), tools)]);
+    assert!(snapshot.group_tools && !snapshot.group_exec);
+    assert!(!BuiltinSnapshot::from_controls(&[]).group_tools);
+    assert!(BuiltinControls::parse(&json!({"group_tools": 1})).is_err());
 }

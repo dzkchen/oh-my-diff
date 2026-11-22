@@ -60,8 +60,8 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 ## `tool_call` props
 
 Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
-`interrupted`), `duration_ms` (null without a recorded start and completion) and
-`expanded`, and per kind:
+`interrupted`), `duration_ms` (null without a recorded start and completion), `expanded` and `presentation`
+(`row`, `opened` or `transcript`), and per kind:
 
 | `kind` | Props |
 | --- | --- |
@@ -73,6 +73,11 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 | `mcp` | `server`, `tool`, `arguments`, `output_lines`, `error` |
 | `dynamic` | `tool`, `arguments`, `output_lines`, `error` |
 | `image` | `tool`, `path`, `prompt` |
+| `subagent` | `activity` (`started`/`interacted`/`interrupted`/`completed`), `agent` (nickname, else the last `path` segment), `path`, `model`, `effort` |
+| `run` | `calls`, `call_count` (the steps between two messages with [`group_tools`](commands-and-composer.md#built-in-controls)) |
+
+A restored transcript doesn't know subagent nicknames, so its `agent` is the last `path` segment where the live row
+had the nickname.
 
 Patch rows are inserted on completion. Declined patches show an informational notice, matching restored
 history; they do not produce a `tool_call` render target. MCP and dynamic `error` is the first non-empty line of a
@@ -98,6 +103,15 @@ or `mcp`.
   groups to the aggregate `tool_call` hook with `kind: 'explore'`. An aggregate replacement wins; otherwise the
   individual `exec` member hooks still run. A lone command outside reads, searches and listings keeps `kind: 'exec'`.
   Expanding a group shows every command's native output.
+- With [`group_tools`](commands-and-composer.md#built-in-controls) enabled, the agent's tool calls between two
+  messages form one run, offered first as `kind: 'run'`. `calls` lists each step in order (at most 64, the latest;
+  exploration groups as their `exec` calls), `call_count` counts them all, and `status` covers every step,
+  including steps `calls` leaves out. A replaced run is one row, `presentation: 'row'`. Opened, it is the run
+  row (`presentation: 'opened'`) followed by one row per step, each a `tool_call` with its own `expanded` flag. In
+  the full transcript the run and its steps get `presentation: 'transcript'`; when they return `next(e)` the
+  native rows draw. When the run hook returns `next(e)` for a row, the step hooks run as for other groups. Without a
+  run hook the steps draw natively, as without `group_tools`, except that inline sessions print them to scrollback
+  together when the run ends instead of one by one.
 
 ## Render hook behavior
 
@@ -106,7 +120,8 @@ identically. Tool rows are offered from live cells and committed history.
 
 - In the fullscreen transcript a hooked tool row needs no control row. F4 focuses it, and Enter, →/← or a click
   opens and closes it. `expanded` is `true` while the row is open and for every row of the full transcript
-  (Ctrl+T). A hook that shortens rows returns `next(e)` when `expanded` is `true`.
+  (Ctrl+T), and `presentation` says which: `opened` or `transcript`, otherwise `row`. A hook that shortens rows
+  returns `next(e)` when `expanded` is `true`.
 - Selection copies what is drawn; raw mode never runs hooks.
 - Approvals are [native confirmations](glossary.md#trust-and-authority) and have no render hook. Their identity,
   decision text, options, focus and grants stay native, and `surface_styles.approval` only paints the frame.

@@ -312,6 +312,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "continuation_middleware_v1",
     "builtins_v1",
     "transcript_exec_groups_v1",
+    "transcript_tool_groups_v1",
     "terminal_thread_view_v1",
     "contracts_v2",
     "framed_process_v1",
