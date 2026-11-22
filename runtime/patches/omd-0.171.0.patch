@@ -41383,10 +41383,25 @@ index 499cac8f2732248688c68f8a77a0bb3ad955fff7..5d35e8e3f69253fe37897480770b8e63
              let Some(turn) = turn_end else {
                  if relocate_split_images {
 diff --git a/codex-rs/tui/src/app/history_ui.rs b/codex-rs/tui/src/app/history_ui.rs
-index 653c2e5620dce73e7267af3213896b4356ad0e6a..edb2f285bdf3f6b2ef2ee692b2a97f71bb9b200e 100644
+index 653c2e5620dce73e7267af3213896b4356ad0e6a..4008d4304db04ff8ffe2d5efd83219a53f61a4bb 100644
 --- a/codex-rs/tui/src/app/history_ui.rs
 +++ b/codex-rs/tui/src/app/history_ui.rs
-@@ -34,11 +34,49 @@ impl App {
+@@ -23,7 +23,13 @@ pub(super) struct ThreadUsageStatusHistory {
+
+ impl App {
+     pub(super) fn link_viewed_image(&self, cell: &mut dyn HistoryCell) {
+-        if let Some(image) = cell
++        if let Some(run) = cell
++            .as_any_mut()
++            .downcast_mut::<history_cell::ToolRunCell>()
++        {
++            run.members_mut()
++                .for_each(|member| self.link_viewed_image(member));
++        } else if let Some(image) = cell
+             .as_any_mut()
+             .downcast_mut::<history_cell::ViewImageHistoryCell>()
+             && !self.app_server_target.uses_remote_workspace()
+@@ -34,11 +40,60 @@ impl App {
          }
      }
 
@@ -41404,17 +41419,28 @@ index 653c2e5620dce73e7267af3213896b4356ad0e6a..edb2f285bdf3f6b2ef2ee692b2a97f71
 +            self.insert_history_cell(tui, cell);
 +            return;
 +        };
-+        let cell: Arc<dyn HistoryCell> = cell.into();
++        let printed: Arc<dyn HistoryCell> = cell.into();
++        let run = self.transcript_cells[index]
++            .as_any()
++            .downcast_ref::<history_cell::ToolRunCell>();
++        let cells: Vec<Arc<dyn HistoryCell>> = match run {
++            Some(run) if history_cell::is_tool_member(printed.as_ref()) => run
++                .with_member(activity_id, printed.clone())
++                .map(|run| vec![Arc::new(run) as Arc<dyn HistoryCell>]),
++            Some(run) => run.split_around(activity_id, printed.clone()),
++            None => None,
++        }
++        .unwrap_or_else(|| vec![printed.clone()]);
 +        self.transcript_view
-+            .replace_range(&self.transcript_cells, index..index + 1, &cell);
-+        self.transcript_cells[index] = cell.clone();
++            .replace_range(&self.transcript_cells, index..index + 1, &cells[0]);
++        self.transcript_cells.splice(index..index + 1, cells);
 +        if let Some(Overlay::Transcript(t)) = &mut self.overlay {
 +            t.replace_cells(self.transcript_cells.clone());
 +        }
 +        // Terminal scrollback cannot be rewritten, so native history prints the final render.
 +        if !tui.is_owned_screen() {
-+            let deferred = self.native_history.insert(&cell);
-+            self.render_inserted_history_cell(tui, &cell, deferred);
++            let deferred = self.native_history.insert(&printed);
++            self.render_inserted_history_cell(tui, &printed, deferred);
 +        }
 +        tui.frame_requester().schedule_frame();
 +    }
@@ -41436,7 +41462,7 @@ index 653c2e5620dce73e7267af3213896b4356ad0e6a..edb2f285bdf3f6b2ef2ee692b2a97f71
          self.link_viewed_image(cell.as_mut());
          // Global deprecations can be delivered again by hidden threads. Scope deduplication to
          // retained history so clearing or rebuilding a transcript can show the notice again.
-@@ -351,6 +389,9 @@ impl App {
+@@ -351,6 +406,9 @@ impl App {
      }
 
      pub(super) fn queue_clear_ui_header(&mut self, tui: &mut tui::Tui) {
@@ -41619,6 +41645,21 @@ index 7a8af3ac2cfea3b6690efafe1b2996af52911b3c..ddc88cd1131cd76f18e5e8a86be1f436
              Ok(()) => {
                  let effort_label = effort
                      .as_ref()
+diff --git a/codex-rs/tui/src/app/native_history.rs b/codex-rs/tui/src/app/native_history.rs
+index b34523e28fa5662d6d8e63187c9ae584f8221c5a..ec7341e649fdaff1b1c3820a5e037f9c0bd4d63a 100644
+--- a/codex-rs/tui/src/app/native_history.rs
++++ b/codex-rs/tui/src/app/native_history.rs
+@@ -23,6 +23,10 @@ pub(super) fn is_pending(cell: &dyn HistoryCell) -> bool {
+     cell.as_any()
+         .downcast_ref::<history_cell::DynamicToolCallCell>()
+         .is_some_and(history_cell::DynamicToolCallCell::is_active)
++        || cell
++            .as_any()
++            .downcast_ref::<history_cell::ToolRunCell>()
++            .is_some_and(|run| run.members().any(is_pending))
+ }
+
+ impl NativeHistory {
 diff --git a/codex-rs/tui/src/app/new_session.rs b/codex-rs/tui/src/app/new_session.rs
 index aa8e920d9b4c4fa58392fb051d255fdecb310a53..8de71d2757fe8018c7330051accd61bf066947dd 100644
 --- a/codex-rs/tui/src/app/new_session.rs
@@ -43112,6 +43153,29 @@ index 9d6dc976653d631ec2717e385ce9845637ad9562..70ac44e7110cc39796f2d45abe5c0be9
              | ServerRequest::ChatgptAuthTokensRefresh { .. } => None,
          }
      }
+diff --git a/codex-rs/tui/src/app/sidebar_agent_status_tests.rs b/codex-rs/tui/src/app/sidebar_agent_status_tests.rs
+index afabcbf7b94cbba7600a54b0c5ef15758be5dc10..bf340a00c557c99bca5a32185cce26b2c4eb4f1f 100644
+--- a/codex-rs/tui/src/app/sidebar_agent_status_tests.rs
++++ b/codex-rs/tui/src/app/sidebar_agent_status_tests.rs
+@@ -404,7 +404,9 @@ async fn opens_agent_transcript_beside_parent_and_returns_to_chooser() -> color_
+         model: None,
+         reasoning_effort: None,
+     };
+-    let cell = crate::multi_agents::sub_agent_activity_history_cell(&activity).unwrap();
++    let cell =
++        crate::multi_agents::sub_agent_activity_history_cell(&activity, |_| Default::default())
++            .unwrap();
+     use crate::history_cell::HistoryCell;
+     let lines = cell.display_hyperlink_lines(/*width*/ 80);
+     let link = &lines[0].hyperlinks[0];
+@@ -555,6 +557,7 @@ async fn opens_agent_transcript_beside_parent_and_returns_to_chooser() -> color_
+             model: None,
+             reasoning_effort: None,
+         },
++        |_| Default::default(),
+     )
+     .unwrap();
+     app.insert_history_cell(&mut tui, Box::new(cell));
 diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__daemon_cli_confirmation.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__daemon_cli_confirmation.snap
 index 4a946119946cae246bfb2721f7abc9b363c1df3b..913654a3c15f8eb4ed339203b76916ce3a1bd1cb 100644
 --- a/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__daemon_cli_confirmation.snap
@@ -49190,7 +49254,7 @@ index 4cbba8b0066b7101ae5edcc62a19536213aae05e..d6be17554162090513444dff915d8635
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 22205141b812b87cfb08c11a5838831e91a9b406..106e90e08cb1fd058b7d9906628801be90617b50 100644
+index 22205141b812b87cfb08c11a5838831e91a9b406..7d0694f2820c491db59a5d042aee8b77d4b46629 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -52,7 +52,6 @@ use crate::bottom_pane::StatusLineSetupView;
@@ -49312,7 +49376,28 @@ index 22205141b812b87cfb08c11a5838831e91a9b406..106e90e08cb1fd058b7d9906628801be
          self.refresh_terminal_program_status();
      }
 
-@@ -1296,6 +1324,26 @@ impl ChatWidget {
+@@ -1272,6 +1300,10 @@ impl ChatWidget {
+                     .as_any()
+                     .downcast_ref::<history_cell::ComputerActivityCell>()
+                     .is_some_and(|cell| !cell.is_active())
++                || cell
++                    .as_any()
++                    .downcast_ref::<history_cell::ToolRunCell>()
++                    .is_some_and(|cell| !cell.is_active())
+         })
+     }
+
+@@ -1289,6 +1321,9 @@ impl ChatWidget {
+         let Err(cell) = self.absorb_activity_detail(cell) else {
+             return;
+         };
++        let Err(cell) = self.join_tool_run(cell) else {
++            return;
++        };
+         if let Some(active) = self.take_history_insertion_prefix(cell.as_ref()) {
+             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
+             self.request_pending_usage_output_insertion();
+@@ -1296,6 +1331,43 @@ impl ChatWidget {
          self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
      }
 
@@ -49326,6 +49411,23 @@ index 22205141b812b87cfb08c11a5838831e91a9b406..106e90e08cb1fd058b7d9906628801be
 +            self.add_to_history(cell);
 +            return;
 +        };
++        if let Some(run) = self.transcript.run_mut()
++            && let Some(index) = run.position(&activity_id)
++        {
++            if history_cell::is_tool_member(&cell) {
++                run.group.calls[index] = Arc::new(cell);
++                self.bump_active_cell_revision();
++                self.request_redraw();
++                return;
++            }
++            run.remove(index);
++            if run.group.calls.is_empty() {
++                self.transcript.take_active_cell();
++            }
++            self.flush_active_cell();
++            self.add_to_history(cell);
++            return;
++        }
 +        if let Some(active) = self.take_history_insertion_prefix(&cell) {
 +            self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
 +            self.request_pending_usage_output_insertion();
@@ -49339,7 +49441,7 @@ index 22205141b812b87cfb08c11a5838831e91a9b406..106e90e08cb1fd058b7d9906628801be
      fn take_history_insertion_prefix(
          &mut self,
          cell: &dyn HistoryCell,
-@@ -1367,6 +1415,11 @@ impl ChatWidget {
+@@ -1367,6 +1439,11 @@ impl ChatWidget {
          from_replay: bool,
          turn_id: &str,
      ) {
@@ -49351,7 +49453,34 @@ index 22205141b812b87cfb08c11a5838831e91a9b406..106e90e08cb1fd058b7d9906628801be
          if let Some(input) = realtime::realtime_delegation_input(items) {
              if !from_replay && self.should_hide_realtime_delegation(turn_id) {
                  return;
-@@ -1588,6 +1641,10 @@ impl ChatWidget {
+@@ -1496,8 +1573,7 @@ impl ChatWidget {
+
+     /// Mark the active cell as failed (✗) and flush it into history.
+     fn finalize_active_cell_as_failed(&mut self) {
+-        if let Some(mut cell) = self.transcript.take_active_cell() {
+-            // Insert finalized cell into history and keep grouping consistent.
++        fn mark_failed(cell: &mut dyn HistoryCell) {
+             if let Some(exec) = cell.as_any_mut().downcast_mut::<ExecCell>() {
+                 exec.mark_failed();
+             } else if let Some(tool) = cell.as_any_mut().downcast_mut::<McpToolCallCell>() {
+@@ -1507,7 +1583,16 @@ impl ChatWidget {
+                 .downcast_mut::<history_cell::ComputerActivityCell>()
+             {
+                 computer.mark_failed();
++            } else if let Some(run) = cell
++                .as_any_mut()
++                .downcast_mut::<history_cell::ToolRunCell>()
++            {
++                run.members_mut().for_each(mark_failed);
+             }
++        }
++        if let Some(mut cell) = self.transcript.take_active_cell() {
++            // Insert finalized cell into history and keep grouping consistent.
++            mark_failed(cell.as_mut());
+             self.add_boxed_history(cell);
+             self.request_pending_usage_output_insertion();
+         }
+@@ -1588,6 +1673,10 @@ impl ChatWidget {
 
      /// Merge the real session info cell with any placeholder header to avoid double boxes.
      fn apply_session_info_cell(&mut self, cell: history_cell::SessionInfoCell) {
@@ -49362,7 +49491,7 @@ index 22205141b812b87cfb08c11a5838831e91a9b406..106e90e08cb1fd058b7d9906628801be
          let mut session_info_cell = Some(Box::new(cell) as Box<dyn HistoryCell>);
          let merged_header = if let Some(active) = self.transcript.take_active_cell() {
              if active
-@@ -1940,6 +1997,56 @@ impl ChatWidget {
+@@ -1940,6 +2029,56 @@ impl ChatWidget {
              .send(AppEvent::AppendMessageHistoryEntry { thread_id, text });
      }
 
@@ -49419,7 +49548,7 @@ index 22205141b812b87cfb08c11a5838831e91a9b406..106e90e08cb1fd058b7d9906628801be
      pub(crate) fn prepare_local_op_submission(&mut self, op: &AppCommand) {
          if matches!(
              op,
-@@ -1949,6 +2056,8 @@ impl ChatWidget {
+@@ -1949,6 +2088,8 @@ impl ChatWidget {
          ) {
              self.transcript.last_status_copy_targets = None;
              self.input_queue.user_turn_pending_start = true;
@@ -49428,11 +49557,117 @@ index 22205141b812b87cfb08c11a5838831e91a9b406..106e90e08cb1fd058b7d9906628801be
          }
          if matches!(op, AppCommand::Interrupt) && self.turn_lifecycle.agent_turn_running {
              if let Some(controller) = self.stream_controller.as_mut() {
+diff --git a/codex-rs/tui/src/chatwidget/activity_groups.rs b/codex-rs/tui/src/chatwidget/activity_groups.rs
+index 232d6c0f8ea9aa25c04246a175b8f165d837ac71..5b512b863d2170de46ad8b50fb79366014e10a45 100644
+--- a/codex-rs/tui/src/chatwidget/activity_groups.rs
++++ b/codex-rs/tui/src/chatwidget/activity_groups.rs
+@@ -19,7 +19,7 @@ impl ChatWidget {
+         {
+             return Err(cell);
+         }
+-        let Some(active) = self.transcript.active_cell.as_mut() else {
++        let Some(active) = self.transcript.live_cell_mut() else {
+             return Err(cell);
+         };
+         if let Some(computer) = active
+@@ -37,9 +37,82 @@ impl ChatWidget {
+             self.bump_active_cell_revision();
+             return Ok(());
+         }
++        if let Some(run) = self.transcript.run_mut() {
++            run.group.push_detail(Arc::from(cell));
++            self.bump_active_cell_revision();
++            return Ok(());
++        }
+         Err(cell)
+     }
+
++    /// Ends the live tool cell: an active run keeps it, anything else goes to history.
++    pub(super) fn retire_live_cell(&mut self) {
++        if self.transcript.run().is_some() {
++            self.bump_active_cell_revision();
++        } else {
++            self.flush_active_cell();
++        }
++    }
++
++    /// Starts a live tool cell, inside a run while a mod groups tool calls.
++    pub(super) fn set_live_cell(&mut self, cell: Box<dyn HistoryCell>) {
++        let member = history_cell::is_tool_member(cell.as_ref());
++        if let Some(run) = self.transcript.run_mut()
++            && member
++        {
++            run.push(Arc::from(cell));
++            return;
++        }
++        if self.transcript.run().is_some() {
++            self.flush_active_cell();
++        }
++        if crate::omd::builtins().group_tools && member {
++            self.transcript.active_cell =
++                Some(Box::new(history_cell::ToolRunCell::new(Arc::from(cell))));
++        } else {
++            self.transcript.active_cell = Some(cell);
++        }
++    }
++
++    /// Adds a finished tool cell to the active run.
++    pub(super) fn push_to_run(
++        &mut self,
++        cell: Box<dyn HistoryCell>,
++    ) -> Result<(), Box<dyn HistoryCell>> {
++        match self.transcript.run_mut() {
++            Some(run) if history_cell::is_tool_member(cell.as_ref()) => {
++                run.push(Arc::from(cell));
++                self.bump_active_cell_revision();
++                Ok(())
++            }
++            _ => Err(cell),
++        }
++    }
++
++    /// Adds a finished tool cell to the active run, starting one once earlier activity is in history.
++    pub(super) fn join_tool_run(
++        &mut self,
++        cell: Box<dyn HistoryCell>,
++    ) -> Result<(), Box<dyn HistoryCell>> {
++        if !crate::omd::builtins().group_tools || !history_cell::is_tool_member(cell.as_ref()) {
++            return Err(cell);
++        }
++        let cell = match self.push_to_run(cell) {
++            Ok(()) => return Ok(()),
++            Err(cell) => cell,
++        };
++        if let Some(active) = self.take_history_insertion_prefix(cell.as_ref()) {
++            self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
++            self.request_pending_usage_output_insertion();
++        }
++        if self.transcript.active_cell.is_some() {
++            return Err(cell);
++        }
++        self.set_live_cell(cell);
++        self.bump_active_cell_revision();
++        Ok(())
++    }
++
+     /// Hydrate only the validated older portion, leaving current calls and their clocks intact.
+     pub(crate) fn prepend_active_exploration_history(
+         &mut self,
+@@ -49,8 +122,7 @@ impl ChatWidget {
+         let previous_revision = self.transcript.active_cell_revision;
+         let active = self
+             .transcript
+-            .active_cell
+-            .as_mut()?
++            .live_cell_mut()?
+             .as_any_mut()
+             .downcast_mut::<ExecCell>()?;
+         let older = crate::thread_transcript::older_exploration_group(older, active, turns)?;
 diff --git a/codex-rs/tui/src/chatwidget/activity_presentation.rs b/codex-rs/tui/src/chatwidget/activity_presentation.rs
-index e64064a3d8d41004c9fa00380cd8c6bc287ae7e8..06f2c054cef7a108e7cbc47c7fc494ebb9c255ff 100644
+index e64064a3d8d41004c9fa00380cd8c6bc287ae7e8..ab02a9af1bc9d7a7fa5fc5803ec36e8ececd64ea 100644
 --- a/codex-rs/tui/src/chatwidget/activity_presentation.rs
 +++ b/codex-rs/tui/src/chatwidget/activity_presentation.rs
-@@ -14,32 +14,52 @@ impl ChatWidget {
+@@ -14,32 +14,57 @@ impl ChatWidget {
          &self,
          width: u16,
          expanded: bool,
@@ -49443,9 +49678,9 @@ index e64064a3d8d41004c9fa00380cd8c6bc287ae7e8..06f2c054cef7a108e7cbc47c7fc494eb
          let has_activity = mode == HistoryRenderMode::Rich
              && active.is_some_and(|cell| !cell.activity_ids().is_empty());
 +        let mut replaced = false;
-+        let members = active
-+            .filter(|_| has_activity)
-+            .and_then(|cell| history_cell::hooked_member_lines(cell, width, expanded_ids));
++        let members = active.filter(|_| has_activity).and_then(|cell| {
++            history_cell::hooked_member_lines(cell, width, expanded_ids, /*transcript*/ false)
++        });
          let activity = active.map_or_else(Vec::new, |cell| {
 -            if expanded && has_activity {
 -                cell.expanded_hyperlink_lines(width)
@@ -49453,14 +49688,19 @@ index e64064a3d8d41004c9fa00380cd8c6bc287ae7e8..06f2c054cef7a108e7cbc47c7fc494eb
 -                history_cell::fullscreen_session_lines(cell, width, /*detailed*/ false, mode)
 +            if members.is_some() {
 +                return Vec::new();
-+            }
+             }
 +            if !has_activity {
 +                return history_cell::fullscreen_session_lines(
 +                    cell, width, /*detailed*/ false, mode,
 +                );
-             }
++            }
++            let presentation = if expanded {
++                history_cell::Presentation::Opened
++            } else {
++                history_cell::Presentation::Row
++            };
 +            let (lines, hooked) =
-+                history_cell::hooked_lines(cell, width, expanded, |cell, width| {
++                history_cell::hooked_lines(cell, width, presentation, |cell, width| {
 +                    if expanded {
 +                        cell.expanded_hyperlink_lines(width)
 +                    } else {
@@ -49504,7 +49744,7 @@ index 1bff1eaf562b61abfe886c89c2fd94f06c5bbbe1..e394107a762f82af27f968b04c380989
              std::mem::take(&mut previous.rate_limit_snapshots_by_limit_id);
          self.quota_plan = previous.quota_plan.take();
 diff --git a/codex-rs/tui/src/chatwidget/command_lifecycle.rs b/codex-rs/tui/src/chatwidget/command_lifecycle.rs
-index 68455112a8a9b75fd81f7f066afe4f0a50149884..5bd32875aa5a60224a791227ecee5ce352e1f4b6 100644
+index 68455112a8a9b75fd81f7f066afe4f0a50149884..081f5fbada562ae2389184144ff408f5d28b44c5 100644
 --- a/codex-rs/tui/src/chatwidget/command_lifecycle.rs
 +++ b/codex-rs/tui/src/chatwidget/command_lifecycle.rs
 @@ -35,7 +35,6 @@ impl ChatWidget {
@@ -49524,10 +49764,16 @@ index 68455112a8a9b75fd81f7f066afe4f0a50149884..5bd32875aa5a60224a791227ecee5ce3
                  return;
              }
          }
-@@ -62,6 +61,14 @@ impl ChatWidget {
+@@ -62,12 +61,17 @@ impl ChatWidget {
              return;
          }
 
+-        let Some(cell) = self
+-            .transcript
+-            .active_cell
+-            .as_mut()
+-            .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
+-        else {
 +        self.defer_or_handle(
 +            (call_id.to_owned(), delta.to_owned()),
 +            |queue, (call_id, delta)| queue.push_exec_output(call_id, delta),
@@ -49536,10 +49782,13 @@ index 68455112a8a9b75fd81f7f066afe4f0a50149884..5bd32875aa5a60224a791227ecee5ce3
 +    }
 +
 +    pub(super) fn handle_exec_output_now(&mut self, call_id: &str, delta: &str) {
-         let Some(cell) = self
-             .transcript
-             .active_cell
-@@ -90,22 +97,33 @@ impl ChatWidget {
++        let Some(cell) = self.transcript.tool_cell_mut::<ExecCell>(|cell| {
++            cell.iter_calls().any(|call| call.call_id == call_id)
++        }) else {
+             return;
+         };
+
+@@ -90,22 +94,33 @@ impl ChatWidget {
              return;
          }
 
@@ -49584,7 +49833,7 @@ index 68455112a8a9b75fd81f7f066afe4f0a50149884..5bd32875aa5a60224a791227ecee5ce3
              match &mut self.unified_exec_wait_streak {
                  Some(wait) if wait.process_id == process_id => {
                      wait.update_command_display(command_display);
-@@ -120,6 +138,21 @@ impl ChatWidget {
+@@ -120,6 +135,21 @@ impl ChatWidget {
                          Some(UnifiedExecWaitStreak::new(process_id, command_display));
                  }
              }
@@ -49606,6 +49855,113 @@ index 68455112a8a9b75fd81f7f066afe4f0a50149884..5bd32875aa5a60224a791227ecee5ce3
              self.request_redraw();
          } else {
              if self
+@@ -330,8 +360,7 @@ impl ChatWidget {
+         }
+         if let Some(cell) = self
+             .transcript
+-            .active_cell
+-            .as_mut()
++            .live_cell_mut()
+             .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
+             && cell.add_call(
+                 id.clone(),
+@@ -343,9 +372,9 @@ impl ChatWidget {
+         {
+             self.bump_active_cell_revision();
+         } else {
+-            self.flush_active_cell();
++            self.retire_live_cell();
+
+-            self.transcript.active_cell = Some(Box::new(new_active_exec_command(
++            self.set_live_cell(Box::new(new_active_exec_command(
+                 id,
+                 command,
+                 parsed_cmd,
+@@ -413,8 +442,7 @@ impl ChatWidget {
+         // a finished, compatible group; an unrelated running group must retain orphan routing.
+         if let Some(cell) = self
+             .transcript
+-            .active_cell
+-            .as_mut()
++            .live_cell_mut()
+             .and_then(|cell| cell.as_any_mut().downcast_mut::<ExecCell>())
+             && !cell.is_active()
+             && !cell.should_flush()
+@@ -428,11 +456,13 @@ impl ChatWidget {
+                 /*interaction_input*/ None,
+             );
+         }
+-        let end_target = match self.transcript.active_cell.as_ref() {
++        let tracked = self
++            .transcript
++            .tool_cell_mut::<ExecCell>(|cell| cell.iter_calls().any(|call| call.call_id == id))
++            .is_some();
++        let end_target = match self.transcript.live_cell() {
++            _ if tracked => ExecEndTarget::ActiveTracked,
+             Some(cell) => match cell.as_any().downcast_ref::<ExecCell>() {
+-                Some(exec_cell) if exec_cell.iter_calls().any(|call| call.call_id == id) => {
+-                    ExecEndTarget::ActiveTracked
+-                }
+                 Some(exec_cell) if exec_cell.is_active() => {
+                     ExecEndTarget::OrphanHistoryWhileActiveExec
+                 }
+@@ -453,16 +483,13 @@ impl ChatWidget {
+
+         match end_target {
+             ExecEndTarget::ActiveTracked => {
+-                if let Some(cell) = self
+-                    .transcript
+-                    .active_cell
+-                    .as_mut()
+-                    .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
+-                {
++                if let Some(cell) = self.transcript.tool_cell_mut::<ExecCell>(|cell| {
++                    cell.iter_calls().any(|call| call.call_id == id)
++                }) {
+                     let completed = cell.complete_call(&id, output, duration);
+                     debug_assert!(completed, "active exec cell should contain {id}");
+                     if cell.should_flush() {
+-                        self.flush_active_cell();
++                        self.retire_live_cell();
+                     } else {
+                         self.bump_active_cell_revision();
+                         self.request_redraw();
+@@ -480,8 +507,9 @@ impl ChatWidget {
+                 );
+                 let completed = orphan.complete_call(&id, output, duration);
+                 debug_assert!(completed, "new orphan exec cell should contain {id}");
+-                self.app_event_tx
+-                    .send(AppEvent::InsertHistoryCell(Box::new(orphan)));
++                if let Err(orphan) = self.push_to_run(Box::new(orphan)) {
++                    self.app_event_tx.send(AppEvent::InsertHistoryCell(orphan));
++                }
+                 self.request_redraw();
+             }
+             ExecEndTarget::NewCell => {
+@@ -497,8 +525,7 @@ impl ChatWidget {
+                 debug_assert!(completed, "new exec cell should contain {id}");
+                 if let Some(active) = self
+                     .transcript
+-                    .active_cell
+-                    .as_mut()
++                    .live_cell_mut()
+                     .and_then(|cell| cell.as_any_mut().downcast_mut::<ExecCell>())
+                     && !active.is_active()
+                     && active.is_exploring_cell()
+@@ -509,11 +536,11 @@ impl ChatWidget {
+                     self.bump_active_cell_revision();
+                     self.request_redraw();
+                 } else {
+-                    self.flush_active_cell();
++                    self.retire_live_cell();
+                     if cell.should_flush() {
+                         self.add_to_history(cell);
+                     } else {
+-                        self.transcript.active_cell = Some(Box::new(cell));
++                        self.set_live_cell(Box::new(cell));
+                         self.bump_active_cell_revision();
+                         self.request_redraw();
+                     }
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
 index f27e7c48019c4721e216dbcdb307c2d91be4921f..fc37312e111d26615cb66976be1d5b6f9c576e08 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
@@ -50470,6 +50826,19 @@ index 12c0daa18b7e084a52ca4deef720d62de8bbfa49..3b7687aa19730806f213453e24947200
          {
              self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
              return;
+diff --git a/codex-rs/tui/src/chatwidget/read_only.rs b/codex-rs/tui/src/chatwidget/read_only.rs
+index 33dfff2986b3ff6fe52b1de304e05fc2f9f0aa49..fd5a0c0f12e68e32d0e8488b4fc9e1b0948bb154 100644
+--- a/codex-rs/tui/src/chatwidget/read_only.rs
++++ b/codex-rs/tui/src/chatwidget/read_only.rs
+@@ -42,7 +42,7 @@ impl ChatWidget {
+         if let Some(questions) = &mut self.bottom_pane.questions {
+             questions.set_expanded(/*expanded*/ false);
+         }
+-        if let Some(cell) = self.transcript.active_cell.as_mut() {
++        if let Some(cell) = self.transcript.live_cell_mut() {
+             if let Some(exec) = cell.as_any_mut().downcast_mut::<ExecCell>() {
+                 exec.freeze_snapshot();
+             } else if let Some(tool) = cell.as_any_mut().downcast_mut::<McpToolCallCell>() {
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
 index 1de4bea05d7c3408ced493223ee4966b6e1691aa..9f2565402555cdd99173b8b5c63f60340cc39285 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
@@ -52326,10 +52695,10 @@ index f9de576cda425ebc16d48c9ae0b7e2be3a826750..d04542f084b7518fac2effdafcc991cf
  async fn reconnect_keeps_queue_paused_after_pending_compact() {
      let (mut chat, _rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
 diff --git a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
-index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b15dff70c 100644
+index 838363ffc24ada3cdfe015845a3f0939678a1d42..e99d057c9daa44dabcc1874ea8b7d47e4c3bc77e 100644
 --- a/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/exec_flow.rs
-@@ -2,6 +2,61 @@ use super::*;
+@@ -2,6 +2,334 @@ use super::*;
  use codex_app_server_protocol::ThreadItem;
  use pretty_assertions::assert_eq;
 
@@ -52388,10 +52757,283 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
 +    assert!(drain_insert_history(&mut events).is_empty());
 +}
 +
++fn tool_groups_fixture() -> (tempfile::TempDir, impl Drop, impl Sized) {
++    let root = tempfile::tempdir().unwrap();
++    let store = root.path().canonicalize().unwrap().join("store");
++    let package = root.path().canonicalize().unwrap().join("package");
++    std::fs::create_dir(&package).unwrap();
++    let host = crate::mod_runtime::test_fresh_host();
++    let environment = crate::omd::tests::omd_environment(&store);
++    crate::omd::tests::builtins_fixture(&store, &package, "{group_tools:true}");
++    assert!(crate::omd::builtins().group_tools);
++    (root, host, environment)
++}
++
++fn completed_exec(item: AppServerThreadItemPayload) -> AppServerThreadItemPayload {
++    let AppServerThreadItemPayload::CommandExecution {
++        id,
++        command,
++        cwd,
++        source,
++        command_actions,
++        ..
++    } = item
++    else {
++        panic!("expected command execution item");
++    };
++    AppServerThreadItemPayload::CommandExecution {
++        model_context: None,
++        sandbox_type: None,
++        id,
++        command,
++        cwd,
++        process_id: None,
++        plugin_id: None,
++        script_path: None,
++        source,
++        status: AppServerCommandExecutionStatus::Completed,
++        command_actions,
++        aggregated_output: Some("ok\n".into()),
++        exit_code: Some(0),
++        duration_ms: Some(5),
++    }
++}
++
++fn mcp_item(status: codex_app_server_protocol::McpToolCallStatus) -> AppServerThreadItemPayload {
++    AppServerThreadItemPayload::McpToolCall {
++        environment_id: None,
++        id: "mcp-1".into(),
++        server: "docs".into(),
++        tool: "search".into(),
++        status,
++        arguments: json!({"query": "runs"}),
++        app_context: None,
++        mcp_app_resource_uri: None,
++        mcp_app_ui: None,
++        plugin_id: None,
++        read_only_hint: None,
++        result: Some(Box::new(codex_app_server_protocol::McpToolCallResult {
++            content: vec![json!({"type": "text", "text": "found"})],
++            structured_content: None,
++            meta: None,
++        })),
++        error: None,
++        duration_ms: Some(5),
++    }
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn grouped_tools_form_one_run_live_and_replayed() {
++    use codex_app_server_protocol::McpToolCallStatus;
++    let _fixture = tool_groups_fixture();
++    let (mut chat, mut rx, _operations) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.on_task_started();
++    let mut items = Vec::new();
++    for (id, command) in [("read", "cat README.md"), ("test", "cargo test")] {
++        let begin = begin_exec(&mut chat, id, command);
++        let completed = completed_exec(begin);
++        handle_exec_end(&mut chat, completed.clone());
++        items.push(completed);
++    }
++    chat.on_mcp_tool_call_started(mcp_item(McpToolCallStatus::InProgress));
++    chat.on_mcp_tool_call_completed(mcp_item(McpToolCallStatus::Completed));
++    items.push(mcp_item(McpToolCallStatus::Completed));
++    assert_eq!(chat.transcript.run().unwrap().members().count(), 3);
++    complete_assistant_message(&mut chat, "answer", "Done", /*phase*/ None);
++    let mut live = Vec::new();
++    while let Ok(event) = rx.try_recv() {
++        if let AppEvent::InsertHistoryCell(cell) = event
++            && cell.as_any().is::<history_cell::ToolRunCell>()
++        {
++            live.push(cell);
++        }
++    }
++    let replayed = crate::thread_transcript::thread_items_to_transcript_cells(
++        /*thread_id*/ None,
++        &chat.config.cwd,
++        items,
++        crate::thread_transcript::RawReasoningVisibility::Visible,
++        /*config*/ None,
++    );
++    assert_eq!((live.len(), replayed.len()), (1, 1));
++    let target = |cell: &dyn HistoryCell| cell.render_target().unwrap().props;
++    assert_eq!(target(live[0].as_ref()), target(replayed[0].as_ref()));
++    assert_eq!(live[0].display_lines(80), replayed[0].display_lines(80));
++    let kinds = target(live[0].as_ref())["calls"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|call| call["kind"].as_str().unwrap().to_owned())
++        .collect::<Vec<_>>();
++    assert_eq!(kinds, ["exec", "exec", "mcp"]);
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn grouped_tools_replace_a_provisional_patch_inside_the_run() {
++    let _fixture = tool_groups_fixture();
++    let (mut chat, mut rx, _operations) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.on_task_started();
++    let begin = begin_exec(&mut chat, "list", "ls");
++    handle_exec_end(&mut chat, completed_exec(begin));
++    let changes = || {
++        HashMap::from([(
++            PathBuf::from("foo.txt"),
++            FileChange::Add {
++                content: "hello\n".to_string(),
++            },
++        )])
++    };
++    handle_apply_patch_approval_request(
++        &mut chat,
++        "s1",
++        ApplyPatchApprovalRequestEvent {
++            call_id: "c1".into(),
++            turn_id: "turn-c1".into(),
++            changes: changes(),
++            reason: None,
++            grant_root: None,
++        },
++    );
++    let provisional = |chat: &ChatWidget| {
++        let run = chat.transcript.run().expect("run");
++        assert_eq!(run.members().count(), 2);
++        run.last()
++            .unwrap()
++            .as_any()
++            .downcast_ref::<history_cell::PatchHistoryCell>()
++            .unwrap()
++            .is_provisional()
++    };
++    assert!(provisional(&chat));
++    handle_patch_apply_begin(&mut chat, "c1", "turn-c1", changes());
++    handle_patch_apply_end(
++        &mut chat,
++        "c1",
++        "turn-c1",
++        changes(),
++        AppServerPatchApplyStatus::Completed,
++    );
++    assert!(!provisional(&chat));
++    while let Ok(event) = rx.try_recv() {
++        assert!(
++            !matches!(event, AppEvent::ReplaceHistoryCell { .. }),
++            "the run replaced its member in place"
++        );
++    }
++}
++
++fn inserted(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>) -> Vec<Box<dyn HistoryCell>> {
++    let mut cells = Vec::new();
++    while let Ok(event) = rx.try_recv() {
++        if let AppEvent::InsertHistoryCell(cell) = event {
++            cells.push(cell);
++        }
++    }
++    cells
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn interrupting_a_run_keeps_its_completed_calls() {
++    use codex_app_server_protocol::McpToolCallStatus;
++    let _fixture = tool_groups_fixture();
++    let (mut chat, mut rx, _operations) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.on_task_started();
++    chat.on_mcp_tool_call_started(mcp_item(McpToolCallStatus::InProgress));
++    chat.on_mcp_tool_call_completed(mcp_item(McpToolCallStatus::Completed));
++    begin_exec(&mut chat, "slow", "cargo test");
++    chat.finalize_active_cell_as_failed();
++    let run = inserted(&mut rx)
++        .into_iter()
++        .find(|cell| cell.as_any().is::<history_cell::ToolRunCell>())
++        .expect("run");
++    let statuses = run.render_target().unwrap().props["calls"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|call| call["status"].as_str().unwrap().to_owned())
++        .collect::<Vec<_>>();
++    assert_eq!(statuses, ["completed", "interrupted"]);
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn a_user_shell_command_ends_the_agent_run() {
++    let _fixture = tool_groups_fixture();
++    let (mut chat, mut rx, _operations) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.on_task_started();
++    begin_exec(&mut chat, "agent", "cargo test");
++    begin_exec_with_source(
++        &mut chat,
++        "user",
++        "ls",
++        codex_app_server_protocol::CommandExecutionSource::UserShell,
++    );
++    assert!(chat.transcript.run().is_none());
++    let active = chat.transcript.active_cell.as_ref().unwrap();
++    assert!(
++        active
++            .as_any()
++            .downcast_ref::<ExecCell>()
++            .is_some_and(|cell| cell.iter_calls().all(|call| call.is_user_shell_command()))
++    );
++    assert!(
++        inserted(&mut rx)
++            .iter()
++            .any(|cell| cell.as_any().is::<history_cell::ToolRunCell>())
++    );
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn a_declined_provisional_patch_leaves_the_run_as_a_notice() {
++    let _fixture = tool_groups_fixture();
++    let (mut chat, mut rx, _operations) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.on_task_started();
++    let begin = begin_exec(&mut chat, "list", "ls");
++    handle_exec_end(&mut chat, completed_exec(begin));
++    let changes = HashMap::from([(
++        PathBuf::from("foo.txt"),
++        FileChange::Add {
++            content: "hello\n".to_string(),
++        },
++    )]);
++    handle_apply_patch_approval_request(
++        &mut chat,
++        "s1",
++        ApplyPatchApprovalRequestEvent {
++            call_id: "c1".into(),
++            turn_id: "turn-c1".into(),
++            changes: changes.clone(),
++            reason: None,
++            grant_root: None,
++        },
++    );
++    inserted(&mut rx);
++    handle_patch_apply_end(
++        &mut chat,
++        "c1",
++        "turn-c1",
++        changes,
++        AppServerPatchApplyStatus::Declined,
++    );
++    assert!(chat.transcript.active_cell.is_none());
++    let cells = inserted(&mut rx);
++    assert_eq!(cells.len(), 2);
++    let run = cells[0]
++        .as_any()
++        .downcast_ref::<history_cell::ToolRunCell>()
++        .expect("run");
++    assert_eq!(run.members().count(), 1);
++    assert!(!history_cell::is_tool_member(cells[1].as_ref()));
++}
++
  #[tokio::test]
  async fn external_writer_snapshot_freezes_active_command_and_mcp_rows() {
      let mut rendered = Vec::new();
-@@ -883,7 +938,7 @@ async fn unified_exec_wait_before_streamed_agent_message_snapshot() {
+@@ -883,7 +1211,7 @@ async fn unified_exec_wait_before_streamed_agent_message_snapshot() {
      terminal_interaction(&mut chat, "call-wait-stream-stdin", "proc-1", "");
 
      handle_agent_message_delta(&mut chat, "Streaming response.");
@@ -52400,7 +53042,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
 
      let cells = drain_insert_history_transcript_normalized(&mut rx);
      let combined = cells
-@@ -911,7 +966,7 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
+@@ -911,7 +1239,7 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
              .reset_status_timer(Duration::from_secs(/*secs*/ 125));
          handle_agent_message_delta(&mut chat, "Final response.\n");
          chat.on_commit_tick();
@@ -52409,7 +53051,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
 
          complete_assistant_message(
              &mut chat,
-@@ -939,6 +994,108 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
+@@ -939,6 +1267,108 @@ async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
      }
  }
 
@@ -52518,7 +53160,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
  #[tokio::test]
  async fn unified_exec_wait_status_header_updates_on_late_command_display() {
      let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-@@ -1695,12 +1852,12 @@ async fn apply_patch_events_emit_history_cells() {
+@@ -1695,12 +2125,12 @@ async fn apply_patch_events_emit_history_cells() {
          grant_root: None,
      };
      handle_apply_patch_approval_request(&mut chat, "s1", ev);
@@ -52535,7 +53177,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
      let mut changes2 = HashMap::new();
      changes2.insert(
          PathBuf::from("foo.txt"),
-@@ -1709,8 +1866,24 @@ async fn apply_patch_events_emit_history_cells() {
+@@ -1709,8 +2139,24 @@ async fn apply_patch_events_emit_history_cells() {
          },
      );
      handle_patch_apply_begin(&mut chat, "c1", "turn-c1", changes2);
@@ -52561,7 +53203,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
      let blob = lines_to_single_string(cells.last().unwrap());
      insta::assert_snapshot!(blob, @"
      • Added foo.txt (+16 -0)
-@@ -1731,27 +1904,6 @@ async fn apply_patch_events_emit_history_cells() {
+@@ -1731,27 +2177,6 @@ async fn apply_patch_events_emit_history_cells() {
          15 +line 15
          16 +line 16
      ");
@@ -52589,7 +53231,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
  }
 
  #[tokio::test]
-@@ -1785,7 +1937,15 @@ async fn apply_patch_manual_approval_adjusts_header() {
+@@ -1785,7 +2210,15 @@ async fn apply_patch_manual_approval_adjusts_header() {
              content: "hello\n".to_string(),
          },
      );
@@ -52606,7 +53248,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
 
      let cells = drain_insert_history(&mut rx);
      assert!(!cells.is_empty(), "expected apply block cell to be sent");
-@@ -1819,9 +1979,10 @@ async fn apply_patch_manual_flow_snapshot() {
+@@ -1819,9 +2252,10 @@ async fn apply_patch_manual_flow_snapshot() {
          },
      );
      let history_before_apply = drain_insert_history(&mut rx);
@@ -52620,7 +53262,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
      );
 
      let mut apply_changes = HashMap::new();
-@@ -1831,7 +1992,15 @@ async fn apply_patch_manual_flow_snapshot() {
+@@ -1831,7 +2265,15 @@ async fn apply_patch_manual_flow_snapshot() {
              content: "hello\n".to_string(),
          },
      );
@@ -52637,7 +53279,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
      let approved_lines = drain_insert_history(&mut rx)
          .pop()
          .expect("approved patch cell");
-@@ -2037,9 +2206,10 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
+@@ -2037,9 +2479,10 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
          },
      );
 
@@ -52651,7 +53293,7 @@ index 838363ffc24ada3cdfe015845a3f0939678a1d42..f80c37e824adde68272b6637c76bdb3b
      );
 
      let area = Rect::new(0, 0, 80, chat.desired_height(/*width*/ 80));
-@@ -2058,3 +2228,35 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
+@@ -2058,3 +2501,35 @@ async fn apply_patch_request_omits_diff_summary_from_modal() -> anyhow::Result<(
 
      Ok(())
  }
@@ -53477,7 +54119,7 @@ index adf284ddd092d1cbf1f595d771182f447d404db9..649d88261e04743efb4ddc43e96fbe58
 
      assert_eq!(
 diff --git a/codex-rs/tui/src/chatwidget/tool_lifecycle.rs b/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
-index 443b3a50cbf97a5763fb0a0a2a459ef24a78d4c3..38099e282ac4aa0582e53d68e7c0341ce253b4e3 100644
+index 443b3a50cbf97a5763fb0a0a2a459ef24a78d4c3..24cb24fc40fb0ecfcb4e0a46fed52686df24579a 100644
 --- a/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
 +++ b/codex-rs/tui/src/chatwidget/tool_lifecycle.rs
 @@ -8,13 +8,16 @@ use crate::thread_transcript::tools::McpHistory;
@@ -53540,7 +54182,18 @@ index 443b3a50cbf97a5763fb0a0a2a459ef24a78d4c3..38099e282ac4aa0582e53d68e7c0341c
          );
      }
 
-@@ -101,6 +110,7 @@ impl ChatWidget {
+@@ -86,8 +95,8 @@ impl ChatWidget {
+
+     pub(super) fn on_web_search_begin(&mut self, call_id: String) {
+         self.flush_answer_stream_with_separator();
+-        self.flush_active_cell();
+-        self.transcript.active_cell = Some(Box::new(history_cell::new_active_web_search_call(
++        self.retire_live_cell();
++        self.set_live_cell(Box::new(history_cell::new_active_web_search_call(
+             call_id,
+             String::new(),
+             self.local_settings.tui.animations && self.local_settings.tui.effects.progress,
+@@ -101,25 +110,25 @@ impl ChatWidget {
          call_id: String,
          query: String,
          action: codex_app_server_protocol::WebSearchAction,
@@ -53548,14 +54201,20 @@ index 443b3a50cbf97a5763fb0a0a2a459ef24a78d4c3..38099e282ac4aa0582e53d68e7c0341c
      ) {
          self.flush_answer_stream_with_separator();
          let mut handled = false;
-@@ -112,14 +122,16 @@ impl ChatWidget {
-             && cell.call_id() == call_id
+         if let Some(cell) = self
+             .transcript
+-            .active_cell
+-            .as_mut()
+-            .and_then(|cell| cell.as_any_mut().downcast_mut::<WebSearchCell>())
+-            && cell.call_id() == call_id
++            .tool_cell_mut::<WebSearchCell>(|cell| cell.call_id() == call_id)
          {
              cell.update(action.clone(), query.clone());
 -            cell.complete();
 +            cell.complete(duration_ms);
              self.bump_active_cell_revision();
-             self.flush_active_cell();
+-            self.flush_active_cell();
++            self.retire_live_cell();
              handled = true;
          }
 
@@ -53567,7 +54226,15 @@ index 443b3a50cbf97a5763fb0a0a2a459ef24a78d4c3..38099e282ac4aa0582e53d68e7c0341c
          }
      }
 
-@@ -181,14 +193,68 @@ impl ChatWidget {
+@@ -176,19 +185,75 @@ impl ChatWidget {
+     }
+
+     fn handle_sub_agent_activity_now(&mut self, item: ThreadItemPayload) {
+-        if let Some(cell) = multi_agents::sub_agent_activity_history_cell(&item) {
++        if let Some(cell) = multi_agents::sub_agent_activity_history_cell(&item, |thread_id| {
++            self.collab_agent_metadata(thread_id)
++        }) {
+             self.on_collab_event(cell);
          }
      }
 
@@ -53642,7 +54309,79 @@ index 443b3a50cbf97a5763fb0a0a2a459ef24a78d4c3..38099e282ac4aa0582e53d68e7c0341c
          }
      }
 
-@@ -329,13 +395,17 @@ impl ChatWidget {
+@@ -222,8 +287,8 @@ impl ChatWidget {
+             self.request_redraw();
+             return;
+         }
+-        self.flush_active_cell();
+-        self.transcript.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
++        self.retire_live_cell();
++        self.set_live_cell(Box::new(history_cell::new_active_mcp_tool_call(
+             id,
+             invocation,
+             self.local_settings.tui.animations && self.local_settings.tui.effects.progress,
+@@ -259,24 +324,23 @@ impl ChatWidget {
+
+         match self
+             .transcript
+-            .active_cell
+-            .as_mut()
+-            .and_then(|cell| cell.as_any_mut().downcast_mut::<McpToolCallCell>())
++            .tool_cell_mut::<McpToolCallCell>(|cell| cell.call_id() == id)
+         {
+-            Some(cell) if cell.call_id() == id => cell.complete(duration, result),
+-            _ => {
+-                self.flush_active_cell();
++            Some(cell) => cell.complete(duration, result),
++            None => {
++                self.retire_live_cell();
+                 let mut cell = history_cell::new_active_mcp_tool_call(
+                     id,
+                     invocation,
+                     self.local_settings.tui.animations && self.local_settings.tui.effects.progress,
+                 );
+                 cell.complete(duration, result);
+-                self.transcript.active_cell = Some(Box::new(cell));
++                self.set_live_cell(Box::new(cell));
+             }
+         };
+
+-        self.flush_active_cell();
++        self.bump_active_cell_revision();
++        self.retire_live_cell();
+     }
+
+     /// Preserve pending calls and timers, returning the revisions before and after hydration.
+@@ -286,7 +350,7 @@ impl ChatWidget {
+         turns: &[Turn],
+     ) -> Option<(u64, u64)> {
+         let previous_revision = self.transcript.active_cell_revision;
+-        let active = self.transcript.active_cell.as_mut().and_then(|cell| {
++        let active = self.transcript.live_cell_mut().and_then(|cell| {
+             cell.as_any_mut()
+                 .downcast_mut::<history_cell::ComputerActivityCell>()
+         })?;
+@@ -301,16 +365,16 @@ impl ChatWidget {
+         &mut self,
+         update: impl FnOnce(&mut history_cell::ComputerActivityCell),
+     ) {
+-        if let Some(cell) = self.transcript.active_cell.as_mut().and_then(|cell| {
++        if let Some(cell) = self.transcript.live_cell_mut().and_then(|cell| {
+             cell.as_any_mut()
+                 .downcast_mut::<history_cell::ComputerActivityCell>()
+         }) {
+             update(cell);
+         } else {
+-            self.flush_active_cell();
++            self.retire_live_cell();
+             let mut cell = history_cell::ComputerActivityCell::default();
+             update(&mut cell);
+-            self.transcript.active_cell = Some(Box::new(cell));
++            self.set_live_cell(Box::new(cell));
+         }
+     }
+
+@@ -329,13 +393,17 @@ impl ChatWidget {
          }
      }
 
@@ -53685,10 +54424,18 @@ index 2c0fca142490a5bc0881fb81285ea92bf1b2de2a..233f4fb383931899d98763f19e557f86
              thread_id: self.thread_id.unwrap_or_default(),
              thread_label: None,
 diff --git a/codex-rs/tui/src/chatwidget/transcript.rs b/codex-rs/tui/src/chatwidget/transcript.rs
-index e001eb7404dc962af3dda6972f6d23bf9c779835..4e1ac3d9064f49fff4a18b600cb331984c233d2d 100644
+index e001eb7404dc962af3dda6972f6d23bf9c779835..64d14a4a58c6a601f00a4b1a81f708d0b0d3eeb3 100644
 --- a/codex-rs/tui/src/chatwidget/transcript.rs
 +++ b/codex-rs/tui/src/chatwidget/transcript.rs
-@@ -13,6 +13,7 @@ pub(super) struct ActiveCellLayoutCacheKey {
+@@ -2,6 +2,7 @@
+
+ use super::HistoryCell;
+ use super::HistoryRenderMode;
++use crate::history_cell::ToolRunCell;
+ use std::cell::Cell;
+ use std::sync::Arc;
+
+@@ -13,6 +14,7 @@ pub(super) struct ActiveCellLayoutCacheKey {
      pub(super) width: u16,
      pub(super) render_mode: HistoryRenderMode,
      pub(super) syntax_theme_revision: u64,
@@ -53696,6 +54443,64 @@ index e001eb7404dc962af3dda6972f6d23bf9c779835..4e1ac3d9064f49fff4a18b600cb33198
  }
 
  /// Retains the active cell's semantic and actual wrapped heights independently.
+@@ -104,6 +106,57 @@ impl TranscriptState {
+         active_cell
+     }
+
++    pub(super) fn run(&self) -> Option<&ToolRunCell> {
++        self.active_cell.as_deref()?.as_any().downcast_ref()
++    }
++
++    pub(super) fn run_mut(&mut self) -> Option<&mut ToolRunCell> {
++        self.active_cell.as_deref_mut()?.as_any_mut().downcast_mut()
++    }
++
++    /// The cell live tool events update: the active run's newest member, or the active cell.
++    pub(super) fn live_cell(&self) -> Option<&dyn HistoryCell> {
++        match self.run() {
++            Some(run) => run.last(),
++            None => self.active_cell.as_deref(),
++        }
++    }
++
++    pub(super) fn live_cell_mut(&mut self) -> Option<&mut dyn HistoryCell> {
++        let active = self.active_cell.as_deref_mut()?;
++        if active.as_any().is::<ToolRunCell>() {
++            return active
++                .as_any_mut()
++                .downcast_mut::<ToolRunCell>()?
++                .last_mut();
++        }
++        Some(active)
++    }
++
++    /// The newest live tool cell of type `T` that `matches`, searching the whole active run.
++    pub(super) fn tool_cell_mut<T: HistoryCell>(
++        &mut self,
++        matches: impl Fn(&T) -> bool,
++    ) -> Option<&mut T> {
++        let active = self.active_cell.as_deref_mut()?;
++        if active.as_any().is::<ToolRunCell>() {
++            return active
++                .as_any_mut()
++                .downcast_mut::<ToolRunCell>()?
++                .members_mut()
++                .rev()
++                .find_map(|cell| {
++                    cell.as_any_mut()
++                        .downcast_mut::<T>()
++                        .filter(|cell| matches(cell))
++                });
++        }
++        active
++            .as_any_mut()
++            .downcast_mut::<T>()
++            .filter(|cell| matches(cell))
++    }
++
+     pub(super) fn record_agent_markdown(&mut self, markdown: String, source: String) {
+         self.last_status_copy_targets = None;
+         self.last_agent_markdown =
 diff --git a/codex-rs/tui/src/chatwidget/turn_runtime.rs b/codex-rs/tui/src/chatwidget/turn_runtime.rs
 index d1acdfcc5d72a61807d10c7c115435b6358d17a9..125635b95ec3db0a94bc42997389cf504f9773ee 100644
 --- a/codex-rs/tui/src/chatwidget/turn_runtime.rs
@@ -54213,27 +55018,22 @@ index 241e682a494dca3d9478c6201d40badb25197def..4fc7e02a2fa90491eebd7d0d72f4e0ca
  }
 
 diff --git a/codex-rs/tui/src/exec_cell/render.rs b/codex-rs/tui/src/exec_cell/render.rs
-index fe6c327f3e733be25012af616989ac180b007d40..29264ee976627d902ca53a074f4df7d12979684e 100644
+index fe6c327f3e733be25012af616989ac180b007d40..748227eb38547784b37cfd582529885b01821c79 100644
 --- a/codex-rs/tui/src/exec_cell/render.rs
 +++ b/codex-rs/tui/src/exec_cell/render.rs
-@@ -210,6 +210,143 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
+@@ -209,7 +209,159 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
+     .unwrap_or_else(|| "•".dim())
  }
 
- impl HistoryCell for ExecCell {
-+    fn render_members(&self, width: u16) -> Vec<crate::history_cell::RenderMember<'_>> {
++impl ExecCell {
++    /// One member per call of an exploration group, whether or not a hook draws the group.
++    pub(crate) fn call_members(&self) -> Vec<crate::history_cell::RenderMember<'_>> {
 +        if !self.is_exploring_cell() {
 +            return Vec::new();
 +        }
-+        let Some(mut target) = self.render_target() else {
++        let Some(target) = self.render_target() else {
 +            return Vec::new();
 +        };
-+        target.props["expanded"] = false.into();
-+        if self.group_exec
-+            && crate::mod_render::resolve_state(&target, width)
-+                .is_none_or(|rendered| rendered.is_some())
-+        {
-+            return Vec::new();
-+        }
 +        target.props["calls"]
 +            .as_array()
 +            .into_iter()
@@ -54268,6 +55068,27 @@ index fe6c327f3e733be25012af616989ac180b007d40..29264ee976627d902ca53a074f4df7d1
 +            })
 +            .collect()
 +    }
++}
++
+ impl HistoryCell for ExecCell {
++    fn render_members(&self, width: u16) -> Vec<crate::history_cell::RenderMember<'_>> {
++        if !self.is_exploring_cell() {
++            return Vec::new();
++        }
++        let Some(mut target) = self.render_target() else {
++            return Vec::new();
++        };
++        target.props["expanded"] = false.into();
++        target.props["presentation"] = "row".into();
++        if self.group_exec
++            && crate::mod_render::resolve_state(&target, width)
++                .is_none_or(|rendered| rendered.is_some())
++        {
++            return Vec::new();
++        }
++        self.call_members()
++    }
++
 +    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
 +        let calls = self.iter_calls().collect::<Vec<_>>();
 +        let first = calls.first()?;
@@ -54360,7 +55181,7 @@ index fe6c327f3e733be25012af616989ac180b007d40..29264ee976627d902ca53a074f4df7d1
      fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
          if self.is_exploring_cell() {
              self.group.push_detail(std::sync::Arc::from(cell));
-@@ -377,8 +514,15 @@ impl ExecCell {
+@@ -377,8 +529,15 @@ impl ExecCell {
              ])
              .into(),
          );
@@ -54377,7 +55198,7 @@ index fe6c327f3e733be25012af616989ac180b007d40..29264ee976627d902ca53a074f4df7d1
          let mut out_indented = Vec::new();
          let nonzero_exit = |call: &ExecCall| {
              call.duration
-@@ -388,15 +532,17 @@ impl ExecCell {
+@@ -388,15 +547,17 @@ impl ExecCell {
          };
          while let Some((call, remaining)) = calls.split_first() {
              let exit_code = nonzero_exit(call);
@@ -54399,7 +55220,7 @@ index fe6c327f3e733be25012af616989ac180b007d40..29264ee976627d902ca53a074f4df7d1
                              && next
                                  .parsed
                                  .iter()
-@@ -422,6 +568,8 @@ impl ExecCell {
+@@ -422,6 +583,8 @@ impl ExecCell {
                      "Read",
                      Itertools::intersperse(names.into_iter().map(Into::into), ", ".dim()).collect(),
                  )]
@@ -54408,7 +55229,7 @@ index fe6c327f3e733be25012af616989ac180b007d40..29264ee976627d902ca53a074f4df7d1
              } else {
                  let mut lines = Vec::new();
                  for parsed in &call.parsed {
-@@ -487,13 +635,7 @@ impl ExecCell {
+@@ -487,13 +650,7 @@ impl ExecCell {
                  out_indented.extend(wrapped);
              }
          }
@@ -54423,7 +55244,7 @@ index fe6c327f3e733be25012af616989ac180b007d40..29264ee976627d902ca53a074f4df7d1
      }
 
      fn command_display_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-@@ -1144,6 +1286,11 @@ mod tests {
+@@ -1144,6 +1301,11 @@ mod tests {
          let preview = cell.display_lines(/*width*/ 60);
          cell.group.calls[0].start_time = None;
          cell.mark_failed();
@@ -54512,6 +55333,39 @@ index 41a8c4f156359984786af6535dfa55853609f25b..ee300dad4d66d7ae0e7733815fc99447
  #[test]
  fn raw_grouped_history_retains_terminal_input_and_omits_reasoning() {
      let mut group = completed_read("first.txt", "first output");
+diff --git a/codex-rs/tui/src/history_cell/activity_details.rs b/codex-rs/tui/src/history_cell/activity_details.rs
+index 543afe776c23c28f832919f85129fee38da4b6ff..f933551e6d567f9d706b32e96dd9db2ca3c4a515 100644
+--- a/codex-rs/tui/src/history_cell/activity_details.rs
++++ b/codex-rs/tui/src/history_cell/activity_details.rs
+@@ -28,6 +28,28 @@ impl ActivityDetails {
+         *self = older;
+     }
+
++    /// Keeps details in place when the call at `index` leaves the group.
++    pub(crate) fn remove_call(&mut self, index: usize) {
++        for (position, _) in &mut self.entries {
++            if *position > index {
++                *position -= 1;
++            }
++        }
++    }
++
++    /// Details before and after the call at `index`, positioned within each side.
++    pub(crate) fn split_around(&self, index: usize) -> (Self, Self) {
++        let (mut before, mut after) = (Self::default(), Self::default());
++        for (position, cell) in &self.entries {
++            if *position <= index + 1 {
++                before.entries.push(((*position).min(index), cell.clone()));
++            } else {
++                after.entries.push((position - index - 1, cell.clone()));
++            }
++        }
++        (before, after)
++    }
++
+     pub(crate) fn lines_after(
+         &self,
+         after_calls: usize,
 diff --git a/codex-rs/tui/src/history_cell/base.rs b/codex-rs/tui/src/history_cell/base.rs
 index 8ee2e864b49c5b16e76b9271382c5434afa39c0f..ce479a682c4d09efb6705241d1c7755b8bce8c02 100644
 --- a/codex-rs/tui/src/history_cell/base.rs
@@ -54739,7 +55593,7 @@ index f6ca54451637035e1f7cc510dec4c169803e5fd1..9ab3bd5e6f33802ad12876ee33c0ab9c
          false
      }
 diff --git a/codex-rs/tui/src/history_cell/mcp.rs b/codex-rs/tui/src/history_cell/mcp.rs
-index 4939d18a0d78d77dabcccab577aa94fbefab358f..fc390e3ca2a24c8db82b5afe1263f93a7e42d749 100644
+index 4939d18a0d78d77dabcccab577aa94fbefab358f..7f26622c73f82ecdc72ea0b6ee95ff35403b7f3d 100644
 --- a/codex-rs/tui/src/history_cell/mcp.rs
 +++ b/codex-rs/tui/src/history_cell/mcp.rs
 @@ -55,6 +55,8 @@ pub(crate) struct McpToolCallCell {
@@ -54775,7 +55629,13 @@ index 4939d18a0d78d77dabcccab577aa94fbefab358f..fc390e3ca2a24c8db82b5afe1263f93a
          self.result = Some(result);
      }
 
-@@ -128,6 +140,8 @@ impl McpToolCallCell {
+@@ -125,9 +137,14 @@ impl McpToolCallCell {
+     }
+
+     pub(crate) fn mark_failed(&mut self) {
++        if self.result.is_some() {
++            return;
++        }
          let elapsed = self.start_time.elapsed();
          self.duration = Some(elapsed);
          self.result = Some(Err("interrupted".to_string()));
@@ -54784,7 +55644,7 @@ index 4939d18a0d78d77dabcccab577aa94fbefab358f..fc390e3ca2a24c8db82b5afe1263f93a
      }
 
      pub(crate) fn freeze_snapshot(&mut self) {
-@@ -234,6 +248,32 @@ impl McpToolCallCell {
+@@ -234,6 +251,32 @@ impl McpToolCallCell {
 
      /// Share one bounded preview across result blocks while retaining full transcript sources.
      fn render_detail_lines(&self, width: u16, mode: McpToolCallRenderMode) -> Vec<HyperlinkLine> {
@@ -54817,7 +55677,7 @@ index 4939d18a0d78d77dabcccab577aa94fbefab358f..fc390e3ca2a24c8db82b5afe1263f93a
          let detail_width = usize::from(width)
              .saturating_sub(/*rhs*/ 4)
              .max(/*other*/ 1);
-@@ -360,6 +400,34 @@ impl HistoryCell for McpToolCallCell {
+@@ -360,6 +403,34 @@ impl HistoryCell for McpToolCallCell {
          vec![format!("{verb} {}", self.compact_tool_name())]
      }
 
@@ -55072,26 +55932,81 @@ index 84f5a863732c7a4e3dc96f49dc70d05f60a57b64..a3e37b884ac101fa71c1221c10425a40
          visible_lines(self.display_hyperlink_lines(width))
      }
 diff --git a/codex-rs/tui/src/history_cell/mod.rs b/codex-rs/tui/src/history_cell/mod.rs
-index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb581c987228 100644
+index 4940b27ecff8b0128291007eae9204a1f3719467..4908c0b7830ed0d464669a5f47c9eab2cfa837ad 100644
 --- a/codex-rs/tui/src/history_cell/mod.rs
 +++ b/codex-rs/tui/src/history_cell/mod.rs
-@@ -198,6 +198,95 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
+@@ -123,6 +123,7 @@ mod separators;
+ mod session;
+ mod spoken_artifacts;
+ mod startup_warnings;
++mod tool_run;
+ mod warnings;
+
+ pub(crate) use activity_details::ActivityDetails;
+@@ -145,6 +146,9 @@ pub(crate) use search::*;
+ pub(crate) use separators::*;
+ pub(crate) use session::*;
+ pub(crate) use startup_warnings::StartupWarningsCell;
++pub(crate) use tool_run::ToolRunCell;
++pub(crate) use tool_run::group_tool_runs;
++pub(crate) use tool_run::is_tool_member;
+ pub(crate) use warnings::WarningEntry;
+ pub(crate) use warnings::WarningHistoryCell;
+ pub(crate) use warnings::WarningId;
+@@ -198,6 +202,172 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
          .collect()
  }
 
-+/// Runs `cell`'s native drawing through the matching mod `render` hooks, telling tool rows whether the user expanded them; the flag reports whether a hook replaced the native drawing.
++/// Where a tool row is drawn: a compact row, a row the user opened, or the full transcript.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub(crate) enum Presentation {
++    Row,
++    Opened,
++    Transcript,
++}
++
++impl Presentation {
++    fn of(open: bool, transcript: bool) -> Self {
++        match (open, transcript) {
++            (_, true) => Self::Transcript,
++            (true, false) => Self::Opened,
++            (false, false) => Self::Row,
++        }
++    }
++
++    fn name(self) -> &'static str {
++        match self {
++            Self::Row => "row",
++            Self::Opened => "opened",
++            Self::Transcript => "transcript",
++        }
++    }
++
++    fn apply(self, props: &mut serde_json::Value, expanded: bool) {
++        props["expanded"] = expanded.into();
++        props["presentation"] = self.name().into();
++    }
++}
++
++/// Runs `cell`'s native drawing through the matching mod `render` hooks, telling tool rows how they are presented; the flag reports whether a hook replaced the native drawing.
 +pub(crate) fn hooked_lines<C: HistoryCell + ?Sized>(
 +    cell: &C,
 +    width: u16,
-+    expanded: bool,
++    presentation: Presentation,
 +    draw: impl FnOnce(&C, u16) -> Vec<HyperlinkLine>,
 +) -> (Vec<HyperlinkLine>, bool) {
++    let expanded = presentation != Presentation::Row;
 +    let expanded_ids = if expanded {
 +        cell.activity_ids().into_iter().collect()
 +    } else {
 +        Default::default()
 +    };
-+    if let Some(members) = hooked_member_lines(cell, width, &expanded_ids) {
++    if let Some(members) = hooked_member_lines(
++        cell,
++        width,
++        &expanded_ids,
++        presentation == Presentation::Transcript,
++    ) {
 +        return (
 +            members
 +                .into_iter()
@@ -55103,7 +56018,7 @@ index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb58
 +    match cell.render_target() {
 +        Some(mut target) => {
 +            if target.component == "tool_call" {
-+                target.props["expanded"] = serde_json::Value::Bool(expanded);
++                presentation.apply(&mut target.props, expanded);
 +            }
 +            let (mut lines, replaced) =
 +                crate::mod_render::hyperlink_lines(&target, width, |props, width| {
@@ -55127,17 +56042,65 @@ index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb58
 +    pub(crate) lines: Vec<HyperlinkLine>,
 +}
 +
++fn member_lines(member: RenderMember<'_>, width: u16, open: bool) -> MemberLines {
++    let (mut lines, _) = crate::mod_render::hyperlink_lines(&member.target, width, |_, width| {
++        (member.native)(width, open)
++    });
++    lines.extend(crate::mod_render::tool_notice_lines(&member.target));
++    MemberLines {
++        id: member.id,
++        lines,
++    }
++}
++
++/// A run a hook draws is one header row, followed by a row per step once opened or in the transcript.
++fn hooked_run_lines<C: HistoryCell + ?Sized>(
++    cell: &C,
++    width: u16,
++    expanded: &std::collections::HashSet<String>,
++    transcript: bool,
++) -> Option<Vec<MemberLines>> {
++    let mut target = cell
++        .render_target()
++        .filter(|target| target.props["kind"] == "run")?;
++    let open = transcript || expanded.contains(&target.id);
++    Presentation::of(open, transcript).apply(&mut target.props, open);
++    crate::mod_render::resolve(&target, width)?;
++    let header = member_lines(
++        RenderMember {
++            id: target.id.clone(),
++            target,
++            native: Box::new(|width, _| cell.display_hyperlink_lines(width)),
++        },
++        width,
++        open,
++    );
++    let mut lines = vec![header];
++    if open {
++        lines.extend(cell.render_members(width).into_iter().map(|mut member| {
++            let open = transcript || expanded.contains(&member.id);
++            Presentation::of(open, transcript).apply(&mut member.target.props, open);
++            member_lines(member, width, open)
++        }));
++    }
++    Some(lines)
++}
++
 +pub(crate) fn hooked_member_lines<C: HistoryCell + ?Sized>(
 +    cell: &C,
 +    width: u16,
 +    expanded: &std::collections::HashSet<String>,
++    transcript: bool,
 +) -> Option<Vec<MemberLines>> {
 +    if !crate::mod_render::enabled() {
 +        return None;
 +    }
++    if let Some(lines) = hooked_run_lines(cell, width, expanded, transcript) {
++        return Some(lines);
++    }
 +    let mut members = cell.render_members(width);
 +    for member in &mut members {
-+        member.target.props["expanded"] = false.into();
++        Presentation::Row.apply(&mut member.target.props, false);
 +    }
 +    // A group stays per-member while any compact row is hooked; expanded rows are probed compact only as a last resort, since their drawn render must be the last one queued.
 +    let hooked =
@@ -55153,16 +56116,8 @@ index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb58
 +            .into_iter()
 +            .map(|mut member| {
 +                let open = expanded.contains(&member.id);
-+                member.target.props["expanded"] = open.into();
-+                let (mut lines, _) =
-+                    crate::mod_render::hyperlink_lines(&member.target, width, |_, width| {
-+                        (member.native)(width, open)
-+                    });
-+                lines.extend(crate::mod_render::tool_notice_lines(&member.target));
-+                MemberLines {
-+                    id: member.id,
-+                    lines,
-+                }
++                Presentation::of(open, transcript).apply(&mut member.target.props, open);
++                member_lines(member, width, open)
 +            })
 +            .collect(),
 +    )
@@ -55171,7 +56126,7 @@ index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb58
  /// A single renderable unit of conversation history.
  ///
  /// Each cell produces logical `Line`s and reports how many viewport
-@@ -208,6 +297,11 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
+@@ -208,6 +378,11 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
  /// heights when they apply additional layout logic beyond what
  /// `Paragraph::line_count` captures.
  pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
@@ -55183,7 +56138,7 @@ index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb58
      /// Retain reasoning inside an activity group, or return it for normal insertion.
      /// Call positions stay fixed as in-flight calls complete; other history cells decline it.
      fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
-@@ -250,6 +344,19 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -250,6 +425,19 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          plain_hyperlink_lines(self.display_lines(width))
      }
 
@@ -55203,7 +56158,7 @@ index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb58
      /// Compact presentation for the owned transcript, which can reveal details in place.
      #[allow(dead_code, reason = "Used by later layers of the TUI refresh stack.")]
      fn compact_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-@@ -289,7 +396,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -289,7 +477,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
      fn display_lines_for_mode(&self, width: u16, mode: HistoryRenderMode) -> Vec<Line<'static>> {
          match mode {
@@ -55214,13 +56169,13 @@ index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb58
              HistoryRenderMode::Raw => self.live_raw_lines(),
          }
      }
-@@ -300,7 +409,12 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -300,7 +490,12 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          mode: HistoryRenderMode,
      ) -> Vec<HyperlinkLine> {
          match mode {
 -            HistoryRenderMode::Rich => self.display_hyperlink_lines(width),
 +            HistoryRenderMode::Rich => {
-+                hooked_lines(self, width, /*expanded*/ false, |cell, width| {
++                hooked_lines(self, width, Presentation::Row, |cell, width| {
 +                    cell.display_hyperlink_lines(width)
 +                })
 +                .0
@@ -55228,7 +56183,7 @@ index 4940b27ecff8b0128291007eae9204a1f3719467..2a77f2e3575d05da92b01ed0d30ddb58
              HistoryRenderMode::Raw => plain_hyperlink_lines(self.live_raw_lines()),
          }
      }
-@@ -371,7 +485,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -371,7 +566,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
  impl Renderable for Box<dyn HistoryCell> {
      fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -55857,7 +56812,7 @@ index b916f6bd8e8eac0eab3487c21548a5085d7e71a2..c06a04821803efc10727fd458a54a9ac
          if width == 0 {
              return Vec::new();
 diff --git a/codex-rs/tui/src/history_cell/session.rs b/codex-rs/tui/src/history_cell/session.rs
-index 120454d1eaf73c8fe677e792c59f5d3f66dbf241..2c55b1db4a2ec1f67b344e40f75daff821f3f16f 100644
+index 120454d1eaf73c8fe677e792c59f5d3f66dbf241..381adfaf83119810ddd2e18522e27f1bf5fb6f5d 100644
 --- a/codex-rs/tui/src/history_cell/session.rs
 +++ b/codex-rs/tui/src/history_cell/session.rs
 @@ -42,11 +42,15 @@ pub(crate) fn with_border_with_inner_width(
@@ -55914,19 +56869,24 @@ index 120454d1eaf73c8fe677e792c59f5d3f66dbf241..2c55b1db4a2ec1f67b344e40f75daff8
  /// Fullscreen transcript presentation omits tips; scrollback retains the original cells.
  pub(crate) fn fullscreen_session_lines(
      cell: &dyn HistoryCell,
-@@ -143,7 +165,10 @@ pub(crate) fn fullscreen_session_lines(
+@@ -143,7 +165,15 @@ pub(crate) fn fullscreen_session_lines(
          }
          lines
      } else if detailed || mode == HistoryRenderMode::Rich {
 -        cell.retained_hyperlink_lines(width, detailed)
-+        super::hooked_lines(cell, width, detailed, |cell, width| {
++        let presentation = if detailed {
++            super::Presentation::Transcript
++        } else {
++            super::Presentation::Row
++        };
++        super::hooked_lines(cell, width, presentation, |cell, width| {
 +            cell.retained_hyperlink_lines(width, detailed)
 +        })
 +        .0
      } else {
          cell.display_hyperlink_lines_for_mode(width, mode)
      }
-@@ -211,9 +236,16 @@ pub(crate) fn new_session_info(
+@@ -211,9 +241,16 @@ pub(crate) fn new_session_info(
          session.approval_policy,
          &session.permission_profile,
      ));
@@ -55944,7 +56904,7 @@ index 120454d1eaf73c8fe677e792c59f5d3f66dbf241..2c55b1db4a2ec1f67b344e40f75daff8
          // Help lines below the header (new copy and list)
          let help_lines: Vec<Line<'static>> = vec![
              "  To get started, describe a task or try one of these commands:"
-@@ -398,6 +430,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -398,6 +435,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
                  "YOLO mode".magenta().bold(),
              ]));
          }
@@ -55958,7 +56918,7 @@ index 120454d1eaf73c8fe677e792c59f5d3f66dbf241..2c55b1db4a2ec1f67b344e40f75daff8
          lines
              .into_iter()
              .map(|line| truncate_line_with_ellipsis_if_overflow(line, width))
-@@ -405,8 +444,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -405,8 +449,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
      }
 
      fn raw_lines(&self) -> Vec<Line<'static>> {
@@ -55973,7 +56933,7 @@ index 120454d1eaf73c8fe677e792c59f5d3f66dbf241..2c55b1db4a2ec1f67b344e40f75daff8
              Line::from(format!(
                  "model: {}{}",
                  self.model,
-@@ -422,6 +466,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -422,6 +471,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
          if self.yolo_mode {
              lines.push(Line::from("permissions: YOLO mode"));
          }
@@ -56403,7 +57363,7 @@ index b71924859f884be4ea4e1fb37b4eaf3c4719c715..f47303e0734a298c6a03c44228137869
          self.models
              .iter()
 diff --git a/codex-rs/tui/src/multi_agents.rs b/codex-rs/tui/src/multi_agents.rs
-index b019a97fb0c6d0936eeda706b4f560f34e502166..683a6fab6aa00d2cc493a4ac2b0edcd6a97d4594 100644
+index b019a97fb0c6d0936eeda706b4f560f34e502166..b685d032d28bdc4e299bfd3cb625c5e22b6f33b6 100644
 --- a/codex-rs/tui/src/multi_agents.rs
 +++ b/codex-rs/tui/src/multi_agents.rs
 @@ -5,6 +5,7 @@
@@ -56474,7 +57434,15 @@ index b019a97fb0c6d0936eeda706b4f560f34e502166..683a6fab6aa00d2cc493a4ac2b0edcd6
  }
 
  pub(crate) fn sub_agent_activity_display(
-@@ -324,6 +347,8 @@ pub(crate) fn sub_agent_activity_history_cell(
+@@ -319,11 +342,15 @@ pub(crate) fn sub_agent_activity_display(
+
+ pub(crate) fn sub_agent_activity_history_cell(
+     item: &ThreadItemPayload,
+-) -> Option<WebHyperlinkHistoryCell> {
++    agent_metadata: impl FnOnce(ThreadId) -> AgentMetadata,
++) -> Option<ToolCallCell<WebHyperlinkHistoryCell>> {
+     let ThreadItemPayload::SubAgentActivity {
++        id,
          kind,
          agent_path,
          agent_thread_id,
@@ -56483,10 +57451,11 @@ index b019a97fb0c6d0936eeda706b4f560f34e502166..683a6fab6aa00d2cc493a4ac2b0edcd6
          ..
      } = item
      else {
-@@ -341,6 +366,17 @@ pub(crate) fn sub_agent_activity_history_cell(
+@@ -341,7 +368,41 @@ pub(crate) fn sub_agent_activity_history_cell(
          format!("`{agent_path}`").fg(accent_color()),
          parse_thread_id(agent_thread_id),
      );
+-    Some(collab_event(title, Vec::new()))
 +    if *kind == SubAgentActivityKind::Started
 +        && let Some(model) = model
 +    {
@@ -56498,10 +57467,34 @@ index b019a97fb0c6d0936eeda706b4f560f34e502166..683a6fab6aa00d2cc493a4ac2b0edcd6
 +                reasoning_effort: reasoning_effort.clone().unwrap_or_default(),
 +            })));
 +    }
-     Some(collab_event(title, Vec::new()))
++    let (activity, status) = match kind {
++        SubAgentActivityKind::Started => ("started", "completed"),
++        SubAgentActivityKind::Interacted => ("interacted", "completed"),
++        SubAgentActivityKind::Interrupted => ("interrupted", "interrupted"),
++        SubAgentActivityKind::Completed => ("completed", "completed"),
++    };
++    let agent = parse_thread_id(agent_thread_id)
++        .and_then(|thread_id| agent_metadata(thread_id).agent_nickname)
++        .or_else(|| {
++            agent_path
++                .rsplit('/')
++                .next()
++                .filter(|name| !name.is_empty())
++                .map(str::to_owned)
++        });
++    let props = serde_json::json!({"call_id": id, "kind": "subagent", "activity": activity,
++        "agent": agent.as_deref().map(crate::mod_render::bounded),
++        "path": crate::mod_render::bounded(agent_path), "model": model,
++        "effort": reasoning_effort, "status": status, "duration_ms": null});
++    Some(ToolCallCell::new(
++        collab_event(title, Vec::new()),
++        format!("{id}:{activity}"),
++        props,
++    ))
  }
 
-@@ -686,6 +722,26 @@ mod tests {
+ fn push_agent_label(line: &mut HyperlinkLine, span: Span<'static>, id: Option<ThreadId>) {
+@@ -686,6 +747,40 @@ mod tests {
      use ratatui::style::Modifier;
      use std::collections::HashMap;
 
@@ -56516,19 +57509,33 @@ index b019a97fb0c6d0936eeda706b4f560f34e502166..683a6fab6aa00d2cc493a4ac2b0edcd6
 +            agent_path: "/root/research".to_string(),
 +        };
 +
-+        let lines = sub_agent_activity_history_cell(&item)
-+            .expect("a started activity renders")
-+            .display_lines(80);
++        let cell = sub_agent_activity_history_cell(&item, |_| AgentMetadata {
++            agent_nickname: Some("Papers".into()),
++            agent_role: None,
++        })
++        .expect("a started activity renders");
 +        assert_eq!(
-+            lines[0].to_string(),
++            cell.display_lines(80)[0].to_string(),
 +            "• Started `/root/research` (claude-sonnet-5-5 high)"
 +        );
++        let props = cell.render_target().unwrap().props;
++        assert_eq!(
++            props,
++            serde_json::json!({"call_id": "activity-1", "kind": "subagent", "activity": "started",
++                "agent": "Papers", "path": "/root/research", "model": "claude-sonnet-5-5",
++                "effort": "high", "status": "completed", "duration_ms": null})
++        );
++        let replayed = sub_agent_activity_history_cell(&item, |_| AgentMetadata::default())
++            .unwrap()
++            .render_target()
++            .unwrap();
++        assert_eq!(replayed.props["agent"], "research");
 +    }
 +
      #[test]
      fn interacted_sub_agent_activity_does_not_change_liveness() {
          let item = ThreadItemPayload::SubAgentActivity {
-@@ -750,6 +806,17 @@ mod tests {
+@@ -750,6 +845,17 @@ mod tests {
              |thread_id| metadata_for(thread_id, robie_id, bob_id),
          )
          .expect("spawn item renders");
@@ -56546,7 +57553,7 @@ index b019a97fb0c6d0936eeda706b4f560f34e502166..683a6fab6aa00d2cc493a4ac2b0edcd6
 
          let send = tool_call_history_cell(
              &ThreadItemPayload::CollabAgentToolCall {
-@@ -950,7 +1017,7 @@ mod tests {
+@@ -950,7 +1056,7 @@ mod tests {
      fn resume_cell(
          status: CollabAgentToolCallStatus,
          agent_status: CollabAgentStatus,
@@ -58507,7 +59514,7 @@ index dbf67fc42c39ed1eda73d6eed281031fad230f05..f53b0e6e21199a05a0984d64ac69ac22
              );
              let mut expected_replay = vec![b'x'; 2_048];
 diff --git a/codex-rs/tui/src/thread_transcript.rs b/codex-rs/tui/src/thread_transcript.rs
-index 060d4a9c41929bec78e0d3958b659d86363bc2bc..86d65b60004c61412f630c0fe445cb7d16dfd620 100644
+index 060d4a9c41929bec78e0d3958b659d86363bc2bc..cd9fe38ed623fbde6e49ce116c5001446f09e387 100644
 --- a/codex-rs/tui/src/thread_transcript.rs
 +++ b/codex-rs/tui/src/thread_transcript.rs
 @@ -16,6 +16,7 @@ use crate::history_cell::split_reasoning_summary_parts;
@@ -58619,7 +59626,16 @@ index 060d4a9c41929bec78e0d3958b659d86363bc2bc..86d65b60004c61412f630c0fe445cb7d
                  );
                  if !projected.is_empty() {
                      PendingActivity::flush(&mut pending, &mut cells);
-@@ -226,9 +268,11 @@ pub(crate) fn thread_items_to_transcript_cells(
+@@ -220,15 +262,20 @@ pub(crate) fn thread_items_to_transcript_cells(
+         }
+     }
+     PendingActivity::flush(&mut pending, &mut cells);
++    if crate::omd::builtins().group_tools {
++        return crate::history_cell::group_tool_runs(cells);
++    }
+     cells
+ }
+
  /// Project one item without changing the active widget or its turn lifecycle.
  fn item_to_cells(
      item: ThreadItemPayload,
@@ -58631,7 +59647,7 @@ index 060d4a9c41929bec78e0d3958b659d86363bc2bc..86d65b60004c61412f630c0fe445cb7d
  ) -> TranscriptCells {
      let mut cells: TranscriptCells = Vec::new();
      match item {
-@@ -275,6 +319,7 @@ fn item_to_cells(
+@@ -275,6 +322,7 @@ fn item_to_cells(
              cells.push(Arc::new(cell.with_async_replies(replies, cwd.as_path())));
          }
          ThreadItemPayload::AgentMessage {
@@ -58639,7 +59655,7 @@ index 060d4a9c41929bec78e0d3958b659d86363bc2bc..86d65b60004c61412f630c0fe445cb7d
              text,
              questions,
              phase,
-@@ -289,6 +334,7 @@ fn item_to_cells(
+@@ -289,6 +337,7 @@ fn item_to_cells(
                          inline_visualization_context,
                      )
                      .with_phase(phase)
@@ -58647,7 +59663,7 @@ index 060d4a9c41929bec78e0d3958b659d86363bc2bc..86d65b60004c61412f630c0fe445cb7d
                      .with_questions(questions.as_deref().unwrap_or_default()),
                  ));
              }
-@@ -350,7 +396,7 @@ fn item_to_cells(
+@@ -350,7 +399,7 @@ fn item_to_cells(
                  cells.push(Arc::new(command.into_cell()));
              }
          }
@@ -58674,7 +59690,7 @@ index b61e1234e3dd7a4a8aaa1e1f2cf08721cb3a42be..1adfa690bf5f414524d11c385dad3a1a
      }
      let ids = older
 diff --git a/codex-rs/tui/src/thread_transcript/other_items.rs b/codex-rs/tui/src/thread_transcript/other_items.rs
-index b5f87b7b26ac29768e496ee78a1aa4f1b5fccc14..0317bd983f5ae8e8eb9da27b76bc3aa4983a18a9 100644
+index b5f87b7b26ac29768e496ee78a1aa4f1b5fccc14..c6d2293eb01b54cf1af82791b0d8936db162acc8 100644
 --- a/codex-rs/tui/src/thread_transcript/other_items.rs
 +++ b/codex-rs/tui/src/thread_transcript/other_items.rs
 @@ -15,7 +15,11 @@ use codex_utils_absolute_path::AbsolutePathBuf;
@@ -58759,6 +59775,17 @@ index b5f87b7b26ac29768e496ee78a1aa4f1b5fccc14..0317bd983f5ae8e8eb9da27b76bc3aa4
          }
          item @ ThreadItemPayload::CollabAgentToolCall { .. } => {
              if let Some(cell) = multi_agents::tool_call_history_cell(
+@@ -91,7 +102,9 @@ pub(super) fn cells(item: ThreadItemPayload, cwd: &AbsolutePathBuf) -> Transcrip
+             }
+         }
+         item @ ThreadItemPayload::SubAgentActivity { .. } => {
+-            if let Some(cell) = multi_agents::sub_agent_activity_history_cell(&item) {
++            if let Some(cell) = multi_agents::sub_agent_activity_history_cell(&item, |_| {
++                multi_agents::AgentMetadata::default()
++            }) {
+                 cells.push(Arc::new(cell));
+             }
+         }
 diff --git a/codex-rs/tui/src/thread_transcript/other_items_tests.rs b/codex-rs/tui/src/thread_transcript/other_items_tests.rs
 index 6dfe8ad9ab3ed0e6b0e6ba36998160ca8f6aad6a..13c69a65f5eca28c8c72bf272ae282bd86da2224 100644
 --- a/codex-rs/tui/src/thread_transcript/other_items_tests.rs
@@ -59371,8 +60398,20 @@ index db22f8b88520e9c557fddbacb81e07477ba582be..78cf8b5a49ae0eeec17343958d3c89ac
                  if let Some(text) = selected.filter(|text| !text.is_empty()) {
                      if self.copy_on_select {
                          return Some(ViewAction::CopyOnSelect(text));
+diff --git a/codex-rs/tui/src/transcript_view/input_tests.rs b/codex-rs/tui/src/transcript_view/input_tests.rs
+index fd7dc70d042714d7770534f3f9c7a4eb7c061ab2..453fb261bba15d6b82ed162afb2a6a6a148abd6e 100644
+--- a/codex-rs/tui/src/transcript_view/input_tests.rs
++++ b/codex-rs/tui/src/transcript_view/input_tests.rs
+@@ -189,6 +189,7 @@ fn agent_activity_underlines_the_full_wrapped_label() {
+             model: None,
+             reasoning_effort: None,
+         },
++        |_| Default::default(),
+     )
+     .expect("agent activity");
+     let cells: Vec<Arc<dyn HistoryCell>> = vec![Arc::new(cell)];
 diff --git a/codex-rs/tui/src/transcript_view/layout.rs b/codex-rs/tui/src/transcript_view/layout.rs
-index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a480747c940205 100644
+index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..181348b0218230f54fab21d0bf46e952fc853a52 100644
 --- a/codex-rs/tui/src/transcript_view/layout.rs
 +++ b/codex-rs/tui/src/transcript_view/layout.rs
 @@ -15,9 +15,12 @@ const MAX_CACHED_LAYOUT_BYTES: usize = 8 * 1024 * 1024;
@@ -59402,7 +60441,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
      let has_details = !lines.activity.is_empty() && (expanded || lines.disclosure.is_some());
      let source_offset = (!lines.auxiliary.is_empty())
          .then(|| TextLayout::new(lines.activity.clone(), width).text().len());
-@@ -64,17 +74,34 @@ fn cell_content_layout(
+@@ -64,17 +74,42 @@ fn cell_content_layout(
      mode: HistoryRenderMode,
      presentation: CellPresentation,
      shortcut: Option<ShortcutHint>,
@@ -59419,11 +60458,19 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
 +            cell,
 +            width,
 +            every_member.as_ref().unwrap_or(expanded_members),
++            presentation.detailed,
 +        ) {
 +            return TextLayout::member_lines(members, Vec::new(), width);
 +        }
++        let shown = if presentation.detailed {
++            crate::history_cell::Presentation::Transcript
++        } else if presentation.expanded {
++            crate::history_cell::Presentation::Opened
++        } else {
++            crate::history_cell::Presentation::Row
++        };
 +        let (activity, replaced) =
-+            crate::history_cell::hooked_lines(cell, width, presentation.expanded, |cell, width| {
++            crate::history_cell::hooked_lines(cell, width, shown, |cell, width| {
 +                if presentation.expanded {
                      cell.expanded_hyperlink_lines(width)
                  } else {
@@ -59441,7 +60488,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
              },
              width,
              presentation.expanded,
-@@ -121,6 +148,7 @@ pub(super) struct LayoutCache {
+@@ -121,6 +156,7 @@ pub(super) struct LayoutCache {
  struct RenderState {
      theme: u64,
      document_links: bool,
@@ -59449,7 +60496,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
      foreground: Option<(u8, u8, u8)>,
      background: Option<(u8, u8, u8)>,
      color_level: crate::terminal_palette::StdoutColorLevel,
-@@ -134,6 +162,7 @@ struct CachedLayout {
+@@ -134,6 +170,7 @@ struct CachedLayout {
      layout: Arc<TextLayout>,
      rendered_frame: u64,
      animation_tick: Option<u64>,
@@ -59457,7 +60504,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
  }
 
  #[derive(Clone, Copy, PartialEq, Eq)]
-@@ -150,18 +179,15 @@ pub(super) struct CellPresentation {
+@@ -150,18 +187,15 @@ pub(super) struct CellPresentation {
 
  impl TranscriptView {
      fn content_presentation(
@@ -59478,7 +60525,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
          CellPresentation {
              summarized: false,
              separated: false,
-@@ -170,9 +196,14 @@ impl TranscriptView {
+@@ -170,9 +204,14 @@ impl TranscriptView {
              expanded: disclosure && (full_content || manually_expanded),
              disclosure,
              detailed: full_content,
@@ -59496,7 +60543,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
          }
      }
 
-@@ -250,7 +281,7 @@ impl TranscriptView {
+@@ -250,7 +289,7 @@ impl TranscriptView {
              return Some(Arc::new(TextLayout::new(Vec::new(), width)));
          }
          let mode = self.mode;
@@ -59505,7 +60552,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
          let mut turn_header = None;
          if !full_content && let Some(row) = self.turn_row(cells, index) {
              let ids = row.ids();
-@@ -293,7 +324,7 @@ impl TranscriptView {
+@@ -293,7 +332,7 @@ impl TranscriptView {
                          return !row.ids().is_empty();
                      }
                      let previous_presentation =
@@ -59514,7 +60561,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
                      self.cache
                          .has_visible_content(previous, width, previous_presentation, || {
                              cell_content_layout(
-@@ -302,6 +333,7 @@ impl TranscriptView {
+@@ -302,6 +341,7 @@ impl TranscriptView {
                                  mode,
                                  previous_presentation,
                                  shortcut,
@@ -59522,7 +60569,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
                              )
                          })
                  })
-@@ -311,8 +343,14 @@ impl TranscriptView {
+@@ -311,8 +351,14 @@ impl TranscriptView {
          presentation.shares_prompt_background = shares_prompt_background;
          presentation.turn_tip_space = self.turn_tip_key == Some(EntryKey::cell(cell));
          Some(self.cache.get(cell, width, presentation, || {
@@ -59539,7 +60586,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
              if shares_prompt_background {
                  layout = layout.without_leading_blank_row();
              }
-@@ -339,6 +377,7 @@ impl LayoutCache {
+@@ -339,6 +385,7 @@ impl LayoutCache {
          let state = RenderState {
              theme: crate::render::highlight::syntax_theme_revision(),
              document_links: crate::markdown_render::preferences::document_links_enabled(),
@@ -59547,7 +60594,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
              foreground: crate::terminal_palette::default_fg(),
              background: crate::terminal_palette::default_bg(),
              color_level: crate::terminal_palette::stdout_color_level(),
-@@ -365,7 +404,8 @@ impl LayoutCache {
+@@ -365,7 +412,8 @@ impl LayoutCache {
                  && entry.source.ptr_eq(&source)
                  && (entry.rendered_frame == self.frame
                      || (cell.has_stable_transcript_height()
@@ -59557,7 +60604,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
          }) {
              let layout = Arc::clone(&self.entries[index].layout);
              if index + 1 != self.entries.len() {
-@@ -374,7 +414,7 @@ impl LayoutCache {
+@@ -374,7 +422,7 @@ impl LayoutCache {
              }
              return layout;
          }
@@ -59566,7 +60613,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
          let layout = if presentation.separated {
              layout.with_leading_separator()
          } else {
-@@ -393,6 +433,7 @@ impl LayoutCache {
+@@ -393,6 +441,7 @@ impl LayoutCache {
              layout: Arc::clone(&layout),
              rendered_frame: self.frame,
              animation_tick,
@@ -59574,7 +60621,7 @@ index 4966c4cda14bbdbbea6f7b7f1e1e4f5a1e4bd17d..eca858058f5b8ead5a9cb188a4a48074
          });
          self.evict();
          layout
-@@ -416,7 +457,8 @@ impl LayoutCache {
+@@ -416,7 +465,8 @@ impl LayoutCache {
                  && entry.source.ptr_eq(&source)
                  && (entry.rendered_frame == self.frame
                      || (cell.has_stable_transcript_height()
@@ -123216,10 +124263,10 @@ index 0000000000000000000000000000000000000000..25eee4414860857855e717fd1cfc3011
 +}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e8cd4f85605acecc395f18827c6143e4c557d081
+index 0000000000000000000000000000000000000000..044aba0f0cb2289086ababc692642d20ae9d9d6b
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins.rs
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,284 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -123276,6 +124323,8 @@ index 0000000000000000000000000000000000000000..e8cd4f85605acecc395f18827c6143e4
 +    #[serde(default)]
 +    pub group_exec: bool,
 +    #[serde(default)]
++    pub group_tools: bool,
++    #[serde(default)]
 +    pub commands: HiddenCommands,
 +    #[serde(default)]
 +    pub modes: Disabled,
@@ -123298,6 +124347,8 @@ index 0000000000000000000000000000000000000000..e8cd4f85605acecc395f18827c6143e4
 +pub struct BuiltinSnapshot {
 +    #[serde(default)]
 +    pub group_exec: bool,
++    #[serde(default)]
++    pub group_tools: bool,
 +    pub schema: u32,
 +    pub hidden_commands: BTreeMap<String, Vec<String>>,
 +    pub disabled_modes: BTreeMap<String, Vec<String>>,
@@ -123397,6 +124448,7 @@ index 0000000000000000000000000000000000000000..e8cd4f85605acecc395f18827c6143e4
 +        };
 +        for (owner, controls) in controls {
 +            snapshot.group_exec |= controls.group_exec;
++            snapshot.group_tools |= controls.group_tools;
 +            for command in &controls.commands.hide {
 +                snapshot
 +                    .hidden_commands
@@ -123501,10 +124553,10 @@ index 0000000000000000000000000000000000000000..e8cd4f85605acecc395f18827c6143e4
 +mod tests;
 diff --git a/codex-rs/omd/src/builtins_tests.rs b/codex-rs/omd/src/builtins_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7add8f6e1ee5d3234f3d71142e6f37d0ebbde966
+index 0000000000000000000000000000000000000000..969c796f66891d69871e4645e8ae7d0da4f122f2
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins_tests.rs
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,86 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -123585,6 +124637,11 @@ index 0000000000000000000000000000000000000000..7add8f6e1ee5d3234f3d71142e6f37d0
 +    );
 +    assert!(!BuiltinSnapshot::from_controls(&[]).group_exec);
 +    assert!(BuiltinControls::parse(&json!({"group_exec": "yes"})).is_err());
++    let tools = BuiltinControls::parse(&json!({"group_tools": true})).unwrap();
++    let snapshot = BuiltinSnapshot::from_controls(&[("one".into(), tools)]);
++    assert!(snapshot.group_tools && !snapshot.group_exec);
++    assert!(!BuiltinSnapshot::from_controls(&[]).group_tools);
++    assert!(BuiltinControls::parse(&json!({"group_tools": 1})).is_err());
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
@@ -133933,10 +134990,10 @@ index 0000000000000000000000000000000000000000..75b411423e7dd4defe576d2513a1b028
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..21fa8feadef09efa9a0ac278e964b635a877b098
+index 0000000000000000000000000000000000000000..510cd0df97b600f2b640f4ab83a59f020e76d0e2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,7672 @@
+@@ -0,0 +1,7673 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -134251,6 +135308,7 @@ index 0000000000000000000000000000000000000000..21fa8feadef09efa9a0ac278e964b635
 +    "continuation_middleware_v1",
 +    "builtins_v1",
 +    "transcript_exec_groups_v1",
++    "transcript_tool_groups_v1",
 +    "terminal_thread_view_v1",
 +    "contracts_v2",
 +    "framed_process_v1",
@@ -194794,6 +195852,542 @@ index 0000000000000000000000000000000000000000..f87fe9d7a8d12ab230f794bc143e546d
 +    assert_eq!(text, "OMD · main · PR #42");
 +    assert!(buf[(0, 0)].modifier.contains(Modifier::BOLD));
 +}
+diff --git a/codex-rs/tui/src/history_cell/tool_run.rs b/codex-rs/tui/src/history_cell/tool_run.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..4e3a98dbc4e5cd87ef9320df264670db147c07e3
+--- /dev/null
++++ b/codex-rs/tui/src/history_cell/tool_run.rs
+@@ -0,0 +1,350 @@
++//! Adjacent agent tool calls between two messages, kept as one cell a render hook can draw as a run.
++//! Without a hook each member draws natively, in order, as separate cells would.
++
++use super::*;
++use std::sync::Arc;
++
++const RUN_STEPS: usize = 64;
++
++#[derive(Debug)]
++pub(crate) struct ToolRunCell {
++    pub(crate) group: ActivityGroup<Arc<dyn HistoryCell>>,
++}
++
++/// Agent tool activity joins a run; user shell commands and all other content end it.
++pub(crate) fn is_tool_member(cell: &dyn HistoryCell) -> bool {
++    cell.as_any().is::<ComputerActivityCell>()
++        || cell.render_target().is_some_and(|target| {
++            target.component == "tool_call"
++                && target.props["kind"] != "run"
++                && target.props["user_shell"] != true
++        })
++}
++
++/// Folds adjacent tool cells, and hidden reasoning between them, into runs as live grouping does.
++pub(crate) fn group_tool_runs(cells: Vec<Arc<dyn HistoryCell>>) -> Vec<Arc<dyn HistoryCell>> {
++    let mut out: Vec<Arc<dyn HistoryCell>> = Vec::new();
++    let mut run: Option<ToolRunCell> = None;
++    for cell in cells {
++        if is_tool_member(cell.as_ref()) {
++            match &mut run {
++                Some(run) => run.push(cell),
++                None => run = Some(ToolRunCell::new(cell)),
++            }
++        } else if let Some(group) = &mut run
++            && crate::thread_transcript::is_hidden_activity_detail(&cell)
++        {
++            group.group.push_detail(cell);
++        } else {
++            if let Some(run) = run.take() {
++                out.push(Arc::new(run));
++            }
++            out.push(cell);
++        }
++    }
++    if let Some(run) = run {
++        out.push(Arc::new(run));
++    }
++    out
++}
++
++impl ToolRunCell {
++    pub(crate) fn new(first: Arc<dyn HistoryCell>) -> Self {
++        Self {
++            group: ActivityGroup::new(vec![first]),
++        }
++    }
++
++    pub(crate) fn push(&mut self, cell: Arc<dyn HistoryCell>) {
++        self.group.calls.push(cell);
++    }
++
++    pub(crate) fn last(&self) -> Option<&dyn HistoryCell> {
++        self.group.calls.last().map(Arc::as_ref)
++    }
++
++    pub(crate) fn last_mut(&mut self) -> Option<&mut dyn HistoryCell> {
++        Arc::get_mut(self.group.calls.last_mut()?)
++    }
++
++    pub(crate) fn members(&self) -> impl DoubleEndedIterator<Item = &dyn HistoryCell> {
++        self.group.calls.iter().map(Arc::as_ref)
++    }
++
++    pub(crate) fn members_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut dyn HistoryCell> {
++        self.group.calls.iter_mut().filter_map(Arc::get_mut)
++    }
++
++    /// The member carrying `activity_id`, for replacing it in place.
++    pub(crate) fn position(&self, activity_id: &str) -> Option<usize> {
++        self.group
++            .calls
++            .iter()
++            .rposition(|member| member.activity_ids().iter().any(|id| id == activity_id))
++    }
++
++    pub(crate) fn remove(&mut self, index: usize) {
++        self.group.calls.remove(index);
++        self.group.details.remove_call(index);
++    }
++
++    /// The run's cells with the member carrying `activity_id` replaced by `cell`, which isn't a step.
++    pub(crate) fn split_around(
++        &self,
++        activity_id: &str,
++        cell: Arc<dyn HistoryCell>,
++    ) -> Option<Vec<Arc<dyn HistoryCell>>> {
++        let index = self.position(activity_id)?;
++        let (before, after) = self.group.details.split_around(index);
++        let part = |calls: &[Arc<dyn HistoryCell>], details| {
++            (!calls.is_empty()).then(|| {
++                Arc::new(Self {
++                    group: ActivityGroup {
++                        calls: calls.to_vec(),
++                        details,
++                    },
++                }) as Arc<dyn HistoryCell>
++            })
++        };
++        let first = part(&self.group.calls[..index], before);
++        let last = part(&self.group.calls[index + 1..], after);
++        Some(first.into_iter().chain([cell]).chain(last).collect())
++    }
++
++    /// A copy with the member carrying `activity_id` replaced, for runs already in history.
++    pub(crate) fn with_member(
++        &self,
++        activity_id: &str,
++        cell: Arc<dyn HistoryCell>,
++    ) -> Option<Self> {
++        let index = self.position(activity_id)?;
++        let mut calls = self.group.calls.clone();
++        calls[index] = cell;
++        Some(Self {
++            group: ActivityGroup {
++                calls,
++                details: self.group.details.clone(),
++            },
++        })
++    }
++
++    pub(crate) fn is_active(&self) -> bool {
++        self.steps()
++            .iter()
++            .any(|step| step.target.props["status"] == "running")
++    }
++
++    fn id(&self) -> String {
++        let first = self
++            .group
++            .calls
++            .first()
++            .and_then(|cell| cell.activity_ids().into_iter().next())
++            .unwrap_or_default();
++        format!("run:{first}")
++    }
++
++    /// One member per tool call, exploration groups included, in call order.
++    fn steps(&self) -> Vec<RenderMember<'_>> {
++        self.group
++            .calls
++            .iter()
++            .enumerate()
++            .flat_map(|(index, cell)| {
++                let mut members = match cell.as_any().downcast_ref::<crate::exec_cell::ExecCell>() {
++                    Some(exec) => exec.call_members(),
++                    None => cell.render_members(u16::MAX),
++                };
++                if members.is_empty() {
++                    members.extend(Self::target_member(cell));
++                }
++                // Details folded in after this cell open with its last step.
++                if let Some(last) = members.last_mut() {
++                    let native = std::mem::replace(&mut last.native, Box::new(|_, _| Vec::new()));
++                    let details = &self.group.details;
++                    last.native = Box::new(move |width, expanded| {
++                        let mut lines = native(width, expanded);
++                        if expanded {
++                            lines.extend(details.lines_after(
++                                index + 1,
++                                width,
++                                HistoryRenderMode::Rich,
++                            ));
++                        }
++                        lines
++                    });
++                }
++                members
++            })
++            .collect()
++    }
++
++    fn target_member(cell: &Arc<dyn HistoryCell>) -> Option<RenderMember<'_>> {
++        cell.render_target().map(|target| RenderMember {
++            id: cell
++                .activity_ids()
++                .into_iter()
++                .next()
++                .unwrap_or_else(|| target.id.clone()),
++            target,
++            native: Box::new(move |width, expanded| {
++                if expanded {
++                    cell.expanded_hyperlink_lines(width)
++                } else {
++                    cell.display_hyperlink_lines(width)
++                }
++            }),
++        })
++    }
++
++    fn joined(
++        &self,
++        details: Option<(u16, HistoryRenderMode)>,
++        draw: impl Fn(&dyn HistoryCell) -> Vec<HyperlinkLine>,
++    ) -> Vec<HyperlinkLine> {
++        let mut out = Vec::new();
++        for (index, cell) in self.group.calls.iter().enumerate() {
++            let lines = draw(cell.as_ref());
++            if !lines.is_empty() {
++                if !out.is_empty() {
++                    out.push(HyperlinkLine::from(""));
++                }
++                out.extend(lines);
++            }
++            if let Some((width, mode)) = details {
++                out.extend(self.group.details.lines_after(index + 1, width, mode));
++            }
++        }
++        out
++    }
++}
++
++impl HistoryCell for ToolRunCell {
++    fn render_members(&self, _width: u16) -> Vec<RenderMember<'_>> {
++        self.steps()
++    }
++
++    fn render_target(&self) -> Option<crate::mod_render::RenderTarget> {
++        let steps = self.steps();
++        let has = |status: &str| {
++            steps
++                .iter()
++                .any(|step| step.target.props["status"] == status)
++        };
++        let running = has("running");
++        let status = if running {
++            "running"
++        } else if has("failed") {
++            "failed"
++        } else if has("interrupted") {
++            "interrupted"
++        } else {
++            "completed"
++        };
++        let duration = (!running).then(|| {
++            steps
++                .iter()
++                .filter_map(|step| step.target.props["duration_ms"].as_u64())
++                .sum::<u64>()
++        });
++        let call_id = steps.first()?.target.props["call_id"].clone();
++        let call_count = steps.len();
++        let calls = steps
++            .into_iter()
++            .skip(call_count.saturating_sub(RUN_STEPS))
++            .map(|step| {
++                let mut props = step.target.props;
++                if let Some(props) = props.as_object_mut() {
++                    props.remove("expanded");
++                    props.remove("presentation");
++                }
++                props
++            })
++            .collect::<Vec<_>>();
++        Some(crate::mod_render::RenderTarget::new(
++            "tool_call",
++            self.id(),
++            running,
++            serde_json::json!({"call_id": call_id, "kind": "run", "status": status,
++                "duration_ms": duration, "call_count": call_count, "calls": calls}),
++        ))
++    }
++
++    fn activity_ids(&self) -> Vec<String> {
++        std::iter::once(self.id())
++            .chain(self.group.calls.iter().flat_map(|cell| cell.activity_ids()))
++            .collect()
++    }
++
++    fn tool_call_labels(&self) -> Vec<String> {
++        self.group
++            .calls
++            .iter()
++            .flat_map(|cell| cell.tool_call_labels())
++            .collect()
++    }
++
++    fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
++        self.group.push_detail(Arc::from(cell));
++        Ok(())
++    }
++
++    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
++        visible_lines(self.display_hyperlink_lines(width))
++    }
++
++    fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
++        self.joined(None, |cell| cell.display_hyperlink_lines(width))
++    }
++
++    fn compact_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
++        self.joined(None, |cell| cell.compact_hyperlink_lines(width))
++    }
++
++    fn expanded_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
++        self.joined(Some((width, HistoryRenderMode::Rich)), |cell| {
++            cell.expanded_hyperlink_lines(width)
++        })
++    }
++
++    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
++        visible_lines(self.transcript_hyperlink_lines(width))
++    }
++
++    fn transcript_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
++        self.joined(Some((width, HistoryRenderMode::Rich)), |cell| {
++            cell.transcript_hyperlink_lines(width)
++        })
++    }
++
++    fn raw_lines(&self) -> Vec<Line<'static>> {
++        visible_lines(
++            self.joined(Some((u16::MAX, HistoryRenderMode::Raw)), |cell| {
++                plain_hyperlink_lines(cell.raw_lines())
++            }),
++        )
++    }
++
++    fn live_raw_lines(&self) -> Vec<Line<'static>> {
++        visible_lines(self.joined(None, |cell| plain_hyperlink_lines(cell.live_raw_lines())))
++    }
++
++    fn has_stable_transcript_height(&self) -> bool {
++        self.group
++            .calls
++            .iter()
++            .all(|cell| cell.has_stable_transcript_height())
++    }
++
++    fn transcript_animation_tick(&self) -> Option<u64> {
++        self.group
++            .calls
++            .iter()
++            .filter_map(|cell| cell.transcript_animation_tick())
++            .max()
++    }
++}
++
++#[cfg(test)]
++#[path = "tool_run_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/history_cell/tool_run_tests.rs b/codex-rs/tui/src/history_cell/tool_run_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..28d52b88bab1dec5cf3f2a2fb5296ce4ab72d0bf
+--- /dev/null
++++ b/codex-rs/tui/src/history_cell/tool_run_tests.rs
+@@ -0,0 +1,174 @@
++use super::*;
++use crate::exec_cell::CommandOutput;
++use crate::exec_cell::new_active_exec_command;
++use codex_app_server_protocol::CommandExecutionSource;
++use codex_app_server_protocol::SubAgentActivityKind;
++use codex_app_server_protocol::ThreadItemPayload;
++use pretty_assertions::assert_eq;
++use serde_json::json;
++
++fn run() -> ToolRunCell {
++    let mut exec = new_active_exec_command(
++        "c1".into(),
++        vec!["cargo".into(), "test".into()],
++        Vec::new(),
++        CommandExecutionSource::Agent,
++        None,
++        false,
++    );
++    exec.complete_call(
++        "c1",
++        CommandOutput::new(0, "ok\n".into()),
++        Duration::from_millis(5),
++    );
++    let subagent = crate::multi_agents::sub_agent_activity_history_cell(
++        &ThreadItemPayload::SubAgentActivity {
++            id: "a1".into(),
++            kind: SubAgentActivityKind::Started,
++            agent_thread_id: codex_protocol::ThreadId::new().to_string(),
++            agent_path: "/root/papers".into(),
++            model: None,
++            reasoning_effort: None,
++        },
++        |_| Default::default(),
++    )
++    .unwrap();
++    let mut run = ToolRunCell::new(Arc::new(exec));
++    run.push(Arc::new(subagent));
++    run
++}
++
++fn texts(members: &[MemberLines]) -> Vec<(String, Vec<String>)> {
++    members
++        .iter()
++        .map(|member| {
++            let lines = member
++                .lines
++                .iter()
++                .map(|line| line.line.to_string().trim().to_owned());
++            (member.id.clone(), lines.collect())
++        })
++        .collect()
++}
++
++#[test]
++#[serial_test::serial]
++fn hooked_runs_draw_a_row_a_header_with_steps_once_opened_and_native_transcripts() {
++    let cell = run();
++    let _hook = crate::mod_render::test_hook(|target| {
++        let props = &target.props;
++        let text = match (props["kind"].as_str()?, props["presentation"].as_str()?) {
++            (_, "transcript") => return None,
++            ("run", presentation) => {
++                format!("run {presentation} {}", props["calls"].as_array()?.len())
++            }
++            _ if props["expanded"] == true => return None,
++            (kind, presentation) => format!("{kind} {presentation}"),
++        };
++        Some(json!([{"type": "text", "id": "row", "label": "Row", "text": text}]))
++    });
++    let row = |text: &str| vec![text.to_owned()];
++    assert_eq!(
++        texts(&hooked_member_lines(&cell, 80, &Default::default(), false).unwrap()),
++        vec![("run:exec:c1".to_owned(), row("run row 2"))]
++    );
++    let opened = ["run:exec:c1".to_owned()].into_iter().collect();
++    assert_eq!(
++        texts(&hooked_member_lines(&cell, 80, &opened, false).unwrap()),
++        vec![
++            ("run:exec:c1".to_owned(), row("run opened 2")),
++            ("exec:c1".to_owned(), row("exec row")),
++            ("tool:a1:started".to_owned(), row("subagent row")),
++        ]
++    );
++    let every = cell.activity_ids().into_iter().collect();
++    let transcript = hooked_member_lines(&cell, 80, &every, true).unwrap();
++    assert_eq!(
++        transcript
++            .into_iter()
++            .map(|member| visible_lines(member.lines))
++            .collect::<Vec<_>>(),
++        cell.members()
++            .map(|member| visible_lines(member.expanded_hyperlink_lines(80)))
++            .collect::<Vec<_>>()
++    );
++    let props = cell.render_target().unwrap().props;
++    assert_eq!(
++        (
++            &props["kind"],
++            &props["status"],
++            &props["call_id"],
++            &props["calls"][1]["agent"]
++        ),
++        (
++            &json!("run"),
++            &json!("completed"),
++            &json!("c1"),
++            &json!("papers")
++        )
++    );
++}
++
++#[test]
++#[serial_test::serial]
++fn hooked_run_steps_keep_folded_details_when_expanded() {
++    let mut cell = run();
++    cell.group.push_detail(Arc::new(PlainHistoryCell::new(vec![
++        "reasoning between steps".into(),
++    ])));
++    let _hook = crate::mod_render::test_hook(|target| {
++        (target.props["expanded"] != true)
++            .then(|| json!([{"type": "text", "id": "row", "label": "Row", "text": "row"}]))
++    });
++    let every = cell.activity_ids().into_iter().collect();
++    let shown = hooked_member_lines(&cell, 80, &every, true)
++        .unwrap()
++        .into_iter()
++        .flat_map(|member| visible_lines(member.lines))
++        .map(|line| line.to_string())
++        .collect::<Vec<_>>();
++    assert_eq!(shown.last().unwrap(), "reasoning between steps");
++}
++
++#[test]
++fn a_notice_splits_a_run_and_long_runs_keep_their_latest_steps() {
++    let cell = run();
++    let notice: Arc<dyn HistoryCell> = Arc::new(new_info_event("declined".into(), None));
++    let parts = cell.split_around("exec:c1", notice.clone()).unwrap();
++    assert_eq!(parts.len(), 2);
++    assert!(Arc::ptr_eq(&parts[0], &notice));
++    assert!(parts[1].as_any().is::<ToolRunCell>());
++    let mut failed = new_active_exec_command(
++        "f".into(),
++        vec!["false".into()],
++        Vec::new(),
++        CommandExecutionSource::Agent,
++        None,
++        false,
++    );
++    failed.complete_call("f", CommandOutput::new(1, String::new()), Duration::ZERO);
++    let mut long = ToolRunCell::new(Arc::new(failed));
++    for _ in 0..70 {
++        long.push(cell.group.calls[1].clone());
++    }
++    let props = long.render_target().unwrap().props;
++    assert_eq!(
++        (
++            &props["status"],
++            &props["call_count"],
++            props["calls"].as_array().unwrap().len()
++        ),
++        (&json!("failed"), &json!(71), 64)
++    );
++}
++
++#[test]
++fn unhooked_runs_draw_their_members_natively() {
++    let cell = run();
++    let mut expected = cell.group.calls[0].display_lines(80);
++    expected.push(Line::from(""));
++    expected.extend(cell.group.calls[1].display_lines(80));
++    assert_eq!(cell.display_lines(80), expected);
++    assert!(is_tool_member(cell.group.calls[1].as_ref()));
++    assert!(!is_tool_member(&cell));
++}
 diff --git a/codex-rs/tui/src/keymap_overlay.rs b/codex-rs/tui/src/keymap_overlay.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..47aaa160a54b746285eb817584525be9fdb70b43
@@ -202156,10 +203750,10 @@ index 0000000000000000000000000000000000000000..c774f3c1004e1d4b2bb580a75ecf37c5
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..358f8ee47686bfa2a0dc22274acd44bf220bb0e1
+index 0000000000000000000000000000000000000000..ffb0815fea77109bb0ee566dc9c5ed3bcf1ec83e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,1048 @@
+@@ -0,0 +1,1077 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -202766,6 +204360,28 @@ index 0000000000000000000000000000000000000000..358f8ee47686bfa2a0dc22274acd44bf
 +}
 +
 +#[cfg(test)]
++type TestHook = Box<dyn Fn(&RenderTarget) -> Option<Value>>;
++
++#[cfg(test)]
++thread_local! {
++    static TEST_HOOK: std::cell::RefCell<Option<TestHook>> = const { std::cell::RefCell::new(None) };
++}
++
++/// Answers every render on this thread synchronously with `hook`'s tree, `None` passing it on.
++#[cfg(test)]
++pub(crate) fn test_hook(hook: impl Fn(&RenderTarget) -> Option<Value> + 'static) -> impl Drop {
++    struct Restore(bool);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            TEST_HOOK.with(|hook| hook.borrow_mut().take());
++            HOOKED.with(|hooked| hooked.store(self.0, Ordering::Relaxed));
++        }
++    }
++    TEST_HOOK.with(|stored| *stored.borrow_mut() = Some(Box::new(hook)));
++    Restore(HOOKED.with(|hooked| hooked.swap(true, Ordering::Relaxed)))
++}
++
++#[cfg(test)]
 +pub(crate) fn test_idle() -> bool {
 +    engine(|engine| !engine.running && engine.pending.is_empty())
 +}
@@ -202883,6 +204499,13 @@ index 0000000000000000000000000000000000000000..358f8ee47686bfa2a0dc22274acd44bf
 +}
 +
 +pub(crate) fn resolve_state(target: &RenderTarget, width: u16) -> Option<Option<Rendered>> {
++    #[cfg(test)]
++    if let Some(answer) = TEST_HOOK.with(|hook| hook.borrow().as_ref().map(|hook| hook(target))) {
++        return Some(answer.map(|tree| Rendered {
++            props: None,
++            tree: serde_json::from_value(tree).unwrap_or_default(),
++        }));
++    }
 +    touch();
 +    ROWS.with(|rows_state| {
 +        FULLSCREEN.with(|fullscreen_state| {

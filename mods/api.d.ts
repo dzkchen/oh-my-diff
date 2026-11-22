@@ -261,15 +261,21 @@ export type RenderToolStatus = 'running' | 'completed' | 'failed' | 'interrupted
 export type RenderParsedCommand = { type: 'read'; cmd: string; name: string; path: string } | { type: 'list_files'; cmd: string; path: string | null }
   | { type: 'search'; cmd: string; query: string | null; path: string | null } | { type: 'unknown'; cmd: string };
 export type RenderExecCall = { call_id: string; kind: 'exec'; command: string; parsed: RenderParsedCommand[]; status: RenderToolStatus; exit_code: number | null; duration_ms: number | null; output_lines: number; output_tail: string | null; user_shell: boolean };
-/** One agent tool row with its arguments, status and output summary. `expanded` is true while the user has the row open or reads the full transcript; return the native row then. */
-export type RenderToolCall = { expanded: boolean } & (RenderExecCall
+/** `row` is a compact row, `opened` a row the user opened, `transcript` the full transcript (Ctrl+T). */
+export type RenderToolPresentation = 'row' | 'opened' | 'transcript';
+/** One agent tool step with its arguments, status and output summary. */
+export type RenderToolStep = RenderExecCall
   | { call_id: string; kind: 'explore'; status: RenderToolStatus; duration_ms: number | null; calls: RenderExecCall[] }
   | { call_id: string; kind: 'patch'; status: RenderToolStatus; duration_ms: number | null; file_count: number; added: number; removed: number; files: { path: string; change: 'add' | 'delete' | 'update'; added: number; removed: number }[]; error: string | null }
   | { call_id: string; kind: 'web_search'; status: RenderToolStatus; duration_ms: number | null; action: 'search' | 'open_page' | 'find_in_page' | 'other'; query: string }
   | { call_id: string; kind: 'agent'; tool: 'spawn_agent' | 'send_input' | 'resume_agent' | 'wait' | 'close_agent' | 'agent'; status: RenderToolStatus; duration_ms: null; agents: string[]; prompt: string }
   | { call_id: string; kind: 'mcp'; server: string; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null; /** The failure's first non-empty line, or null. */ error?: string | null }
   | { call_id: string; kind: 'dynamic'; tool: string; arguments: Json; status: RenderToolStatus; duration_ms: number | null; output_lines: number | null; /** The failure's first non-empty line, or null. */ error?: string | null }
-  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: number | null; path: string | null; prompt: string | null });
+  | { call_id: string; kind: 'image'; tool: 'view_image' | 'image_generation'; status: RenderToolStatus; duration_ms: number | null; path: string | null; prompt: string | null }
+  | { call_id: string; kind: 'subagent'; activity: 'started' | 'interacted' | 'interrupted' | 'completed'; /** The nickname, else the last path segment. */ agent: string | null; path: string; model: string | null; effort: string | null; status: RenderToolStatus; duration_ms: null };
+/** One agent tool row. `expanded` is true while the user has the row open or reads the full transcript; return the native row then. With `group_tools`, a `run` holds every tool step between two messages (at most 64, the latest), never `explore`. */
+export type RenderToolCall = { expanded: boolean; presentation: RenderToolPresentation } & (RenderToolStep
+  | { call_id: string; kind: 'run'; status: RenderToolStatus; duration_ms: number | null; /** Every step, including those `calls` leaves out. */ call_count: number; calls: Exclude<RenderToolStep, { kind: 'explore' }>[] });
 export type RenderQuestion = { id: string; header: string; question: string; secret: boolean; options: string[] };
 export interface RenderProps {
   user_message: { text: string; images: number; spoken: boolean };
@@ -657,7 +663,7 @@ export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfac
 export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
-export type BuiltinControls = { group_exec?: boolean; commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: ('status_line' | 'context_indicator')[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+export type BuiltinControls = { group_exec?: boolean; group_tools?: boolean; commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: ('status_line' | 'context_indicator')[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 /** Callback completion rejects cancelled or stale authority before committing state. The `crypto` global exists only when mod.json declares `"environment": ["crypto"]`. See REFERENCE.md. */
 export interface ModAPI {
   readonly version: '1.0.0';

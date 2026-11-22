@@ -10,7 +10,7 @@ const manifest = JSON.parse(readFileSync(new URL('mod.json', import.meta.url), '
 const exec = (id, status = 'completed') => ({ call_id: id, kind: 'exec', command: `cargo test ${id}`, parsed: [], user_shell: false,
   status, exit_code: status === 'failed' ? 1 : 0, output_lines: 50, duration_ms: 100 });
 const render = (props, columns = 120) => {
-  const input = { component: 'tool_call', props: { expanded: false, ...props }, viewport: { columns, rows: 40 } };
+  const input = { component: 'tool_call', props: { expanded: false, presentation: 'row', ...props }, viewport: { columns, rows: 40 } };
   const result = callback({ source, filename, api: manifest.api, capabilities: manifest.capabilities, event: 'intercept', name: '0',
     payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } }, () => ({ result: { tree: [{ type: 'native' }] }, trace: [] }));
   assert.equal(result.error, undefined, result.error);
@@ -50,7 +50,7 @@ test('failures stay visible as a count with the latest exit code', () => {
 test('single rows read as one step', () => {
   assert.equal(text(render(read('a', 'bench.py'))), '• Read bench.py');
   assert.equal(text(render(group([search('a')]))), '• Searched for refine in x.sh');
-  assert.equal(text(render(exec('a'))), '• Ran cargo test a');
+  assert.equal(text(render(exec('a'))), '• cargo test a');
   assert.equal(text(render({ kind: 'web_search', call_id: 'w', status: 'completed', action: 'search', query: 'qwen docs' })), '• Searched the web for qwen docs');
   assert.equal(text(render({ kind: 'web_search', call_id: 'w', status: 'completed', action: 'other', query: '' })), '• Searched the web');
   assert.equal(text(render({ kind: 'patch', call_id: 'p', status: 'failed', file_count: 0, added: 0, removed: 0, error: '', files: [] })), '✗ Edit failed');
@@ -64,6 +64,32 @@ test('subagent rows name their agents', () => {
   assert.equal(text(agent('wait', 'running', ['Papers'])), '• Waiting for Papers');
   assert.equal(text(agent('spawn_agent', 'failed', ['Papers'])), "✗ Couldn't start Papers");
   assert.equal(text(agent('spawn_agent', 'completed', [])), '• An agent started working');
+});
+
+const run = (calls, extra = {}) => ({ kind: 'run', call_id: 'r', status: 'completed', duration_ms: 5, calls, ...extra });
+const web = { kind: 'web_search', call_id: 'w', status: 'completed', duration_ms: 5, action: 'search', query: 'qwen docs' };
+const patch = { kind: 'patch', call_id: 'p', status: 'completed', duration_ms: 5, file_count: 1, added: 9, removed: 3, error: null, files: [{ path: 'a.rs', change: 'update', added: 9, removed: 3 }] };
+const mcp = { kind: 'mcp', call_id: 'm', server: 's', tool: 't', arguments: {}, status: 'completed', duration_ms: 5, output_lines: null, error: null };
+const sub = (agent, activity = 'started') => ({ kind: 'subagent', call_id: agent, activity, agent, path: `/root/${agent}`, model: null, effort: null, status: 'completed', duration_ms: null });
+
+test('a run of mixed tools is one line of verb phrases in first-use order', () => {
+  assert.equal(text(render(run([read('a', 'x'), exec('b'), web, read('c', 'y'), patch, mcp, exec('d')]))),
+    '• Read files, ran commands, searched the web, edited a file, called a tool');
+  assert.equal(text(render(run([read('a', 'x'), { ...exec('b', 'running'), command: 'git -C work status' }], { status: 'running' }))), '• Running git -C work status');
+  assert.equal(text(render(run([{ ...exec('a', 'failed'), exit_code: 2 }, patch], { status: 'failed' }))), '✗ Ran a command, edited a file · 1 failed · exit 2');
+  assert.equal(text(render(run([sub('Papers'), sub('Code'), sub('Prior')]))), '• Papers, Code and Prior started working');
+  assert.equal(text(render(run([sub('Papers', 'completed'), exec('a')]))), '• Papers finished, ran a command');
+  assert.equal(text(render(run([exec('a')], { status: 'failed', call_count: 70 }))), '✗ Ran a command');
+  assert.equal(text(render(run([{ kind: 'future', call_id: 'f', status: 'completed', duration_ms: null }]))), '• Called a tool');
+});
+
+test('an opened run keeps its summary row and its steps read one per line', () => {
+  assert.equal(text(render({ ...run([exec('a'), web]), expanded: true, presentation: 'opened' })), '• Ran a command, searched the web');
+  assert.equal(text(render(sub('Papers'))), '• Papers started working');
+  assert.equal(text(render(sub('Papers', 'interacted'))), '• Messaged Papers');
+  for (const props of [run([exec('a')]), exec('a'), sub('Papers')]) {
+    assert.deepEqual(tree({ ...props, expanded: true, presentation: 'transcript' }), [{ type: 'native' }]);
+  }
 });
 
 test('expanded rows, user shell commands and viewed images keep the native drawing', () => {
