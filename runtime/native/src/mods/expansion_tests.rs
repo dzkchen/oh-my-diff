@@ -7341,3 +7341,46 @@ async fn elicitation_redaction_isolates_threads_and_typed_ids() {
     assert_eq!(log[0]["content"]["token"], "[redacted]");
     assert_eq!(mods.elicitations.lock().unwrap().len(), 2);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn events_publish_the_current_lead_thread_view() {
+    let Some(fixture) = fixture(&[Package {
+        id: "themed",
+        capabilities: &["terminal"],
+        manifest: json!({"state_scope": "thread"}),
+        source: "export default api => { api.on('terminal', input => ({title: String(input.ledger?.thread_id)})); }",
+    }]) else {
+        return;
+    };
+    let lead = fixture.lead.thread.to_string();
+    let title = || {
+        fixture
+            .core
+            .views
+            .published()
+            .and_then(|view| view.view.title.clone())
+    };
+    delivery::lead_started(&fixture.core, &fixture.lead, None);
+    fixture
+        .core
+        .event("session", json!({"phase": "idle", "thread_id": lead}), None)
+        .await;
+    assert_eq!(title().as_deref(), Some(lead.as_str()));
+    let subagent = Lead {
+        thread: ThreadId::new(),
+        owner: "agent:child".into(),
+        depth: 1,
+        ..fixture.lead.clone()
+    };
+    fixture.core.expansion.thread_started(&subagent);
+    let named = json!({"thread_id": subagent.thread.to_string()});
+    fixture.core.event("tool_result", named.clone(), None).await;
+    assert_eq!(title().as_deref(), Some(lead.as_str()));
+    fixture
+        .core
+        .event("tool_result", named, Some(&subagent))
+        .await;
+    assert_eq!(title().as_deref(), Some(lead.as_str()));
+    fixture.core.event("contract", Value::Null, None).await;
+    assert_eq!(title().as_deref(), Some(lead.as_str()));
+}
