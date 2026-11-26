@@ -197,6 +197,11 @@ def receipt(generation):
     return record
 
 
+def recorded_upstream(current):
+    path = Path(receipt(current).get("upstream", {}).get("path") or "/nonexistent/codex")
+    return path if path.is_file() else Path("/nonexistent/codex")
+
+
 def environment(upstream, bin_dir):
     values = os.environ.copy()
     current = [item for item in values.get("PATH", "").split(os.pathsep)
@@ -762,7 +767,7 @@ def abandon(root, generation, upstream, bin_dir):
 def recover(args, root, current):
     if current and (current / "prefix" / MODS_MARKER).is_file():
         try:
-            package(current, Path(upstream_binary(args, current)["path"]), args.bin_dir, "mods-rollback")
+            package(current, recorded_upstream(current), args.bin_dir, "mods-rollback")
             forget_backup(root, current)
         except (OSError, ValueError, RuntimeError) as error:
             print(f"An interrupted first-party mod update could not be undone yet: {error}", file=sys.stderr)
@@ -771,7 +776,7 @@ def recover(args, root, current):
         return
     entry = read_json(journal, {})
     name, created = entry.get("generation"), entry.get("created")
-    upstream = Path(upstream_binary(args, current)["path"]) if current else None
+    upstream = recorded_upstream(current) if current else None
     interrupted = root / "releases" / name if isinstance(name, str) and re.fullmatch(r"[0-9a-f]{32}", name) else None
     if not current:
         restore_links(root, args.bin_dir)
@@ -832,7 +837,7 @@ def rollback(args, root, bin_dir, current):
                 previous = prior
     if not current or not previous:
         fail("No previous installation is available for rollback.")
-    upstream = Path(upstream_binary(args, current)["path"])
+    upstream = recorded_upstream(current)
     status(previous, upstream, bin_dir)
     check_links(root, bin_dir)
     journaled(root, None, args.session)
@@ -1457,7 +1462,7 @@ def install_mods(args, root, current, mods, automatic=False):
 
 
 def rollback_mods(args, root, current):
-    upstream = Path(upstream_binary(args, current)["path"])
+    upstream = recorded_upstream(current)
     record = installation(root, current)[1]
     journaled(root, None, args.session)
     try:
@@ -1835,7 +1840,7 @@ def main():
         elif args.command == "status":
             if not current:
                 fail("No managed OMD installation is active.")
-            upstream = Path(upstream_binary(args, current)["path"])
+            upstream = recorded_upstream(current)
             result = {"active": str(current), "previous": str(pointer(root, "previous")),
                       "profile": status(current, upstream, args.bin_dir)}
             report(args, result, status_text(result))
