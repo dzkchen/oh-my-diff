@@ -131,7 +131,7 @@ pub use store::ModStore;
 pub use store::Trust;
 pub(crate) use store::lock as store_lock;
 
-pub const CODEX_HOST_RELEASE: &str = "0.167.2";
+pub const CODEX_HOST_RELEASE: &str = "0.171.0";
 /// The OMD product release: the `codex-omd` crate version is the release version (`release.py check` enforces it).
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "1.0.0";
@@ -312,6 +312,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "continuation_middleware_v1",
     "builtins_v1",
     "transcript_exec_groups_v1",
+    "transcript_tool_groups_v1",
     "terminal_thread_view_v1",
     "contracts_v2",
     "framed_process_v1",

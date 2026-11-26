@@ -6,17 +6,17 @@ and removal. For errors, see [troubleshooting](troubleshooting.md).
 ## Before you begin
 
 - An Apple Silicon Mac. Other platforms are unsupported, and the installer refuses them.
-- Codex 0.167 (any 0.167.x). Don't update Codex until OMD supports the new version.
+- Codex 0.171 (any 0.171.x). Don't update Codex until OMD supports the new version.
 - Python 3.12 or later. macOS ships 3.9.
 
 If Codex is missing or on another version, the installer stops before installing anything (it leaves only an empty
 `~/.local/share/oh-my-diff/.install.lock`) and prints the command that installs the right one. Installing Codex with npm needs Node and npm:
 
 ```sh
-npm install -g @openai/codex@0.167
+npm install -g @openai/codex@0.171
 ```
 
-Homebrew's Codex (`brew install --cask codex`) works too while its version is 0.167.x.
+Homebrew's Codex (`brew install --cask codex`) works too while its version is 0.171.x.
 
 If your Python is older than 3.12, install a newer one:
 

@@ -1,6 +1,6 @@
 [package]
 name = "codex-omd"
-version = "1.5.3"
+version = "1.5.4"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ base64 = "=0.22.1"
 image = { workspace = true, features = ["jpeg", "png"] }
 sha2 = "=0.10.9"
 rustix = { version = "=1.1.4", features = ["fs", "process", "termios"] }
-ignore = "=0.4.25"
+ignore = "=0.4.30"
 toml = "=0.9.11"
 quick-xml = "=0.41.0"
 tempfile = "=3.27.0"

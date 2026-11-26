@@ -76,6 +76,7 @@ These frozen entries have experimental fields:
 | `events:terminal` | `omd_version`, `welcome`, `chat`, `colors`, `sites` | `terminal_welcome_area_v1`, `terminal_chat_area_v1`, `terminal_colors_v1`, `terminal_site_area_v1` |
 | `events:timer` | `data` | `timer_data_v1` |
 | `render_sites:assistant_message` | `message_id` | `assistant_message_identity_v1` |
+| `render_sites:tool_call` | `error`, `presentation`, `activity`, `agent`, `effort` | `transcript_tool_groups_v1` |
 | `replacements:tool_batch` | `success_per_call` | `tool_batch_success_v1` |
 | `intercepts:tool` | `value`, `bytes` | `code_mode_values_v1`, `tool_original_v1` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
@@ -103,8 +104,14 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ## Migration notes
 
-These changes ship in OMD 1.6.0.
+These changes ship in OMD 1.5.4.
 
+- `tool_call` render props (frozen in Mod API `1.0.0`) gain `presentation` (`row`, `opened` or `transcript`)
+  beside `expanded`, and the kinds `subagent` (subagent activity, which drew without a render target before) and
+  `run`. `api.builtins` gains `group_tools` (`transcript_tool_groups_v1`), which offers the tool calls between two
+  messages as one `run` with `calls` and `call_count`. The changes are additive: a hook that switches on `kind` and reads `expanded` keeps
+  working, and without `group_tools` no `run` is offered. A hook that answers every `tool_call` now also sees
+  `subagent` rows.
 - Mods run in any session directory, including the home directory and `/`; before, the host stayed off there.
 - Programs and sockets the host runs or passes unsandboxed (`os_access` programs, `exec.run` sockets, managed
   processes and services, frozen in Mod API `1.0.0`) are refused anywhere the agent can write: the whole Git work tree
@@ -113,6 +120,9 @@ These changes ship in OMD 1.6.0.
   fix; a mod that runs such a program needs it installed outside the repository (or outside the session directory).
 - `workspace.*` without `root` fails with `workspace_unavailable` when the session directory is `/`, the home
   directory or a directory above it and isn't in a Git work tree. Other directories behave as before.
+- `compaction_end` (frozen in Mod API `1.0.0`) reports `outcome: "stopped"` when a `PreCompact` hook stops the
+  compaction; before, it reported `skipped`. The new value is additive: a mod that counts only `compacted` and
+  `replaced` needs no change.
 
 These changes ship in OMD 1.4.0.
 

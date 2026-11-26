@@ -259,9 +259,9 @@ Interrupting the turn cancels a waiting chain. The installed result persists as 
 so resume reads it.
 
 `compaction_start {turn_id, trigger}` (`manual` or `auto`) fires before the `compaction` interceptors run, whatever
-they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`),
-`by` and `provider_call`. Both are observe-only events of the `lifecycle` capability: a handler cannot change or
-stop the compaction.
+they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `stopped`, `deferred` or
+`failed`), `by` and `provider_call`; `stopped` means a `PreCompact` hook stopped the compaction. Both are
+observe-only events of the `lifecycle` capability: a handler cannot change or stop the compaction.
 
 ### Evidence across compaction
 

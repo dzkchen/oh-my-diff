@@ -43,7 +43,7 @@ license and the permissions it asks for. You control which mods run, subject to 
 
 OMD+ comes with these, among others:
 
-- **[Grouped tool lines](mods/first-party/omd_tool_lines/README.md)**: adjacent shell commands collapse into one row; open it for the full output.
+- **[Grouped tool lines](mods/first-party/omd_tool_lines/README.md)**: adjacent shell commands collapse into one app-style summary line ("Read files, ran commands"); open it for the full output.
 - **[Status line](mods/first-party/omd_statusline/README.md)**: configurable, edited with `/statusline`.
 - **[Privacy](mods/first-party/omd_privacy/README.md)**: redacts text that matches its secret and personal-data rules in requests sent to the model. Web search, transcripts and logs aren't covered (off; turn on in `/mods`).
 - **[Usage](mods/first-party/omd_usage/README.md)**: context, cache, cost and quota by request (off; turn on in `/mods`).
@@ -65,8 +65,8 @@ Experimental mods add other providers, a workspace dock, `/undo` and language-se
 
 ## Install
 
-You need an Apple Silicon Mac, Codex 0.167 (`npm install -g @openai/codex@0.167`, which needs Node, or Homebrew's
-Codex while it's on 0.167.x) and Python 3.12 or later. The [install guide](docs/install.md) lists every requirement.
+You need an Apple Silicon Mac, Codex 0.171 (`npm install -g @openai/codex@0.171`, which needs Node, or Homebrew's
+Codex while it's on 0.171.x) and Python 3.12 or later. The [install guide](docs/install.md) lists every requirement.
 
 ### OMD+ (recommended)
 

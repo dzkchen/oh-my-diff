@@ -177,6 +177,12 @@ cover every thread of that session, including threads in its worktrees.
   beyond reads and searches. A render hook receives the group as `tool_call` with `kind: 'explore'`; expanding
   the group opens its full native output. User shell commands remain separate. Each command row keeps the
   grouping setting it started with; disabling it stops grouping new commands and leaves existing groups intact.
+- `group_tools: true` (`transcript_tool_groups_v1`) keeps every agent tool call between two messages (commands,
+  reads and searches, web searches, MCP and app tools, edits, image views and subagent activity) in one run that
+  a render hook receives as `tool_call` with `kind: 'run'` (see [Grouped members](render-hooks.md#grouped-members)).
+  Messages, user shell commands and other history end a run. Without a run hook each step draws natively, but inline
+  sessions print a run's steps to scrollback together when it ends.
+  Disabling it stops starting new runs; existing runs stay intact.
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.

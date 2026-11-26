@@ -54,6 +54,8 @@ pub struct BuiltinControls {
     #[serde(default)]
     pub group_exec: bool,
     #[serde(default)]
+    pub group_tools: bool,
+    #[serde(default)]
     pub commands: HiddenCommands,
     #[serde(default)]
     pub modes: Disabled,
@@ -76,6 +78,8 @@ impl Removed {
 pub struct BuiltinSnapshot {
     #[serde(default)]
     pub group_exec: bool,
+    #[serde(default)]
+    pub group_tools: bool,
     pub schema: u32,
     pub hidden_commands: BTreeMap<String, Vec<String>>,
     pub disabled_modes: BTreeMap<String, Vec<String>>,
@@ -175,6 +179,7 @@ impl BuiltinSnapshot {
         };
         for (owner, controls) in controls {
             snapshot.group_exec |= controls.group_exec;
+            snapshot.group_tools |= controls.group_tools;
             for command in &controls.commands.hide {
                 snapshot
                     .hidden_commands
