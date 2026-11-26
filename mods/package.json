@@ -33,6 +33,7 @@
     "jsx-runtime.d.ts",
     "client.d.ts",
     "testing.d.ts",
+    "globals.d.ts",
     "author",
     "examples/coordination",
     "examples/kernel",
@@ -56,7 +57,7 @@
   ],
   "scripts": {
     "test": "node ../scripts/mod_test_suite.mjs",
-    "check": "node node_modules/typescript7/bin/tsc -p tsconfig.json && node node_modules/typescript7/bin/tsc -p tsconfig.author.json && node ../scripts/mod_typecheck_inventory.mjs && node ../scripts/mod_operation_schema.mjs --check",
+    "check": "node node_modules/typescript7/bin/tsc -p tsconfig.json && node node_modules/typescript7/bin/tsc -p tsconfig.author.json && node node_modules/typescript7/bin/tsc -p tsconfig.globals.json && node ../scripts/mod_typecheck_inventory.mjs && node ../scripts/mod_operation_schema.mjs --check",
     "package": "pnpm pack --pack-destination dist"
   },
   "devDependencies": {

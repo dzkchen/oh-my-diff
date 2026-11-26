@@ -65,9 +65,11 @@ function tsconfig() {
       jsx: 'react-jsx',
       jsxImportSource: '@oh-my-diff/mod-api',
       allowImportingTsExtensions: true,
+      lib: ['ES2022'],
       types: [],
     },
-    include: ['index.ts', 'index.tsx', '.omd/*.d.ts'],
+    include: ['*.ts', '*.tsx', '.omd/*.d.ts', 'node_modules/@oh-my-diff/mod-api/globals.d.ts'],
+    exclude: ['*.test.ts'],
   };
 }
 
@@ -100,6 +102,7 @@ async function writeJson(path, value) {
 async function writeProjectFiles(directory, name, scenarios) {
   await writeJson(join(directory, 'package.json'), packageJson(name));
   await writeJson(join(directory, 'tsconfig.json'), tsconfig());
+  if (!existsSync(join(directory, '.gitignore'))) await writeFile(join(directory, '.gitignore'), 'node_modules/\n.omd/\ndist/\n');
   for (const [file, scenario] of Object.entries(scenarios)) await writeJson(join(directory, file), scenario);
 }
 
@@ -171,6 +174,8 @@ function runTests(directory) {
 async function packageProject(directory) {
   checkProject(directory);
   const inspected = engineJson(['inspect', directory]);
+  const placeholders = Object.entries(inspected.manifest.provenance ?? {}).filter(([, value]) => value === 'CHANGE ME').map(([key]) => `provenance.${key}`);
+  if (placeholders.length) fail(`provenance_placeholder: set ${placeholders.join(' and ')} in mod.json before packaging`);
   const name = `${inspected.manifest.id}-${inspected.manifest.version}`;
   const target = join(directory, 'dist', name);
   if (existsSync(target)) fail(`package_target_exists: ${target}`);

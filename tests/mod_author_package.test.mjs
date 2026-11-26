@@ -113,6 +113,20 @@ test('scaffold commands and mapped failures work for custom and example-named ID
       assert.match(debugged.stdout, /index\.ts:\d+:\d+/);
       assert.match(readFileSync(join(project, 'AGENTS.md'), 'utf8'), /github\.com\/dzkchen\/oh-my-diff\/blob\/main\/docs\/AGENT_MOD_GUIDE\.md/);
     }
+    const project = join(root, 'my_mod');
+    assert.equal(readFileSync(join(project, '.gitignore'), 'utf8'), 'node_modules/\n.omd/\ndist/\n');
+    writeFileSync(join(project, 'extra.ts'), 'export const title = document.title;\n');
+    const dom = author('check', project);
+    assert.notEqual(dom.status, 0);
+    assert.match(dom.stdout + dom.stderr, /Cannot find name 'document'/);
+    writeFileSync(join(project, 'extra.ts'), "export const id = [crypto.randomUUID(), new TextEncoder().encode('a').length];\nconsole.log(id);\n");
+    writeFileSync(join(project, 'extra.test.ts'), "import { test } from 'node:test';\ntest('runs', () => {});\n");
+    const tests = author('check', project);
+    assert.equal(tests.status, 0, tests.stderr);
+    assert.match(tests.stderr, /Test files not type-checked; add Node types/);
+    const packaged = author('package', project);
+    assert.notEqual(packaged.status, 0);
+    assert.match(packaged.stderr, /provenance_placeholder: set provenance\.maintainer and provenance\.source/);
     const dashed = join(root, 'my-mod');
     const created = author('create', dashed);
     assert.equal(created.status, 0, created.stderr);

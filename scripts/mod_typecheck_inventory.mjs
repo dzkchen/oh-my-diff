@@ -17,7 +17,7 @@ export function checkedSources(files, coverage, syntaxOnly) {
 
 function main() {
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const configs = ['mods/tsconfig.json', 'mods/tsconfig.author.json'];
+  const configs = ['mods/tsconfig.json', 'mods/tsconfig.author.json', 'mods/tsconfig.globals.json'];
   const coverage = new Map();
   for (const config of configs) {
     const filename = resolve(root, config);

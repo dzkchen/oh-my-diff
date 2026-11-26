@@ -86,19 +86,39 @@ export function checkProject(directory) {
     process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
     return;
   }
+  checkTypes(directory);
+  checkTests(directory);
+}
+
+function withConfig(directory, kind, config, run) {
+  const path = join(directory, `tsconfig.omd-${kind}-${process.pid}-${Date.now().toString(36)}.json`);
+  writeFileSync(path, JSON.stringify(config), { flag: 'wx' });
+  try {
+    run(basename(path));
+  } finally {
+    rmSync(path, { force: true });
+  }
+}
+
+function checkTests(directory) {
+  const tests = readdirSync(directory).filter(name => name.endsWith('.test.ts'));
+  if (!tests.length) return;
+  if (!existsSync(join(directory, 'node_modules/@types/node'))) {
+    process.stderr.write('Test files not type-checked; add Node types: pnpm add -D @types/node\n');
+    return;
+  }
+  withConfig(directory, 'test', { extends: './tsconfig.json', compilerOptions: { types: ['node'] }, include: ['.omd/*.d.ts'], files: tests },
+    config => command('pnpm', ['exec', 'tsc', '-p', config], { cwd: directory }));
+}
+
+function checkTypes(directory) {
   const sources = jsxSources(directory);
   if (!sources.length) return command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
   const ts = typescript(directory);
   const parsed = ts.getParsedCommandLineOfConfigFile(join(directory, 'tsconfig.json'), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: diagnostic => fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')) });
   const generated = new Set(sources.map(source => resolve(directory, source.slice(0, -1))));
   const files = [...new Set([...parsed.fileNames.map(file => resolve(file)).filter(file => !generated.has(file)), ...sources.map(source => resolve(directory, source))])];
-  const jsxConfig = join(directory, `tsconfig.omd-jsx-${process.pid}-${Date.now().toString(36)}.json`);
-  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }), { flag: 'wx' });
-  try {
-    command('pnpm', ['exec', 'tsc', '-p', basename(jsxConfig)], { cwd: directory });
-  } finally {
-    rmSync(jsxConfig, { force: true });
-  }
+  withConfig(directory, 'jsx', { extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }, config => command('pnpm', ['exec', 'tsc', '-p', config], { cwd: directory }));
 }
 
 export function trustPackage(store, directory) {

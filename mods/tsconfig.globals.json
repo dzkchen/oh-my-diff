@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["ES2022"], "types": [] },
+  "include": ["api.d.ts", "jsx-runtime.d.ts", "globals.d.ts", "examples/**/*.ts", "examples/**/*.tsx"]
+}
