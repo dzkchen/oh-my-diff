@@ -1,5 +1,50 @@
 [
   {
+    "version": "1.5.4",
+    "date": "2026-11-22",
+    "title": "Oh My Diff 1.5.4",
+    "summary": "Codex 0.171.0, app-style tool activity rows, and a fix for the theme and status line flickering.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Tool lines: tool activity between agent messages collapses into one row, such as \"Read files, ran commands, searched the web\", with the running step shown live and each step listed when opened; subagent rows merge, such as \"Papers, Code and Prior started working\"",
+          "Mods: the `group_tools` builtin, the `presentation` prop and `subagent` tool steps let a mod draw a turn's tool activity as one row",
+          "Mods: a compaction that a PreCompact hook stops ends with outcome `stopped`"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Upstream: Codex 0.171.0"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Themes and status lines no longer flash in and out while subagents work",
+          "Search works on Macs without a system `rg`: OMD finds upstream Codex's bundled one",
+          "Assistant messages no longer repeat text when tool activity arrives mid-message",
+          "Mods: a render dropped by a host reload is drawn again",
+          "Mods: approval middleware also runs for `request_permissions` and for MCP calls that guardian review allows without a prompt; shell snapshots respect OMD's denied paths",
+          "Mods: mod segments show again in front of extension status lines"
+        ]
+      }
+    ],
+    "commits": [
+      "a60ff64",
+      "43e6f25",
+      "ee309cb",
+      "cac8b9a",
+      "be580d5",
+      "20afce2",
+      "13b5719",
+      "a9d37b3",
+      "04d5576",
+      "1f98308"
+    ]
+  },
+  {
     "version": "1.5.3",
     "date": "2026-11-12",
     "title": "Oh My Diff 1.5.3",

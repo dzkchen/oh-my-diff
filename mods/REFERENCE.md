@@ -3,7 +3,7 @@
 This is every [mod API reference page](reference/README.md) in one file, for agents and search. Generated from
 the pages in the order of their contents table; edit the pages, not this file.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.167.2`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.171.0`.
 `omd-mod status` reports the OMD release as `host.omd`. A package's `compatibility.releases` is matched against that
 version. The host loads only mods for this API version. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
@@ -404,7 +404,7 @@ Use it when you check whether a design fits the host. Each row gives one limit a
 states the exact rule and the error a call gets. The `host.json` limits an operator can change are under
 [Host limits](#host-limits).
 
-Values are those of Mod API `1.0.0` on Codex `0.167.2`; limits of experimental entries may change in any release.
+Values are those of Mod API `1.0.0` on Codex `0.171.0`; limits of experimental entries may change in any release.
 
 ### Limits by area
 
@@ -693,6 +693,7 @@ These frozen entries have experimental fields:
 | `events:terminal` | `omd_version`, `welcome`, `chat`, `colors`, `sites` | `terminal_welcome_area_v1`, `terminal_chat_area_v1`, `terminal_colors_v1`, `terminal_site_area_v1` |
 | `events:timer` | `data` | `timer_data_v1` |
 | `render_sites:assistant_message` | `message_id` | `assistant_message_identity_v1` |
+| `render_sites:tool_call` | `error`, `presentation`, `activity`, `agent`, `effort` | `transcript_tool_groups_v1` |
 | `replacements:tool_batch` | `success_per_call` | `tool_batch_success_v1` |
 | `intercepts:tool` | `value`, `bytes` | `code_mode_values_v1`, `tool_original_v1` |
 | `operations:agents.inventory` | `provider`, `model`, `billing` | none |
@@ -720,8 +721,14 @@ clients, rich children inside buttons (a button uses its typed `text`), audio, t
 
 ### Migration notes
 
-These changes ship in OMD 1.6.0.
+These changes ship in OMD 1.5.4.
 
+- `tool_call` render props (frozen in Mod API `1.0.0`) gain `presentation` (`row`, `opened` or `transcript`)
+  beside `expanded`, and the kinds `subagent` (subagent activity, which drew without a render target before) and
+  `run`. `api.builtins` gains `group_tools` (`transcript_tool_groups_v1`), which offers the tool calls between two
+  messages as one `run` with `calls` and `call_count`. The changes are additive: a hook that switches on `kind` and reads `expanded` keeps
+  working, and without `group_tools` no `run` is offered. A hook that answers every `tool_call` now also sees
+  `subagent` rows.
 - Mods run in any session directory, including the home directory and `/`; before, the host stayed off there.
 - Programs and sockets the host runs or passes unsandboxed (`os_access` programs, `exec.run` sockets, managed
   processes and services, frozen in Mod API `1.0.0`) are refused anywhere the agent can write: the whole Git work tree
@@ -730,6 +737,9 @@ These changes ship in OMD 1.6.0.
   fix; a mod that runs such a program needs it installed outside the repository (or outside the session directory).
 - `workspace.*` without `root` fails with `workspace_unavailable` when the session directory is `/`, the home
   directory or a directory above it and isn't in a Git work tree. Other directories behave as before.
+- `compaction_end` (frozen in Mod API `1.0.0`) reports `outcome: "stopped"` when a `PreCompact` hook stops the
+  compaction; before, it reported `skipped`. The new value is additive: a mod that counts only `compacted` and
+  `replaced` needs no change.
 
 These changes ship in OMD 1.4.0.
 
@@ -3269,6 +3279,12 @@ cover every thread of that session, including threads in its worktrees.
   beyond reads and searches. A render hook receives the group as `tool_call` with `kind: 'explore'`; expanding
   the group opens its full native output. User shell commands remain separate. Each command row keeps the
   grouping setting it started with; disabling it stops grouping new commands and leaves existing groups intact.
+- `group_tools: true` (`transcript_tool_groups_v1`) keeps every agent tool call between two messages (commands,
+  reads and searches, web searches, MCP and app tools, edits, image views and subagent activity) in one run that
+  a render hook receives as `tool_call` with `kind: 'run'` (see [Grouped members](reference/render-hooks.md#grouped-members)).
+  Messages, user shell commands and other history end a run. Without a run hook each step draws natively, but inline
+  sessions print a run's steps to scrollback together when it ends.
+  Disabling it stops starting new runs; existing runs stay intact.
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
@@ -6658,9 +6674,9 @@ Interrupting the turn cancels a waiting chain. The installed result persists as 
 so resume reads it.
 
 `compaction_start {turn_id, trigger}` (`manual` or `auto`) fires before the `compaction` interceptors run, whatever
-they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `deferred` or `failed`),
-`by` and `provider_call`. Both are observe-only events of the `lifecycle` capability: a handler cannot change or
-stop the compaction.
+they then decide. `compaction_end` reports `outcome` (`compacted`, `replaced`, `skipped`, `stopped`, `deferred` or
+`failed`), `by` and `provider_call`; `stopped` means a `PreCompact` hook stopped the compaction. Both are
+observe-only events of the `lifecycle` capability: a handler cannot change or stop the compaction.
 
 #### Evidence across compaction
 
@@ -6875,8 +6891,8 @@ change in the `e` it passes to `next`. Rewrites to other props have no effect.
 ### `tool_call` props
 
 Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`running`/`completed`/`failed`/
-`interrupted`), `duration_ms` (null without a recorded start and completion) and
-`expanded`, and per kind:
+`interrupted`), `duration_ms` (null without a recorded start and completion), `expanded` and `presentation`
+(`row`, `opened` or `transcript`), and per kind:
 
 | `kind` | Props |
 | --- | --- |
@@ -6888,6 +6904,11 @@ Every agent tool row (`RenderToolCall`) contains `call_id`, `kind`, `status` (`r
 | `mcp` | `server`, `tool`, `arguments`, `output_lines`, `error` |
 | `dynamic` | `tool`, `arguments`, `output_lines`, `error` |
 | `image` | `tool`, `path`, `prompt` |
+| `subagent` | `activity` (`started`/`interacted`/`interrupted`/`completed`), `agent` (nickname, else the last `path` segment), `path`, `model`, `effort` |
+| `run` | `calls`, `call_count` (the steps between two messages with [`group_tools`](reference/commands-and-composer.md#built-in-controls)) |
+
+A restored transcript doesn't know subagent nicknames, so its `agent` is the last `path` segment where the live row
+had the nickname.
 
 Patch rows are inserted on completion. Declined patches show an informational notice, matching restored
 history; they do not produce a `tool_call` render target. MCP and dynamic `error` is the first non-empty line of a
@@ -6913,6 +6934,15 @@ or `mcp`.
   groups to the aggregate `tool_call` hook with `kind: 'explore'`. An aggregate replacement wins; otherwise the
   individual `exec` member hooks still run. A lone command outside reads, searches and listings keeps `kind: 'exec'`.
   Expanding a group shows every command's native output.
+- With [`group_tools`](reference/commands-and-composer.md#built-in-controls) enabled, the agent's tool calls between two
+  messages form one run, offered first as `kind: 'run'`. `calls` lists each step in order (at most 64, the latest;
+  exploration groups as their `exec` calls), `call_count` counts them all, and `status` covers every step,
+  including steps `calls` leaves out. A replaced run is one row, `presentation: 'row'`. Opened, it is the run
+  row (`presentation: 'opened'`) followed by one row per step, each a `tool_call` with its own `expanded` flag. In
+  the full transcript the run and its steps get `presentation: 'transcript'`; when they return `next(e)` the
+  native rows draw. When the run hook returns `next(e)` for a row, the step hooks run as for other groups. Without a
+  run hook the steps draw natively, as without `group_tools`, except that inline sessions print them to scrollback
+  together when the run ends instead of one by one.
 
 ### Render hook behavior
 
@@ -6921,7 +6951,8 @@ identically. Tool rows are offered from live cells and committed history.
 
 - In the fullscreen transcript a hooked tool row needs no control row. F4 focuses it, and Enter, →/← or a click
   opens and closes it. `expanded` is `true` while the row is open and for every row of the full transcript
-  (Ctrl+T). A hook that shortens rows returns `next(e)` when `expanded` is `true`.
+  (Ctrl+T), and `presentation` says which: `opened` or `transcript`, otherwise `row`. A hook that shortens rows
+  returns `next(e)` when `expanded` is `true`.
 - Selection copies what is drawn; raw mode never runs hooks.
 - Approvals are [native confirmations](reference/glossary.md#trust-and-authority) and have no render hook. Their identity,
   decision text, options, focus and grants stay native, and `surface_styles.approval` only paints the frame.

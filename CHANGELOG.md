@@ -2,6 +2,29 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.4](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.4) — 2026-11-22
+
+Codex 0.171.0, app-style tool activity rows, and a fix for the theme and status line flickering.
+
+### New
+
+- Tool lines: tool activity between agent messages collapses into one row, such as "Read files, ran commands, searched the web", with the running step shown live and each step listed when opened; subagent rows merge, such as "Papers, Code and Prior started working"
+- Mods: the `group_tools` builtin, the `presentation` prop and `subagent` tool steps let a mod draw a turn's tool activity as one row
+- Mods: a compaction that a PreCompact hook stops ends with outcome `stopped`
+
+### Changed
+
+- Upstream: Codex 0.171.0
+
+### Fixed
+
+- Themes and status lines no longer flash in and out while subagents work
+- Search works on Macs without a system `rg`: OMD finds upstream Codex's bundled one
+- Assistant messages no longer repeat text when tool activity arrives mid-message
+- Mods: a render dropped by a host reload is drawn again
+- Mods: approval middleware also runs for `request_permissions` and for MCP calls that guardian review allows without a prompt; shell snapshots respect OMD's denied paths
+- Mods: mod segments show again in front of extension status lines
+
 ## [1.5.3](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.3) — 2026-11-12
 
 Codex 0.167.2 and per-account provider routes.

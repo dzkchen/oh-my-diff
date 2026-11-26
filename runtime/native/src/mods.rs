@@ -833,8 +833,18 @@ impl Core {
                 access::release_servers(lead, *generation, None).await;
             }
         }
-        let ledger = lead.map(Lead::ledger).unwrap_or(Value::Null);
         let thread = lead.map(|lead| lead.thread.to_string());
+        // The view is the current lead thread's; handlers keep the event's own thread.
+        let shown = self
+            .expansion
+            .current()
+            .or_else(|| lead.filter(|lead| lead.owner == "lead").cloned())
+            .or_else(|| {
+                let named = ThreadId::from_string(payload["thread_id"].as_str()?).ok()?;
+                self.expansion.lead(named)
+            });
+        let ledger = shown.as_ref().map(Lead::ledger).unwrap_or(Value::Null);
+        let shown = shown.map(|lead| lead.thread.to_string());
         let flag = cancelled.clone();
         let job = tokio::task::spawn_blocking(move || {
             let _thread = codex_omd::StateThread::enter(thread);
@@ -869,6 +879,7 @@ impl Core {
             let Ok(mut runtime) = runtime.lock() else {
                 return fragments;
             };
+            let _shown = codex_omd::StateThread::enter(shown);
             publish(
                 &mut runtime,
                 &host,

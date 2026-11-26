@@ -190,7 +190,7 @@ class HostedJobs(unittest.TestCase):
         self.assertEqual(ci.scope("core"), ci.scope("core-integration"))
 
     def test_jobs_build_only_the_required_test_helpers(self):
-        expected = {"omd-runner", "codex", "codex-code-mode-host", "rmcp_test_server", "test_stdio_server",
+        expected = {"omd-runner", "codex", "codex-code-mode-host", "codex-message-board-mcp", "rmcp_test_server", "test_stdio_server",
                     "test_streamable_http_server", "test_mcp_2026_stdio_server", "test_mcp_2026_discovery_stdio_server"}
         for job in ("native", "core"):
             args = self.steps(job)["test helper binaries"].argv

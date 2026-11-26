@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import lzma
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
 RELEASE_MANIFEST = "omd-release.json"
+XZ_FILTERS = [{"id": lzma.FILTER_LZMA2, "preset": 9 | lzma.PRESET_EXTREME, "dict_size": 256 << 20}]
 
 
 def copy_sources(destination):
@@ -55,7 +57,7 @@ def archive_payload(artifact_dir, destination):
         support.atomic_text(payload / "package-manifest.json",
                             json.dumps({"schema": 1, "files": files}, indent=2, sort_keys=True) + "\n")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(destination, "w:xz") as archive:
+        with lzma.open(destination, "wb", filters=XZ_FILTERS) as packed, tarfile.open(fileobj=packed, mode="w") as archive:
             for path in sorted(path for path in payload.rglob("*") if path.is_file()):
                 info = archive.gettarinfo(str(path), f"payload/{path.relative_to(payload).as_posix()}")
                 info.uid = info.gid = 0

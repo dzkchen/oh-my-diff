@@ -15,8 +15,8 @@ host. The support policy, platforms and terminals are in [Support](../../docs/su
 
 Only the current API loads.
 
-The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.167.2 with the host crate
-version `1.5.1` from `runtime/omd/Cargo.toml`, a development version, not a published support claim.
+The `host` object in [compatibility.json](compatibility.json) describes `main`: Codex 0.171.0 with the host crate
+version `1.5.4` from `runtime/omd/Cargo.toml`, a development version, not a published support claim.
 The supported-version table stops at the latest stable release, `1.5.0`.
 
 On the matrix's `as_of` date, OMD didn't lag upstream. Codex 0.166.0 was the newest stable Codex release then.
@@ -66,6 +66,7 @@ the API version matches. Each list holds at most 32 features.
 | `tools.original` | `tool_original_v1` |
 | `api.builtins` `features.remove` | `builtins_features_v1` |
 | `api.builtins` `group_exec` | `transcript_exec_groups_v1` |
+| `api.builtins` `group_tools`, `tool_call` `presentation` and the `run` and `subagent` kinds | `transcript_tool_groups_v1` |
 | `success_per_call` on a `tool_batch` merge | `tool_batch_success_v1` |
 | `value` in code-mode `tool` results and answers | `code_mode_values_v1` |
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |
@@ -101,7 +102,7 @@ When a mod changes `state_version`, its saved state must be migrated before it r
 
 ## Tested and not tested
 
-OMD is tested on Apple Silicon macOS with Codex 0.167.2, the OMD+ and OMD Core install profiles, and the bundled
+OMD is tested on Apple Silicon macOS with Codex 0.171.0, the OMD+ and OMD Core install profiles, and the bundled
 plugins.
 
 Linux and Intel macOS are unsupported, and the installer refuses them.
