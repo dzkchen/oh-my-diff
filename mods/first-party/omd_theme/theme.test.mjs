@@ -444,6 +444,14 @@ test('the chain survives a wake that beats its state write and a failed reschedu
   assert.equal(tick(state, `f.${NOW}.-1.0.0.0.0`, NOW + 16, { 'events.schedule': () => { throw new Error('timer_limit'); } }).error, undefined);
 });
 
+test('an undelivered wake schedules the replacement frame directly', () => {
+  const idle = call({ event: 'focus', state: ready(), payload: { focused: false } }).state;
+  const back = call({ event: 'focus', state: idle, payload: { focused: true }, virtual_time_ms: NOW + 100 },
+    { 'events.publish': () => ({ delivered: 0, dropped: 1 }) });
+  const [next] = back.of('events.schedule');
+  assert.ok(tick(back.state, next.key, NOW + 116).of('terminal.blit').length > 0);
+});
+
 test('the chain keeps drawing when terminal-thread callbacks can make no host calls', () => {
   const refuse = () => { throw new Error('host_operation_unavailable: requires a native task'); };
   const off = { 'events.publish': refuse, 'events.schedule': refuse, 'store.get': refuse };

@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../tests/mod_runner.mjs';
 
@@ -59,6 +62,32 @@ const settled = (answer = host()) => {
 };
 const fire = (state, job, extra = {}, answer = host()) => call({ event: 'timer', payload: { key: 'due' }, state: { ...state, due: { ...state.due, [job]: NOW } }, ...extra }, answer);
 const started = () => settled();
+
+test('the changes segment counts each modified or conflicted path once', () => {
+  const settings = { preset: 'custom', layout: 'changes' };
+  for (const record of ['1 MM N... 100644 100644 100644 a b file.ts', 'u UU N... 100644 100644 100644 100644 a b c file.ts']) {
+    const answer = host({ 'exec.run': () => ({ exit_code: 0, timed_out: false, stdout: `@@\n@@\n@@\n${record}\0`, stderr: '' }) });
+    const start = call({ event: 'start', payload: {}, settings }, answer);
+    const state = call({ event: 'timer', payload: { key: 'due' }, state: start.state, virtual_time_ms: NOW + 2000, settings }, answer).state;
+    assert.match(lines(view(state, settings)).join(' '), /\b1f\b/);
+  }
+});
+
+test('a new repository shows tracked line additions and individual untracked files', t => {
+  const cwd = mkdtempSync(join(tmpdir(), 'omd-statusline-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q'], { cwd });
+  writeFileSync(join(cwd, 'note'), 'one\n');
+  execFileSync('git', ['add', 'note'], { cwd });
+  writeFileSync(join(cwd, 'note'), 'one\ntwo\n');
+  mkdirSync(join(cwd, 'nested'));
+  for (const name of ['a', 'b']) writeFileSync(join(cwd, 'nested', name), '');
+  const settings = { preset: 'custom', layout: 'changes' };
+  const answer = host({ 'exec.run': args => ({ exit_code: 0, stdout: execFileSync(args.program, args.argv, { cwd, encoding: 'utf8' }) }) });
+  const start = call({ event: 'start', payload: {}, settings }, answer);
+  const state = call({ event: 'timer', payload: { key: 'due' }, state: start.state, virtual_time_ms: NOW + 2000, settings }, answer).state;
+  assert.deepEqual(lines(view(state, settings)), ['+2 -0 3f']);
+});
 
 test('child tool results do not schedule refreshes without a session', () => {
   const state = started();

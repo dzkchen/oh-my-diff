@@ -6,10 +6,11 @@ export const GIT_SEGMENTS = ['git', 'changes', 'pr', 'ci'];
 
 export const gitScript = (shown: string[]) => [
   'export LC_ALL=C GIT_OPTIONAL_LOCKS=0',
+  shown.includes('changes') ? 'base=$(git rev-parse --verify -q HEAD || git hash-object -t tree /dev/null) || exit 3' : '',
   shown.includes('git') ? 'git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel || exit 3' : '',
   'printf "@@\\n"', shown.includes('pr') || shown.includes('ci') ? 'git remote get-url origin 2>/dev/null' : '',
-  'printf "@@\\n"', shown.includes('changes') ? 'git diff --shortstat HEAD 2>/dev/null' : '',
-  'printf "@@\\n"', shown.includes('git') || shown.includes('changes') ? 'git status --porcelain=v2 --branch -z || exit 3'
+  'printf "@@\\n"', shown.includes('changes') ? 'git diff --shortstat "$base" -- || exit 3' : '',
+  'printf "@@\\n"', shown.includes('git') || shown.includes('changes') ? `git status --porcelain=v2 --branch -z${shown.includes('changes') ? ' --untracked-files=all' : ''} || exit 3`
     : 'head=$(git symbolic-ref --short -q HEAD); [ $? -le 1 ] || exit 3; printf "# branch.head %s\\0" "${head:-(detached)}"',
 ].filter(Boolean).join('\n');
 
@@ -21,7 +22,7 @@ export function remote(url: string): Git['remote'] {
 export function parseGit(key: string, stdout: string): Git {
   const [paths = '', origin = '', shortstat = '', ...rest] = stdout.split(/\n?@@\n/);
   const status = rest.join('\n@@\n');
-  const git: Git = { key, branch: null, oid: null, ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicts: 0, added: 0, removed: 0, worktree: null, remote: remote(origin), error: null };
+  const git: Git = { key, branch: null, oid: null, ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicts: 0, partiallyStaged: 0, added: 0, removed: 0, worktree: null, remote: remote(origin), error: null };
   const records = status.split('\0');
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index];
@@ -33,6 +34,7 @@ export function parseGit(key: string, stdout: string): Git {
     } else if (record.startsWith('1 ') || record.startsWith('2 ')) {
       if (record[2] !== '.') git.staged += 1;
       if (record[3] !== '.') git.unstaged += 1;
+      if (record[2] !== '.' && record[3] !== '.') git.partiallyStaged += 1;
       if (record.startsWith('2 ')) index += 1;
     } else if (record.startsWith('u ')) git.conflicts += 1;
     else if (record.startsWith('? ')) git.untracked += 1;

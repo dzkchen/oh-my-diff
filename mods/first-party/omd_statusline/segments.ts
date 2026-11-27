@@ -27,7 +27,7 @@ export type Script = { id: string; command: string[]; interval_s: number; timeou
 
 export type Charge = 'billed' | 'estimate' | 'included' | 'pending' | 'unknown' | 'none';
 export type Git = {
-  key: string; branch: string | null; oid: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number;
+  key: string; branch: string | null; oid: string | null; ahead: number; behind: number; staged: number; unstaged: number; partiallyStaged: number; untracked: number; conflicts: number;
   added: number; removed: number; worktree: string | null; remote: { owner: string; repo: string } | null; error: string | null;
 };
 export type GithubStatus = 'idle' | 'loading' | 'ok' | 'auth' | 'offline' | 'rate_limited' | 'error';
@@ -218,7 +218,7 @@ const parts: Record<string, (env: Env) => Part> = {
   changes: ({ data, cwd }) => {
     const git = data.git;
     if (!git || git.error || cwd !== null && git.key !== cwd) return null;
-    const files = git.staged + git.unstaged + git.untracked;
+    const files = git.staged + git.unstaged + git.untracked + git.conflicts - (git.partiallyStaged ?? 0);
     return files || git.added || git.removed ? [{ text: `+${git.added}`, tone: 'success' }, { text: ` -${git.removed}`, tone: 'failure' }, { text: ` ${files}f`, tone: 'muted' }] : null;
   },
   pr: ({ data, ascii, config }) => {
@@ -336,7 +336,7 @@ export function preview(data: Data, config: Settings, now: number, cwd: string):
     tokens: { input: 420_000, output: 18_000, reasoning: 6_000, cached: 300_000, write: 0, requests: 12 }, cache: { ratio: 0.8, expires: now + 240_000 },
     cost: { ...EMPTY.cost, estimate: 1.24 }, limits: [{ minutes: 300, used: 35, resets: now + 7_200_000 }],
     tools: { sample: now }, agents: { sample: 'running' }, plan: { done: 2, total: 5, step: 'Write the tests' }, mods: { installed: 6, enabled: 5, active: 5 },
-    git: { key: cwd, branch: 'main', oid: null, ahead: 1, behind: 0, staged: 1, unstaged: 2, untracked: 0, conflicts: 0, added: 42, removed: 7, worktree: null, remote: null, error: null },
+    git: { key: cwd, branch: 'main', oid: null, ahead: 1, behind: 0, staged: 1, unstaged: 2, partiallyStaged: 0, untracked: 0, conflicts: 0, added: 42, removed: 7, worktree: null, remote: null, error: null },
     github: { ...EMPTY.github, status: 'ok', pr: { number: 123, title: 'Sample', url: 'https://github.com/owner/repo/pull/123', state: 'OPEN', draft: false, review: 'APPROVED', merge: null },
       ci: { state: 'SUCCESS', passed: 4, failed: 0, pending: 0, url: null } },
     scripts: Object.fromEntries(scripts(config.scripts).scripts.map(item => [item.id, data.scripts[item.id]?.spec === JSON.stringify(item) ? data.scripts[item.id]
