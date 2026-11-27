@@ -5,7 +5,7 @@ The patch that turns Codex into OMD, and the host crates it adds. To change anyt
 
 ## What's here
 
-OMD is one patch on Codex `rust-v0.171.0` (pinned in `upstream.lock.json`): [`patches/omd-0.171.0.patch`](patches).
+OMD is one patch on Codex `rust-v0.172.0` (pinned in `upstream.lock.json`): [`patches/omd-0.172.0.patch`](patches).
 
 | Path | Contains |
 | --- | --- |

@@ -615,11 +615,10 @@ pub(crate) fn seatbelt_command(
             },
             permissions,
             workspace_roots: Some(&[]),
-            runtime_readable_paths: None,
             selection: SandboxSelection::Explicit(SandboxType::MacosSeatbelt),
             network: SandboxNetwork::new(enforce_managed_network, None, None),
             sandbox_policy_cwd: &cwd,
-            sandbox_exe: None,
+            executables: codex_sandboxing::SandboxExecutables::Launcher(None),
             use_legacy_landlock: false,
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
         })
