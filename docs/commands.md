@@ -166,7 +166,7 @@ The install command in [Install Oh My Diff](install.md#install) runs `install.sh
 | `--channel stable\|prerelease\|nightly` | `stable` | Which release to install |
 | `--root DIR` | `~/.local/share/oh-my-diff` | Where OMD keeps releases and mod stores |
 | `--bin-dir DIR` | `~/.local/bin` | Where the `codex`, `omd` and other commands go |
-| `--upstream PATH` | `codex` on your `PATH` | The upstream Codex executable OMD builds on: Codex 0.171.x, from `npm install -g @openai/codex@0.171` or Homebrew |
+| `--upstream PATH` | `codex` on your `PATH` | The upstream Codex executable OMD builds on: Codex 0.172.x, from `npm install -g @openai/codex@0.172` or Homebrew |
 | `uninstall --purge` | mod data stays without `--purge` | Remove OMD's mod stores and saved sign-ins too; Codex data stays |
 
 An existing command in the bin folder is renamed to `NAME.before-omd` and comes back on uninstall.
