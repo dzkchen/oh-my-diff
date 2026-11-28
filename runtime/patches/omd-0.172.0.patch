@@ -20758,7 +20758,7 @@ index 6c010c59d41e2820ffc3f4b2313679c52913520d..e3394a3f63f1a268a7adc61be96a5952
      Ok(())
  }
 diff --git a/codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_config_failure_human_output.snap b/codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_config_failure_human_output.snap
-index f2a7e97d2b8ae05f4630fc6a81891c228f6b7862..b54bf6dd572a6b495b8ed80e9c4885d4c17cabfb 100644
+index f2a7e97d2b8ae05f4630fc6a81891c228f6b7862..acc5c4b3fbf1dc316bcf0df0f9ca47f8e00f3593 100644
 --- a/codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_config_failure_human_output.snap
 +++ b/codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_config_failure_human_output.snap
 @@ -2,7 +2,7 @@
@@ -20766,12 +20766,12 @@ index f2a7e97d2b8ae05f4630fc6a81891c228f6b7862..b54bf6dd572a6b495b8ed80e9c4885d4
  expression: stdout
  ---
 -Codex Doctor v0.0.0
-+Codex Doctor v0.171.0
++Codex Doctor v0.172.0
 
  Notes
     [XX] config       config could not be loaded - Fix the reported config error, then rerun codex doctor.
 diff --git a/codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_human_output.snap b/codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_human_output.snap
-index 996f43b992dcb23a9bf0df1b7d9d8ef4f5ddf7ab..d5ce7dcd1627ba1c12bd49688b00b037f3257f61 100644
+index 996f43b992dcb23a9bf0df1b7d9d8ef4f5ddf7ab..51da7aa5cc38382c1dd4c9f21bb5121b7316063a 100644
 --- a/codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_human_output.snap
 +++ b/codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_human_output.snap
 @@ -2,7 +2,7 @@
@@ -20779,7 +20779,7 @@ index 996f43b992dcb23a9bf0df1b7d9d8ef4f5ddf7ab..d5ce7dcd1627ba1c12bd49688b00b037
  expression: stdout
  ---
 -Codex Doctor v0.0.0
-+Codex Doctor v0.171.0
++Codex Doctor v0.172.0
 
  Configuration
    [ok] config       loaded

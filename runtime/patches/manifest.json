@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.172.0.patch",
-    "sha256": "735af2a1c3440c89576069effdd8701bf784f4a767e5806048ee99aa363ee966"
+    "sha256": "b33c90aef9c2b69794674ebd4139089348717d4a2361f8f67ef9cb9714085fdb"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -391,11 +391,11 @@
     },
     "codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_config_failure_human_output.snap": {
       "before": "eebac2c427293a971468d6684adc9a36db6f7d577f7be27a2ee10f552cdffe27",
-      "after": "45599d152895d71d21797825c84aa824c8abd0a94688c55bd6800a83ac0864f8"
+      "after": "c855b14daaa813c575539a6eb7b906ea0a2b54d99ef864aaff68b2b6310b14fa"
     },
     "codex-rs/cli/tests/snapshots/doctor_enterprise_network__network_only_human_output.snap": {
       "before": "6ccff2ec3f7bc5654f92bb1d24ffa5eb501cf471b0fe3ec2631581c28eaf59be",
-      "after": "23bf6cacd581e03b6b6a9dd14d9d821f8b2fc4b333afafa3a4efa9b03e54dfa1"
+      "after": "82151701f7266e2d0351131af2eacac92f1dcf6731b89ac4aa44bbf64eb7de7c"
     },
     "codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs": {
       "before": "a1c4cb31cb1eb56a3466555b8966c1da88e91789266a32039e92a1c3bb63ac2c",
