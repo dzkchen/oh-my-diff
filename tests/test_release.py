@@ -35,6 +35,12 @@ def paths(root):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_acceptance_has_a_checksum_for_the_pinned_codex(self):
+        pin = json.loads((release.ROOT / "upstream.lock.json").read_text())
+        assets = json.loads((release.ROOT / "upstream-binaries.lock.json").read_text())
+        checksum = assets[pin["tag"]][f"codex-{pin['verified_target']}.tar.gz"]
+        self.assertRegex(checksum, r"\A[0-9a-f]{64}\Z")
+
     def test_check_ties_lock_changelog_and_links_to_the_release_version(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
