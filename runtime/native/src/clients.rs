@@ -334,6 +334,21 @@ pub async fn select_thread(
     owner: codex_protocol::turn_input::TerminalOwner,
     thread: &str,
 ) -> Result<(), String> {
+    select_thread_for(owner, thread, false).await
+}
+
+pub async fn select_displayed_thread(
+    owner: codex_protocol::turn_input::TerminalOwner,
+    thread: &str,
+) -> Result<(), String> {
+    select_thread_for(owner, thread, true).await
+}
+
+async fn select_thread_for(
+    owner: codex_protocol::turn_input::TerminalOwner,
+    thread: &str,
+    displayed: bool,
+) -> Result<(), String> {
     let Ok(base) = core() else {
         return Ok(());
     };
@@ -351,28 +366,33 @@ pub async fn select_thread(
         .ok_or("session_unavailable")?;
     let target = ensure_owner(&owner)?;
     let owns = target.expansion.thread(thread).is_some();
-    let changed = target
-        .expansion
-        .current()
-        .is_none_or(|current| current.thread != thread);
-    let first = owns
-        && target
-            .initialized_threads
-            .lock()
-            .map_err(|_| "terminal_owner_poisoned")?
-            .insert(thread.to_string());
-    target.expansion.select_thread(&target.core, &lead);
+    target.expansion.prepare_thread(&target.core, &lead);
     target
         .sessions
         .lock()
         .map_err(|_| "terminal_owner_poisoned")?
         .insert(thread.to_string(), Arc::downgrade(&lead.session));
-    if changed || first {
-        let store = ExtensionData::new(thread.to_string());
-        store.insert(lead.clone());
-        store.insert_arc(target.clone());
-        target.views.start_thread(&store);
-    }
+    let Some((changed, first)) = target.expansion.focus(&lead, displayed, |changed| {
+        let first = owns
+            && target
+                .initialized_threads
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(thread.to_string());
+        if changed {
+            target
+                .views
+                .presentation(&thread.to_string(), Some("resumed"));
+        } else if first {
+            let store = ExtensionData::new(thread.to_string());
+            store.insert(lead.clone());
+            store.insert_arc(target.clone());
+            target.views.start_thread(&store);
+        }
+        (changed, first)
+    }) else {
+        return Ok(());
+    };
     if first {
         target
             .event(
@@ -382,12 +402,9 @@ pub async fn select_thread(
             )
             .await;
         target.event("start", Value::Null, Some(&lead)).await;
-        peering::start(&target.core, thread);
-    }
-    if changed {
-        target
-            .views
-            .presentation(&thread.to_string(), Some("resumed"));
+        if lead.owner == "lead" {
+            peering::start(&target.core, thread);
+        }
     }
     if changed && owns {
         target

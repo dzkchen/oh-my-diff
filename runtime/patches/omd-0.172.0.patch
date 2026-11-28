@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b3dcc3f1d 100644
+index b751234a9706ffe45aff2f4d3e1cf32c041141ef..f223def4315f4bbfba724bcae4836e1805fba2ad 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -472,6 +472,17 @@ version = "1.5.0"
@@ -233,16 +233,17 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
   "sqlx",
   "sqlx-macros",
   "tempfile",
-@@ -5278,6 +5418,8 @@ dependencies = [
+@@ -5278,6 +5418,9 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
 + "codex-network-proxy",
 + "codex-omd",
++ "codex-omd-extension",
   "codex-otel",
   "codex-plugin",
   "codex-prompts",
-@@ -5303,6 +5445,7 @@ dependencies = [
+@@ -5303,6 +5446,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -250,7 +251,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
   "codex-utils-sandbox-summary",
   "codex-utils-sleep-inhibitor",
   "codex-utils-string",
-@@ -5967,6 +6110,19 @@ dependencies = [
+@@ -5967,6 +6111,19 @@ dependencies = [
   "memchr",
  ]
 
@@ -270,7 +271,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "compact_str"
  version = "0.9.1"
-@@ -7227,6 +7383,12 @@ version = "1.2.1"
+@@ -7227,6 +7384,12 @@ version = "1.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
@@ -283,7 +284,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "dtor"
  version = "0.1.1"
-@@ -7883,6 +8045,16 @@ dependencies = [
+@@ -7883,6 +8046,16 @@ dependencies = [
   "percent-encoding",
  ]
 
@@ -300,7 +301,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "fs_extra"
  version = "1.3.0"
-@@ -7908,6 +8080,12 @@ dependencies = [
+@@ -7908,6 +8081,12 @@ dependencies = [
   "winapi",
  ]
 
@@ -313,7 +314,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "futures"
  version = "0.3.34"
-@@ -9083,6 +9261,10 @@ name = "hashbrown"
+@@ -9083,6 +9262,10 @@ name = "hashbrown"
  version = "0.14.5"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
@@ -324,7 +325,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
 
  [[package]]
  name = "hashbrown"
-@@ -9332,6 +9514,20 @@ dependencies = [
+@@ -9332,6 +9515,20 @@ dependencies = [
   "zeroize",
  ]
 
@@ -345,7 +346,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "http"
  version = "0.2.12"
-@@ -9810,6 +10006,12 @@ dependencies = [
+@@ -9810,6 +10007,12 @@ dependencies = [
   "icu_properties",
  ]
 
@@ -358,7 +359,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "ignore"
  version = "0.4.30"
-@@ -10040,6 +10242,18 @@ dependencies = [
+@@ -10040,6 +10243,18 @@ dependencies = [
   "serde",
  ]
 
@@ -377,7 +378,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "is-terminal"
  version = "0.4.17"
-@@ -10914,6 +11128,12 @@ dependencies = [
+@@ -10914,6 +11129,12 @@ dependencies = [
   "jni-sys 0.3.1",
  ]
 
@@ -390,7 +391,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "nibble_vec"
  version = "0.1.0"
-@@ -11881,6 +12101,15 @@ dependencies = [
+@@ -11881,6 +12102,15 @@ dependencies = [
   "syn 2.0.117",
  ]
 
@@ -406,7 +407,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "parking"
  version = "2.2.1"
-@@ -12084,7 +12313,7 @@ version = "0.11.3"
+@@ -12084,7 +12314,7 @@ version = "0.11.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
  dependencies = [
@@ -415,7 +416,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  ]
 
  [[package]]
-@@ -12690,7 +12919,7 @@ dependencies = [
+@@ -12690,7 +12920,7 @@ dependencies = [
   "once_cell",
   "socket2 0.6.3",
   "tracing",
@@ -424,7 +425,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  ]
 
  [[package]]
-@@ -12703,7 +12932,7 @@ dependencies = [
+@@ -12703,7 +12933,7 @@ dependencies = [
   "libc",
   "log",
   "socket2 0.6.3",
@@ -433,7 +434,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  ]
 
  [[package]]
-@@ -12727,6 +12956,12 @@ version = "6.0.0"
+@@ -12727,6 +12957,12 @@ version = "6.0.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
@@ -446,7 +447,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "radix_trie"
  version = "0.2.1"
-@@ -13193,7 +13428,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -13193,7 +13429,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "cbb175c433c8e28a809d1f5773a2ae96e68c0ce40db865cbab1020bf33ae479c"
  dependencies = [
   "bitflags 2.13.1",
@@ -455,7 +456,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
   "critical-section",
   "hashbrown 0.17.1",
   "itertools 0.14.0",
-@@ -14447,6 +14682,12 @@ dependencies = [
+@@ -14447,6 +14683,12 @@ dependencies = [
   "uuid",
  ]
 
@@ -468,7 +469,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "sequence_trie"
  version = "0.3.6"
-@@ -14833,6 +15074,12 @@ dependencies = [
+@@ -14833,6 +15075,12 @@ dependencies = [
   "time",
  ]
 
@@ -481,7 +482,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "siphasher"
  version = "1.0.3"
-@@ -15368,6 +15615,17 @@ version = "0.1.9"
+@@ -15368,6 +15616,17 @@ version = "0.1.9"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
@@ -499,7 +500,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "stringprep"
  version = "0.1.5"
-@@ -15487,6 +15745,335 @@ dependencies = [
+@@ -15487,6 +15746,335 @@ dependencies = [
   "is_ci",
  ]
 
@@ -835,7 +836,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "symphonia"
  version = "0.6.0"
-@@ -15728,11 +16315,17 @@ version = "0.2.2"
+@@ -15728,11 +16316,17 @@ version = "0.2.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
@@ -855,7 +856,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  dependencies = [
   "filetime",
   "libc",
-@@ -15887,7 +16480,7 @@ dependencies = [
+@@ -15887,7 +16481,7 @@ dependencies = [
   "phf",
   "sha2 0.10.9",
   "signal-hook",
@@ -864,7 +865,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
   "terminfo",
   "termios",
   "thiserror 1.0.69",
-@@ -16864,6 +17457,12 @@ version = "1.1.0"
+@@ -16864,6 +17458,12 @@ version = "1.1.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
@@ -877,7 +878,7 @@ index b751234a9706ffe45aff2f4d3e1cf32c041141ef..a1cee859d27399b8d9bc2b6eaa119d9b
  [[package]]
  name = "unicode-ident"
  version = "1.0.22"
-@@ -18241,6 +18840,15 @@ version = "0.6.2"
+@@ -18241,6 +18841,15 @@ version = "0.6.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
@@ -39638,7 +39639,7 @@ index 19b53badd523d73b25eade7aff58009764f1ad4b..ebd2a419175cc1c22d7c5019b1d1ea02
      }
  }
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index 2172f6389b7b60ea12616a5174c47e047eb2b8d2..0b049f5a5445203582e61cabba4ea9d2ece4ec2d 100644
+index 2172f6389b7b60ea12616a5174c47e047eb2b8d2..d409ead4e4cec0166d361c0fd5f8c07e6993f61e 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
 @@ -650,6 +650,9 @@ pub struct ThreadSettingsOverrides {
@@ -39679,6 +39680,15 @@ index 2172f6389b7b60ea12616a5174c47e047eb2b8d2..0b049f5a5445203582e61cabba4ea9d2
  }
 
  #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema, TS)]
+@@ -3268,6 +3278,8 @@ pub enum ThreadSource {
+     MemoryConsolidation,
+ }
+
++pub const ATTACHED_SIDE_CHAT_SOURCE: &str = "tui_side_chat";
++
+ impl ThreadSource {
+     pub fn as_str(&self) -> &str {
+         match self {
 diff --git a/codex-rs/protocol/src/shell_environment.rs b/codex-rs/protocol/src/shell_environment.rs
 index 833800cc8e4e129d252d4223d189fb015b1d0037..f68eaa40dd6e77a97893971a8d111bd813c856f9 100644
 --- a/codex-rs/protocol/src/shell_environment.rs
@@ -40178,7 +40188,7 @@ index ef98de57e88a5e797a744419580786d0167356e2..08e006ae8e7a9b181652c3fbb5b3ee52
  #[derive(Debug)]
  pub struct PreparedFork {
 diff --git a/codex-rs/tui/Cargo.toml b/codex-rs/tui/Cargo.toml
-index 79ae4afa11eb95d6cc859721b63bd80989d2f37e..55f9f4f4e95a0c758d0bba0d24370aa602471d17 100644
+index 79ae4afa11eb95d6cc859721b63bd80989d2f37e..b2738721eeff4ec99d9c5fff3589a6bd0646a5b7 100644
 --- a/codex-rs/tui/Cargo.toml
 +++ b/codex-rs/tui/Cargo.toml
 @@ -22,6 +22,8 @@ doctest = false
@@ -40190,16 +40200,17 @@ index 79ae4afa11eb95d6cc859721b63bd80989d2f37e..55f9f4f4e95a0c758d0bba0d24370aa6
  codex-build-info = { workspace = true }
  anyhow = { workspace = true }
  axum = { workspace = true, default-features = false, features = ["http1", "tokio"] }
-@@ -55,6 +57,8 @@ codex-message-history = { workspace = true }
+@@ -55,6 +57,9 @@ codex-message-history = { workspace = true }
  codex-model-provider = { workspace = true }
  codex-model-provider-info = { workspace = true }
  codex-models-manager = { workspace = true }
 +codex-network-proxy = { workspace = true }
 +codex-omd = { workspace = true }
++codex-omd-extension = { workspace = true }
  codex-otel = { workspace = true }
  codex-plugin = { workspace = true }
  codex-protocol = { workspace = true }
-@@ -198,6 +202,5 @@ rand = { workspace = true }
+@@ -198,6 +203,5 @@ rand = { workspace = true }
  serial_test = { workspace = true }
  tokio-tungstenite = { workspace = true }
  ts-rs = { workspace = true }
@@ -43566,7 +43577,7 @@ index 81a17a64595f721725532ae06e73317a8aecf559..16e2a9efb1dd5346b297cf7121105335
          let mut cell_displays = VecDeque::new();
          let mut rendered_rows = 0usize;
 diff --git a/codex-rs/tui/src/app/session_lifecycle.rs b/codex-rs/tui/src/app/session_lifecycle.rs
-index f3c97095804cb76400e8f5672816eeb208440321..a73c0e5ad331394b65597ed7cdce99828aa23d47 100644
+index f3c97095804cb76400e8f5672816eeb208440321..d5c5f246948939b1707c80530847481307ce1928 100644
 --- a/codex-rs/tui/src/app/session_lifecycle.rs
 +++ b/codex-rs/tui/src/app/session_lifecycle.rs
 @@ -678,6 +678,9 @@ impl App {
@@ -43579,7 +43590,17 @@ index f3c97095804cb76400e8f5672816eeb208440321..a73c0e5ad331394b65597ed7cdce9982
          if previous.realtime_conversation_is_running() {
              previous.park_voice();
              self.background_voice = Some(Box::new(previous));
-@@ -1085,6 +1088,41 @@ impl App {
+@@ -903,6 +906,9 @@ impl App {
+
+         self.active_thread_id = Some(thread_id);
+         self.active_thread_rx = Some(receiver);
++        if !is_replay_only {
++            app_server.select_local_mod_thread(thread_id).await;
++        }
+
+         self.recap.note_focus_gained();
+         self.recap = recap::RecapState::default();
+@@ -1085,6 +1091,41 @@ impl App {
          Ok(())
      }
 
@@ -43621,7 +43642,7 @@ index f3c97095804cb76400e8f5672816eeb208440321..a73c0e5ad331394b65597ed7cdce9982
      pub(super) fn should_attach_live_thread_for_selection(&self, thread_id: ThreadId) -> bool {
          self.agent_navigation
              .get(&thread_id)
-@@ -1241,6 +1279,7 @@ impl App {
+@@ -1241,6 +1282,7 @@ impl App {
                          server_request_thread_id(request) == Some(thread_id)
                      }
                      ThreadBufferedEvent::HistoryEntryResponse(_)
@@ -43629,7 +43650,7 @@ index f3c97095804cb76400e8f5672816eeb208440321..a73c0e5ad331394b65597ed7cdce9982
                      | ThreadBufferedEvent::FeedbackSubmission(_) => true,
                  });
                  let previous_pending = std::mem::take(&mut self.pending_app_server_requests);
-@@ -1494,14 +1533,19 @@ impl App {
+@@ -1494,14 +1536,19 @@ impl App {
                  .map_err(|err| {
                      color_eyre::eyre::eyre!("Failed to read new session defaults: {err}")
                  })?;
@@ -43791,7 +43812,7 @@ index 8aa1bca71b37199ea5aa9956871c68de2b0c1dc5..ce17f9252c24f7611f2140c5aa3d6792
 
 
 diff --git a/codex-rs/tui/src/app/startup.rs b/codex-rs/tui/src/app/startup.rs
-index d1fb8e0ac127de5740b80182aca6e3b847d8d52f..ceb8b91c10e5b48ee26ac686b037131bd260cf1a 100644
+index d1fb8e0ac127de5740b80182aca6e3b847d8d52f..d4319d0a36eb2c7a7e8a3428a0868f2eb599ea23 100644
 --- a/codex-rs/tui/src/app/startup.rs
 +++ b/codex-rs/tui/src/app/startup.rs
 @@ -1014,7 +1014,7 @@ See the Codex keymap documentation for supported actions and examples."
@@ -43821,17 +43842,41 @@ index d1fb8e0ac127de5740b80182aca6e3b847d8d52f..ceb8b91c10e5b48ee26ac686b037131b
 
          #[cfg(not(debug_assertions))]
          let pre_loop_exit_reason = if let Some(latest_version) = upgrade_version {
-@@ -1392,6 +1394,9 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -1385,6 +1387,7 @@ See the Codex keymap documentation for supported actions and examples."
+         }
+         backends.settings = backend_settings;
+
++        let mut last_mod_thread = None;
+         let mut parked_side_completions = HashMap::<_, Vec<AppEvent>>::new();
+         let exit_reason_result = if let Some(exit_reason) = pre_loop_exit_reason {
+             Ok(exit_reason)
+@@ -1392,6 +1395,25 @@ See the Codex keymap documentation for supported actions and examples."
              loop {
                  let displayed_session = backends.displayed;
                  let displayed_owner = backends.displayed_owner();
-+                backends
-+                    .session_at(displayed_session)
-+                    .activate_terminal_owner();
++                let session = backends.session_at(displayed_session);
++                session.activate_terminal_owner();
++                let visible = app
++                    .active_thread_id
++                    .filter(|thread| {
++                        app.thread_event_channels
++                            .get(thread)
++                            .is_some_and(|channel| {
++                                channel.attachment() == ThreadEventAttachment::Live
++                                    && channel.backend_id.is_none_or(|id| id == displayed_owner)
++                            })
++                    })
++                    .map(|thread| (displayed_owner, thread));
++                if last_mod_thread != visible {
++                    last_mod_thread = visible;
++                    if let Some((_, thread)) = visible {
++                        session.select_local_mod_thread(thread).await;
++                    }
++                }
                  if let Some(events) = parked_side_completions.remove(&displayed_owner) {
                      for event in events {
                          app.app_event_tx.send(event);
-@@ -1893,6 +1898,10 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -1893,6 +1915,10 @@ See the Codex keymap documentation for supported actions and examples."
                  }
                  match control {
                      AppRunControl::Continue => {
@@ -43842,7 +43887,7 @@ index d1fb8e0ac127de5740b80182aca6e3b847d8d52f..ceb8b91c10e5b48ee26ac686b037131b
                          if app.reconnect.offline && !app.pending_startup_thread_start {
                              pending_startup_submission = false;
                              app.chat_widget.cancel_startup_submission();
-@@ -1937,6 +1946,7 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -1937,6 +1963,7 @@ See the Codex keymap documentation for supported actions and examples."
          if let Err(err) = backends.shutdown().await {
              tracing::warn!(error = %err, "failed to shut down embedded app server");
          }
@@ -46896,10 +46941,27 @@ index e49a439619cd95732ebb72b78009ce1f22c8ab0f..1af55418eae6b949337c44ec5c14f01c
          copy_source: Option<String>,
          cwd: PathBuf,
 diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
-index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614ecb28f7b 100644
+index a470453286f58b91078dbc892f65d108d2dcfc91..beaf2afabdc2e3b57d859f174ff2b3efa0216ef3 100644
 --- a/codex-rs/tui/src/app_server_session.rs
 +++ b/codex-rs/tui/src/app_server_session.rs
-@@ -395,6 +395,8 @@ pub(crate) struct AttachmentMetadata {
+@@ -164,6 +164,7 @@ use codex_protocol::openai_models::ModelUpgrade;
+ use codex_protocol::openai_models::ReasoningEffortPreset;
+ use codex_protocol::permissions::FileSystemSandboxPolicy;
+ use codex_protocol::permissions::NetworkSandboxPolicy;
++pub(crate) use codex_protocol::protocol::ATTACHED_SIDE_CHAT_SOURCE;
+ use codex_protocol::protocol::SubAgentSource;
+ use codex_utils_absolute_path::AbsolutePathBuf;
+ use codex_utils_path_uri::LegacyAppPathString;
+@@ -216,8 +217,6 @@ enum ForkPresentation {
+     SideConversation(SideChatStorage),
+ }
+
+-pub(crate) const ATTACHED_SIDE_CHAT_SOURCE: &str = "tui_side_chat";
+-
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ pub(crate) enum SideChatStorage {
+     Temporary,
+@@ -395,6 +394,8 @@ pub(crate) struct AttachmentMetadata {
  }
 
  pub(crate) struct AppServerSession {
@@ -46908,7 +46970,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      backend_id: crate::backend_id::BackendId,
      /// Owns events and the connection lifetime for live sessions. Request-only views share the
      /// request handle below and have no connection owner.
-@@ -663,6 +665,8 @@ impl AppServerSession {
+@@ -663,6 +664,8 @@ impl AppServerSession {
          thread_params_mode: ThreadParamsMode,
      ) -> Self {
          Self {
@@ -46917,7 +46979,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
              backend_id,
              connection_owner,
              request_handle,
-@@ -747,6 +751,98 @@ impl AppServerSession {
+@@ -747,6 +750,114 @@ impl AppServerSession {
          }
      }
 
@@ -46991,6 +47053,22 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
 +        Ok(())
 +    }
 +
++    pub(crate) async fn select_local_mod_thread(&self, thread: ThreadId) {
++        if matches!(&self.connection_owner, Some(AppServerClient::InProcess(_)))
++            && let Some(owner) = self
++                .terminal_token
++                .as_deref()
++                .and_then(|token| token.parse().ok())
++            && let Err(error) = codex_omd_extension::clients::select_displayed_thread(
++                codex_protocol::turn_input::TerminalOwner(owner),
++                &thread.to_string(),
++            )
++            .await
++        {
++            tracing::warn!(%thread, %error, "failed to select terminal mod thread");
++        }
++    }
++
 +    pub(crate) fn activate_terminal_owner(&self) {
 +        static ACTIVE: std::sync::Mutex<
 +            Option<(crate::backend_id::BackendId, String, uuid::Uuid)>,
@@ -47016,7 +47094,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      pub(crate) fn backend_id(&self) -> crate::backend_id::BackendId {
          self.backend_id
      }
-@@ -769,6 +865,13 @@ impl AppServerSession {
+@@ -769,6 +880,13 @@ impl AppServerSession {
          view
      }
 
@@ -47030,7 +47108,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      pub(crate) async fn start_dynamic_tool_mcp(
          &mut self,
          config: Config,
-@@ -996,6 +1099,7 @@ impl AppServerSession {
+@@ -996,6 +1114,7 @@ impl AppServerSession {
          account: GetAccountResponse,
          fallback: EmptyCatalogFallback,
      ) -> Result<AppServerBootstrap> {
@@ -47038,7 +47116,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
          let started_at = Instant::now();
          let models = match self.prefetched_model_list.take() {
              Some(models) => Either::Left(models),
-@@ -1151,10 +1255,12 @@ impl AppServerSession {
+@@ -1151,10 +1270,12 @@ impl AppServerSession {
              /*remote_cwd_override*/ None,
              /*selected_profile*/ None,
              /*host_project_cwd*/ None,
@@ -47051,7 +47129,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      pub(crate) async fn start_thread_with_session_start_source(
          &mut self,
          local_settings: &LocalSettings,
-@@ -1163,14 +1269,16 @@ impl AppServerSession {
+@@ -1163,14 +1284,16 @@ impl AppServerSession {
          remote_cwd_override: Option<&std::path::Path>,
          selected_profile: Option<&PermissionProfileSelection>,
          host_project_cwd: Option<&std::path::Path>,
@@ -47069,7 +47147,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
          )
          .await
      }
-@@ -1183,6 +1291,29 @@ impl AppServerSession {
+@@ -1183,6 +1306,29 @@ impl AppServerSession {
          remote_cwd_override: Option<&std::path::Path>,
          selected_profile: Option<&PermissionProfileSelection>,
          cloud_start: CloudThreadStart<'_>,
@@ -47099,7 +47177,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      ) -> Result<AppServerStartedThread> {
          if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Server
              && selected_profile.is_some()
-@@ -1200,12 +1331,18 @@ impl AppServerSession {
+@@ -1200,12 +1346,18 @@ impl AppServerSession {
              session_start_source,
          );
          if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
@@ -47121,7 +47199,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
          }
          if let Some(selected_profile) = selected_profile {
              params.runtime_workspace_roots = None;
-@@ -2394,6 +2531,22 @@ impl AppServerSession {
+@@ -2394,6 +2546,22 @@ impl AppServerSession {
          client.resolve_server_request(request_id, result).await
      }
 
@@ -47144,7 +47222,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      pub(crate) async fn shutdown(mut self) -> std::io::Result<()> {
          self.task_search.cancel();
          match self.connection_owner {
-@@ -2558,6 +2711,8 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
+@@ -2558,6 +2726,8 @@ pub(crate) fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
          // `model/list` already returns models filtered for the active client/auth context.
          supported_in_api: true,
          input_modalities: model.input_modalities,
@@ -47153,7 +47231,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      }
  }
 
-@@ -3060,6 +3215,10 @@ async fn started_thread_from_start_response(
+@@ -3060,6 +3230,10 @@ async fn started_thread_from_start_response(
      thread_params_mode: ThreadParamsMode,
      cwd: PathUri,
  ) -> Result<AppServerStartedThread> {
@@ -47164,7 +47242,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session = thread_session_state_from_thread_start_response(
          &response,
-@@ -3083,6 +3242,10 @@ async fn started_thread_from_resume_response(
+@@ -3083,6 +3257,10 @@ async fn started_thread_from_resume_response(
      local_settings: &LocalSettings,
      cwd_convention: Option<PathConvention>,
  ) -> Result<AppServerStartedThread> {
@@ -47175,7 +47253,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session =
          thread_session_state_from_thread_resume_response(&response, local_settings, cwd_convention)
-@@ -3103,6 +3266,10 @@ async fn started_thread_from_fork_response(
+@@ -3103,6 +3281,10 @@ async fn started_thread_from_fork_response(
      thread_params_mode: ThreadParamsMode,
      cwd: PathUri,
  ) -> Result<AppServerStartedThread> {
@@ -47186,7 +47264,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
      let blocks_direct_input = thread_blocks_direct_input(&response.thread);
      let session = thread_session_state_from_thread_fork_response(
          &response,
-@@ -3675,6 +3842,7 @@ mod tests {
+@@ -3675,6 +3857,7 @@ mod tests {
              spend_control_reached: None,
              plan_type: None,
              rate_limit_reached_type: None,
@@ -47194,7 +47272,7 @@ index a470453286f58b91078dbc892f65d108d2dcfc91..6634b28a324a2a314a1ab2a9cf1e0614
          }
      }
 
-@@ -3694,6 +3862,8 @@ mod tests {
+@@ -3694,6 +3877,8 @@ mod tests {
              display_name: "Current model".to_string(),
              description: "A test model".to_string(),
              model_specialty: None,
@@ -77339,10 +77417,10 @@ index 0000000000000000000000000000000000000000..371555c73dc29a4fc2a5d6b7fd2a5399
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9c553af8c10138b85f78e3d5e5978781269a76b5
+index 0000000000000000000000000000000000000000..5c6f91c2b2fadc4fe8136b986bd8fd6b5db8db67
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,1543 @@
+@@ -0,0 +1,1560 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -77679,6 +77757,21 @@ index 0000000000000000000000000000000000000000..9c553af8c10138b85f78e3d5e5978781
 +    owner: codex_protocol::turn_input::TerminalOwner,
 +    thread: &str,
 +) -> Result<(), String> {
++    select_thread_for(owner, thread, false).await
++}
++
++pub async fn select_displayed_thread(
++    owner: codex_protocol::turn_input::TerminalOwner,
++    thread: &str,
++) -> Result<(), String> {
++    select_thread_for(owner, thread, true).await
++}
++
++async fn select_thread_for(
++    owner: codex_protocol::turn_input::TerminalOwner,
++    thread: &str,
++    displayed: bool,
++) -> Result<(), String> {
 +    let Ok(base) = core() else {
 +        return Ok(());
 +    };
@@ -77696,28 +77789,33 @@ index 0000000000000000000000000000000000000000..9c553af8c10138b85f78e3d5e5978781
 +        .ok_or("session_unavailable")?;
 +    let target = ensure_owner(&owner)?;
 +    let owns = target.expansion.thread(thread).is_some();
-+    let changed = target
-+        .expansion
-+        .current()
-+        .is_none_or(|current| current.thread != thread);
-+    let first = owns
-+        && target
-+            .initialized_threads
-+            .lock()
-+            .map_err(|_| "terminal_owner_poisoned")?
-+            .insert(thread.to_string());
-+    target.expansion.select_thread(&target.core, &lead);
++    target.expansion.prepare_thread(&target.core, &lead);
 +    target
 +        .sessions
 +        .lock()
 +        .map_err(|_| "terminal_owner_poisoned")?
 +        .insert(thread.to_string(), Arc::downgrade(&lead.session));
-+    if changed || first {
-+        let store = ExtensionData::new(thread.to_string());
-+        store.insert(lead.clone());
-+        store.insert_arc(target.clone());
-+        target.views.start_thread(&store);
-+    }
++    let Some((changed, first)) = target.expansion.focus(&lead, displayed, |changed| {
++        let first = owns
++            && target
++                .initialized_threads
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner)
++                .insert(thread.to_string());
++        if changed {
++            target
++                .views
++                .presentation(&thread.to_string(), Some("resumed"));
++        } else if first {
++            let store = ExtensionData::new(thread.to_string());
++            store.insert(lead.clone());
++            store.insert_arc(target.clone());
++            target.views.start_thread(&store);
++        }
++        (changed, first)
++    }) else {
++        return Ok(());
++    };
 +    if first {
 +        target
 +            .event(
@@ -77727,12 +77825,9 @@ index 0000000000000000000000000000000000000000..9c553af8c10138b85f78e3d5e5978781
 +            )
 +            .await;
 +        target.event("start", Value::Null, Some(&lead)).await;
-+        peering::start(&target.core, thread);
-+    }
-+    if changed {
-+        target
-+            .views
-+            .presentation(&thread.to_string(), Some("resumed"));
++        if lead.owner == "lead" {
++            peering::start(&target.core, thread);
++        }
 +    }
 +    if changed && owns {
 +        target
@@ -82208,10 +82303,10 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c620c453bf19feabe7552742a1c5f3f68682db65
+index 0000000000000000000000000000000000000000..a5aaa237ec566a42a980bbbdc30eb405ed827d40
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,889 @@
+@@ -0,0 +1,897 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -82261,8 +82356,10 @@ index 0000000000000000000000000000000000000000..c620c453bf19feabe7552742a1c5f3f6
 +use codex_omd::fsio::write_bytes;
 +use codex_protocol::ThreadId;
 +use codex_protocol::models::ResponseItem;
++use codex_protocol::protocol::ATTACHED_SIDE_CHAT_SOURCE;
 +use codex_protocol::protocol::SessionSource;
 +use codex_protocol::protocol::SubAgentSource;
++use codex_protocol::protocol::ThreadSource;
 +use codex_tools::FunctionCallError;
 +use codex_tools::JsonSchema;
 +use codex_tools::ResponsesApiTool;
@@ -82965,16 +83062,22 @@ index 0000000000000000000000000000000000000000..c620c453bf19feabe7552742a1c5f3f6
 +            )
 +        }),
 +        SessionSource::Internal(_) | SessionSource::SubAgent(_) => None,
-+        _ if input
-+            .thread_store
-+            .get::<codex_protocol::protocol::ThreadSource>()
-+            .is_some_and(|source| {
-+                !matches!(*source, codex_protocol::protocol::ThreadSource::User)
-+            }) =>
-+        {
-+            None
++        _ => {
++            let source = input.thread_store.get::<ThreadSource>();
++            let user_chat = match source.as_deref() {
++                None | Some(ThreadSource::User) => true,
++                Some(ThreadSource::Feature(feature)) => {
++                    feature == ATTACHED_SIDE_CHAT_SOURCE
++                        && matches!(input.session_source, SessionSource::Cli)
++                        && input
++                            .thread_store
++                            .get::<codex_extension_api::ForkedFromThread>()
++                            .is_some()
++                }
++                _ => false,
++            };
++            user_chat.then(|| ("lead".into(), 0))
 +        }
-+        _ => Some(("lead".into(), 0)),
 +    }
 +}
 +
@@ -85862,10 +85965,10 @@ index 0000000000000000000000000000000000000000..6b0a5752af6c305a0d217e207e121538
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bcc9bb1b0d4306e040bcf0a7c31c0107c202b2b4
+index 0000000000000000000000000000000000000000..902302f688bdae5773d4e6751ebd90456de21f6d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,3106 @@
+@@ -0,0 +1,3110 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -86518,6 +86621,13 @@ index 0000000000000000000000000000000000000000..bcc9bb1b0d4306e040bcf0a7c31c0107
 +        "presentation": codex_omd::client_surface::presented(views.current_presentation()),
 +        "client": clients::client_facts(terminal_owner),
 +        "clients": codex_omd::client_surface::clients()});
++    if terminal_owner.is_some()
++        && input["ledger"]["thread_id"].is_string()
++        && input["presentation"]["thread_id"].is_string()
++        && input["ledger"]["thread_id"] != input["presentation"]["thread_id"]
++    {
++        return;
++    }
 +    let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
 +    let rendered_ms = codex_omd::peers::now_ms();
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
@@ -87692,12 +87802,7 @@ index 0000000000000000000000000000000000000000..bcc9bb1b0d4306e040bcf0a7c31c0107
 +                return UserInputDecision::Keep;
 +            };
 +            this.expansion.thread_started(&lead);
-+            if this
-+                .expansion
-+                .current()
-+                .as_ref()
-+                .is_none_or(|current| current.thread != lead.thread)
-+            {
++            if this.expansion.focus(&lead, false, |changed| changed) == Some(true) {
 +                expansion::lead_started(&this.core, &lead, None);
 +            }
 +            let runtime = this.input_runtime.clone();
@@ -87993,16 +88098,14 @@ index 0000000000000000000000000000000000000000..bcc9bb1b0d4306e040bcf0a7c31c0107
 +                return;
 +            }
 +            this.expansion.thread_started(&lead);
-+            if this
-+                .expansion
-+                .current()
-+                .as_ref()
-+                .is_none_or(|current| current.thread != lead.thread)
++            if this.expansion.focus(&lead, false, |changed| {
++                this.views
++                    .presentation(&lead.thread.to_string(), Some("started"));
++                changed
++            }) == Some(true)
 +            {
 +                expansion::lead_started(&this.core, &lead, None);
 +            }
-+            this.views
-+                .presentation(&lead.thread.to_string(), Some("started"));
 +            // Batches settle within their turn; calls an aborted turn left behind are dropped here.
 +            if let Ok(mut settled) = this.settled.lock() {
 +                let thread = lead.thread.to_string();
@@ -88288,7 +88391,9 @@ index 0000000000000000000000000000000000000000..bcc9bb1b0d4306e040bcf0a7c31c0107
 +            }
 +            if owner == "lead" {
 +                if let Some(lead) = input.thread_store.get::<Lead>() {
-+                    this.views.start_thread(input.thread_store);
++                    this.expansion.focus(&lead, false, |_| {
++                        this.views.start_thread(input.thread_store);
++                    });
 +                    let forked = input
 +                        .thread_store
 +                        .get::<codex_extension_api::ForkedFromThread>()
@@ -88339,8 +88444,10 @@ index 0000000000000000000000000000000000000000..bcc9bb1b0d4306e040bcf0a7c31c0107
 +                .get::<Lead>()
 +                .filter(|lead| lead.owner == "lead")
 +            {
-+                this.views
-+                    .presentation(&lead.thread.to_string(), Some("resumed"));
++                this.expansion.focus(&lead, false, |_| {
++                    this.views
++                        .presentation(&lead.thread.to_string(), Some("resumed"));
++                });
 +                this.event(
 +                    "session",
 +                    json!({"phase":"resume","thread_id":lead.thread.to_string()}),
@@ -94111,10 +94218,10 @@ index 0000000000000000000000000000000000000000..508769308ff445e5868bbc76aed7e69a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcda04dd67e
+index 0000000000000000000000000000000000000000..41e7d6510b2d16537598e735f2a6cb6bcde0e18b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,1001 @@
+@@ -0,0 +1,1022 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -94211,9 +94318,9 @@ index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcd
 +    inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
 +    tool_batch: AtomicBool,
 +    gates: Mutex<std::collections::VecDeque<(String, Option<String>)>>,
-+    current: Mutex<Option<LeadHandle>>,
++    current: Mutex<Option<CurrentLead>>,
 +    leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
-+    threads: Mutex<std::collections::HashMap<ThreadId, (LeadHandle, String, u32)>>,
++    threads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
 +    commands: Mutex<std::collections::HashSet<String>>,
 +    running: Mutex<BTreeMap<String, String>>,
 +    pub(super) turns: Mutex<BTreeMap<String, u64>>,
@@ -94272,7 +94379,14 @@ index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcd
 +    host: Arc<Host>,
 +    session: std::sync::Weak<Session>,
 +    thread: ThreadId,
++    owner: String,
++    depth: u32,
 +    permission_profile: Arc<Mutex<PermissionProfile>>,
++}
++
++struct CurrentLead {
++    lead: LeadHandle,
++    displayed: bool,
 +}
 +
 +impl LeadHandle {
@@ -94281,6 +94395,8 @@ index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcd
 +            host: lead.host.clone(),
 +            session: Arc::downgrade(&lead.session),
 +            thread: lead.thread,
++            owner: lead.owner.clone(),
++            depth: lead.depth,
 +            permission_profile: lead.permission_profile.clone(),
 +        }
 +    }
@@ -94290,8 +94406,8 @@ index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcd
 +            host: self.host.clone(),
 +            session: self.session.upgrade()?,
 +            thread: self.thread,
-+            owner: "lead".into(),
-+            depth: 0,
++            owner: self.owner.clone(),
++            depth: self.depth,
 +            permission_profile: self.permission_profile.clone(),
 +        })
 +    }
@@ -94310,7 +94426,32 @@ index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcd
 +            .lock()
 +            .ok()?
 +            .as_ref()
-+            .and_then(LeadHandle::upgrade)
++            .and_then(|current| current.lead.upgrade())
++    }
++
++    pub(super) fn focus<R>(
++        &self,
++        lead: &Lead,
++        displayed: bool,
++        update: impl FnOnce(bool) -> R,
++    ) -> Option<R> {
++        let mut current = self
++            .current
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let previous = current
++            .as_ref()
++            .filter(|previous| previous.lead.session.strong_count() > 0);
++        let changed = previous.is_none_or(|previous| previous.lead.thread != lead.thread);
++        let pinned = previous.is_some_and(|previous| previous.displayed);
++        if pinned && changed && !displayed {
++            return None;
++        }
++        *current = Some(CurrentLead {
++            lead: LeadHandle::new(lead),
++            displayed: pinned || displayed,
++        });
++        Some(update(changed))
 +    }
 +
 +    pub(super) fn turn_running(&self, thread: ThreadId) -> bool {
@@ -94324,25 +94465,15 @@ index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcd
 +    }
 +
 +    pub(super) fn thread(&self, thread: ThreadId) -> Option<Lead> {
-+        let threads = self.threads.lock().ok()?;
-+        let (handle, owner, depth) = threads.get(&thread)?;
-+        Some(Lead {
-+            owner: owner.clone(),
-+            depth: *depth,
-+            ..handle.upgrade()?
-+        })
++        self.threads.lock().ok()?.get(&thread)?.upgrade()
 +    }
 +
-+    pub(super) fn select_thread(&self, core: &Arc<Core>, lead: &Lead) {
++    pub(super) fn prepare_thread(&self, core: &Arc<Core>, lead: &Lead) {
 +        let _ = self.core.set(Arc::downgrade(core));
 +        if let Ok(runtime) = core.runtime.try_lock() {
 +            self.refresh(&runtime);
 +        }
 +        delivery::ensure_delivery(core);
-+        *self
-+            .current
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(LeadHandle::new(lead));
 +        self.leads
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -94351,11 +94482,8 @@ index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcd
 +
 +    pub(super) fn thread_started(&self, lead: &Lead) {
 +        if let Ok(mut threads) = self.threads.lock() {
-+            threads.retain(|_, (handle, ..)| handle.session.strong_count() > 0);
-+            threads.insert(
-+                lead.thread,
-+                (LeadHandle::new(lead), lead.owner.clone(), lead.depth),
-+            );
++            threads.retain(|_, handle| handle.session.strong_count() > 0);
++            threads.insert(lead.thread, LeadHandle::new(lead));
 +        }
 +    }
 +
@@ -95118,10 +95246,10 @@ index 0000000000000000000000000000000000000000..1cf60918d484edd98335165c768fcbcd
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/mods/expansion/activity.rs b/codex-rs/ext/omd/src/mods/expansion/activity.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c6a9dc91706e794f6050b070a04f4ebe1599c16a
+index 0000000000000000000000000000000000000000..52c55f1530a7eb05ddb2abeedb34576e7cedf714
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/activity.rs
-@@ -0,0 +1,377 @@
+@@ -0,0 +1,375 @@
 +use super::*;
 +use codex_omd::turn_activity::ActivityRecord;
 +use codex_omd::turn_activity::TurnActivityLog;
@@ -95189,9 +95317,7 @@ index 0000000000000000000000000000000000000000..c6a9dc91706e794f6050b070a04f4ebe
 +    if let Ok(mut running) = core.expansion.running.lock() {
 +        running.insert(thread, turn_id.to_owned());
 +    }
-+    if let Ok(mut current) = core.expansion.current.lock() {
-+        *current = Some(LeadHandle::new(lead));
-+    }
++
 +    record(core, lead, |turn| ActivityRecord::TurnStarted {
 +        turn_id: turn.to_owned(),
 +        at: now(),
@@ -95842,10 +95968,10 @@ index 0000000000000000000000000000000000000000..33db0b2d8d4e519dc7609f7fa0e83381
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fc6cc1eaa6a8a9d4a81bf33eac837121e3fb7a62
+index 0000000000000000000000000000000000000000..5dd6b5e222439441dbea39c31c20580842d3e9cb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,769 @@
+@@ -0,0 +1,767 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -95959,9 +96085,7 @@ index 0000000000000000000000000000000000000000..fc6cc1eaa6a8a9d4a81bf33eac837121
 +        let seen = restarted.contains_key(&thread);
 +        restarted.insert(thread.clone(), !seen);
 +    }
-+    if let Ok(mut current) = state.current.lock() {
-+        *current = Some(LeadHandle::new(lead));
-+    }
++    state.focus(lead, false, |_| ());
 +    if let Ok(mut leads) = state.leads.lock() {
 +        leads.retain(|_, handle| handle.session.strong_count() > 0);
 +        leads.insert(lead.thread, LeadHandle::new(lead));
@@ -97338,10 +97462,10 @@ index 0000000000000000000000000000000000000000..708e3e710b8c9b6974f4c32640ca2c49
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..272f07f7830a0c462277d4b55f00aadc67f870e3
+index 0000000000000000000000000000000000000000..f62dc6206cbb6a110f3a4d2d82db3684c39fbb8f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,7386 @@
+@@ -0,0 +1,7671 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -98701,7 +98825,7 @@ index 0000000000000000000000000000000000000000..272f07f7830a0c462277d4b55f00aadc
 +        }
 +    );
 +    assert_eq!(invoker.0.lock().unwrap()[2].0, "mod-probe-0");
-+    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
++    fixture.core.expansion.focus(&fixture.lead, false, |_| ());
 +    delivery::publish(
 +        &fixture.core,
 +        &fixture.lead,
@@ -99137,7 +99261,7 @@ index 0000000000000000000000000000000000000000..272f07f7830a0c462277d4b55f00aadc
 +        return;
 +    };
 +    let core = &fixture.core;
-+    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
++    core.expansion.focus(&fixture.lead, false, |_| ());
 +    assert!(!delivery::deliver(core).await);
 +    for data in [json!(1), json!({"n": 2})] {
 +        let delivered = delivery::publish(
@@ -99590,7 +99714,7 @@ index 0000000000000000000000000000000000000000..272f07f7830a0c462277d4b55f00aadc
 +        })
 +        .await;
 +    }
-+    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
++    fixture.core.expansion.focus(&fixture.lead, false, |_| ());
 +    delivery::deliver(&fixture.core).await;
 +    assert_eq!(
 +        command(&fixture.core, "auditor", "log"),
@@ -102766,7 +102890,7 @@ index 0000000000000000000000000000000000000000..272f07f7830a0c462277d4b55f00aadc
 +    assert!(settings_change(&view("/r", json!([]), "a"), &view("/r", json!([]), "a")).is_none());
 +
 +    let core = &fixture.core;
-+    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
++    core.expansion.focus(&fixture.lead, false, |_| ());
 +    expansion::worktree(
 +        &core.expansion,
 +        "created",
@@ -102800,7 +102924,7 @@ index 0000000000000000000000000000000000000000..272f07f7830a0c462277d4b55f00aadc
 +        return;
 +    };
 +    let core = &fixture.core;
-+    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
++    core.expansion.focus(&fixture.lead, false, |_| ());
 +    {
 +        let runtime = core.runtime.lock().unwrap();
 +        core.expansion.refresh(&runtime);
@@ -103274,6 +103398,291 @@ index 0000000000000000000000000000000000000000..272f07f7830a0c462277d4b55f00aadc
 +    config.tool_output_token_limit = Some(200_000);
 +    prepare(&mut config);
 +    assert_eq!(config.tool_output_token_limit, Some(200_000));
++}
++
++#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
++async fn terminal_owner_selects_attached_side_chat_and_returns_to_parent() {
++    let _guard = DISPATCHER_TEST.lock().await;
++    let mut registry = ExtensionRegistryBuilder::new();
++    let Some(fixture) = fixture_with_registry(&[], Some(&mut registry)) else {
++        return;
++    };
++    let owner = codex_protocol::turn_input::TerminalOwner(
++        "00000000-0000-4000-8000-00000000000a".parse().unwrap(),
++    );
++    clients::bind("attached-side-chat", owner.clone()).unwrap();
++    let terminal = clients::for_owner(&owner).unwrap();
++    terminal.expansion.thread_started(&fixture.lead);
++    let config = codex_core::config::ConfigBuilder::default()
++        .codex_home(fixture._dir.path().join("codex"))
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            cwd: Some(fixture.lead.host.repository.clone()),
++            ..Default::default()
++        })
++        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
++        .build()
++        .await
++        .unwrap();
++    let parent = fixture.lead.thread;
++    clients::select_displayed_thread(owner.clone(), &parent.to_string())
++        .await
++        .unwrap();
++    let parent_store = ExtensionData::new(parent.to_string());
++    parent_store.insert(fixture.lead.clone());
++    parent_store.insert(owner.clone());
++    let assert_focused = |thread: ThreadId| {
++        assert_eq!(terminal.expansion.current().unwrap().thread, thread);
++        assert_eq!(
++            terminal.views.current_presentation()["thread_id"],
++            thread.to_string()
++        );
++    };
++    let background_turn = async |store: &ExtensionData| {
++        let turn = ExtensionData::new("delayed-turn");
++        turn.insert(owner.clone());
++        let decision = terminal
++            .intercept_user_input(UserInputInterceptInput {
++                terminal_owner: Some(owner.clone()),
++                text: "delayed",
++                attachments: 0,
++                client_id: None,
++                items: &[],
++                session_store: store,
++                thread_store: store,
++            })
++            .await;
++        assert_eq!(decision, UserInputDecision::Keep);
++        terminal
++            .on_turn_start(TurnStartInput {
++                turn_id: "delayed-turn",
++                collaboration_mode: &codex_protocol::config_types::CollaborationMode {
++                    mode: codex_protocol::config_types::ModeKind::Default,
++                    settings: codex_protocol::config_types::Settings {
++                        model: "test".into(),
++                        reasoning_effort: None,
++                        developer_instructions: None,
++                    },
++                },
++                token_usage_at_turn_start: None,
++                session_store: store,
++                thread_store: store,
++                turn_store: &turn,
++            })
++            .await;
++        assert!(
++            terminal
++                .expansion
++                .turn_running(store.get::<Lead>().unwrap().thread)
++        );
++    };
++    for (source, feature, forked, admitted) in [
++        (SessionSource::Cli, ATTACHED_SIDE_CHAT_SOURCE, false, false),
++        (SessionSource::Cli, "other_feature", true, false),
++        (
++            SessionSource::SubAgent(SubAgentSource::Review),
++            ATTACHED_SIDE_CHAT_SOURCE,
++            true,
++            false,
++        ),
++        (
++            SessionSource::Internal(codex_protocol::protocol::InternalSessionSource::Guardian),
++            ATTACHED_SIDE_CHAT_SOURCE,
++            true,
++            false,
++        ),
++        (SessionSource::Cli, ATTACHED_SIDE_CHAT_SOURCE, true, true),
++    ] {
++        let thread = ThreadId::new();
++        let store = ExtensionData::new(thread.to_string());
++        store.insert(owner.clone());
++        store.insert(ThreadSource::Feature(feature.to_owned()));
++        if forked {
++            store.insert(codex_extension_api::ForkedFromThread(parent));
++        }
++        let session = ExtensionData::new("attached-side-session");
++        codex_extension_api::ThreadLifecycleContributor::on_thread_start(
++            &mods(&fixture.core),
++            codex_extension_api::ThreadStartInput {
++                config: &config,
++                session_source: &source,
++                persistent_thread_state_available: true,
++                environments: &[],
++                mcp_resource_client: None,
++                extension_metrics: None,
++                session_store: &session,
++                thread_store: &store,
++            },
++        )
++        .await;
++        assert_eq!(
++            store.get::<Lead>().is_some(),
++            admitted,
++            "{source:?} {feature} {forked}"
++        );
++        assert_focused(parent);
++        if admitted {
++            clients::select_thread(owner.clone(), &thread.to_string())
++                .await
++                .unwrap();
++            background_turn(&store).await;
++            assert_focused(parent);
++        }
++        let result = clients::select_displayed_thread(owner.clone(), &thread.to_string()).await;
++        assert_eq!(result.is_ok(), admitted);
++        if admitted {
++            background_turn(&parent_store).await;
++            assert_focused(thread);
++            clients::select_displayed_thread(owner.clone(), &parent.to_string())
++                .await
++                .unwrap();
++        }
++        assert_eq!(terminal.expansion.current().unwrap().thread, parent);
++    }
++    clients::release_owner(owner);
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn terminal_owner_implicit_focus_recovers_after_displayed_session_expires() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let thread = ThreadId::new();
++    {
++        let previous = Lead {
++            thread,
++            session: fixture.lead.host.open_session(thread, false).unwrap(),
++            ..fixture.lead.clone()
++        };
++        assert_eq!(
++            fixture
++                .core
++                .expansion
++                .focus(&previous, true, |changed| changed),
++            Some(true)
++        );
++        assert!(
++            fixture
++                .core
++                .expansion
++                .focus(&fixture.lead, false, |_| ())
++                .is_none()
++        );
++    }
++    assert!(fixture.core.expansion.current().is_none());
++    assert_eq!(
++        fixture
++            .core
++            .expansion
++            .focus(&fixture.lead, false, |changed| changed),
++        Some(true)
++    );
++    assert_eq!(
++        fixture.core.expansion.current().unwrap().thread,
++        fixture.lead.thread
++    );
++    let next = Lead {
++        thread,
++        ..fixture.lead.clone()
++    };
++    assert_eq!(
++        fixture
++            .core
++            .expansion
++            .focus(&next, false, |changed| changed),
++        Some(true)
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
++async fn terminal_owner_displayed_subagent_keeps_its_role_in_callbacks() {
++    let _guard = DISPATCHER_TEST.lock().await;
++    let mut registry = ExtensionRegistryBuilder::new();
++    let Some(fixture) = fixture_with_registry(
++        &[Package {
++            id: "role_probe",
++            capabilities: &["events", "autonomous", "store"],
++            manifest: json!({"autonomy":{"max_queued":1,"max_turns":1,"max_continuations":1}}),
++            source: "export default api => api.on('timer', () => api.state.set(api.host.tryCall('turns.queued', {})));",
++        }],
++        Some(&mut registry),
++    ) else {
++        return;
++    };
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    let owner = codex_protocol::turn_input::TerminalOwner(
++        "00000000-0000-4000-8000-00000000000b".parse().unwrap(),
++    );
++    clients::bind("role-probe", owner.clone()).unwrap();
++    let terminal = clients::for_owner(&owner).unwrap();
++    let thread = ThreadId::new();
++    let agent = Lead {
++        thread,
++        owner: format!("agent:{thread}"),
++        depth: 2,
++        ..fixture.lead.clone()
++    };
++    terminal.expansion.thread_started(&agent);
++    clients::select_displayed_thread(owner.clone(), &thread.to_string())
++        .await
++        .unwrap();
++    for context in [
++        terminal.expansion.thread(thread),
++        terminal.expansion.lead(thread),
++        terminal.expansion.current(),
++    ] {
++        let context = context.unwrap();
++        assert_eq!(
++            (context.owner.as_str(), context.depth),
++            (agent.owner.as_str(), 2)
++        );
++        assert!(Arc::ptr_eq(
++            &context.permission_profile,
++            &agent.permission_profile
++        ));
++    }
++    let invoke = async || {
++        let current = terminal.expansion.current().unwrap();
++        expansion::invoke_one(
++            &terminal.core,
++            &current,
++            "role_probe".into(),
++            "timer",
++            json!({"key":"probe"}),
++        )
++        .await;
++        let _thread = codex_omd::StateThread::enter(Some(current.thread.to_string()));
++        terminal
++            .runtime
++            .lock()
++            .unwrap()
++            .state("role_probe")
++            .cloned()
++            .unwrap()
++    };
++    let denied = invoke().await;
++    assert_eq!(denied["ok"], false, "{denied}");
++    assert!(
++        denied["error"]
++            .as_str()
++            .unwrap()
++            .contains("turn_queue_lead_only"),
++        "{denied}"
++    );
++    clients::select_displayed_thread(owner.clone(), &fixture.lead.thread.to_string())
++        .await
++        .unwrap();
++    let result = invoke().await;
++    assert_eq!(result["ok"], true, "{result}");
++    clients::release_owner(owner);
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -110063,10 +110472,10 @@ index 0000000000000000000000000000000000000000..e3f4205f924c3c05c8bd7a45913d7ae6
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..648fa8436df541002d4cd8be3a759b8369e04eb0
+index 0000000000000000000000000000000000000000..f34f7a6272fd06ee170baeddb60b2766ce5fcb49
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,262 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -110196,6 +110605,13 @@ index 0000000000000000000000000000000000000000..648fa8436df541002d4cd8be3a759b83
 +            .map(|(source, error)| (visible(&source, 512), visible(&error, 512)))
 +            .collect::<Vec<_>>();
 +        self.update(owner, |state| {
++            if !self.persist
++                && input["ledger"]["thread_id"].is_string()
++                && state.presentation["thread_id"].is_string()
++                && state.presentation["thread_id"] != input["ledger"]["thread_id"]
++            {
++                return false;
++            }
 +            let snapshot = &state.snapshot;
 +            if state.state_fingerprint != state_fingerprint
 +                || snapshot.input["ledger"] != input["ledger"]

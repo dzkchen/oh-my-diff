@@ -47,8 +47,10 @@ use codex_omd::fsio::Durability;
 use codex_omd::fsio::write_bytes;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::ATTACHED_SIDE_CHAT_SOURCE;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::ThreadSource;
 use codex_tools::FunctionCallError;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
@@ -751,16 +753,22 @@ fn thread_owner(
             )
         }),
         SessionSource::Internal(_) | SessionSource::SubAgent(_) => None,
-        _ if input
-            .thread_store
-            .get::<codex_protocol::protocol::ThreadSource>()
-            .is_some_and(|source| {
-                !matches!(*source, codex_protocol::protocol::ThreadSource::User)
-            }) =>
-        {
-            None
+        _ => {
+            let source = input.thread_store.get::<ThreadSource>();
+            let user_chat = match source.as_deref() {
+                None | Some(ThreadSource::User) => true,
+                Some(ThreadSource::Feature(feature)) => {
+                    feature == ATTACHED_SIDE_CHAT_SOURCE
+                        && matches!(input.session_source, SessionSource::Cli)
+                        && input
+                            .thread_store
+                            .get::<codex_extension_api::ForkedFromThread>()
+                            .is_some()
+                }
+                _ => false,
+            };
+            user_chat.then(|| ("lead".into(), 0))
         }
-        _ => Some(("lead".into(), 0)),
     }
 }
 

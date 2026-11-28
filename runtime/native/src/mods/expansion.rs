@@ -94,9 +94,9 @@ pub(super) struct State {
     inventories: Mutex<std::collections::HashMap<ThreadId, Value>>,
     tool_batch: AtomicBool,
     gates: Mutex<std::collections::VecDeque<(String, Option<String>)>>,
-    current: Mutex<Option<LeadHandle>>,
+    current: Mutex<Option<CurrentLead>>,
     leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
-    threads: Mutex<std::collections::HashMap<ThreadId, (LeadHandle, String, u32)>>,
+    threads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
     commands: Mutex<std::collections::HashSet<String>>,
     running: Mutex<BTreeMap<String, String>>,
     pub(super) turns: Mutex<BTreeMap<String, u64>>,
@@ -155,7 +155,14 @@ pub(super) struct LeadHandle {
     host: Arc<Host>,
     session: std::sync::Weak<Session>,
     thread: ThreadId,
+    owner: String,
+    depth: u32,
     permission_profile: Arc<Mutex<PermissionProfile>>,
+}
+
+struct CurrentLead {
+    lead: LeadHandle,
+    displayed: bool,
 }
 
 impl LeadHandle {
@@ -164,6 +171,8 @@ impl LeadHandle {
             host: lead.host.clone(),
             session: Arc::downgrade(&lead.session),
             thread: lead.thread,
+            owner: lead.owner.clone(),
+            depth: lead.depth,
             permission_profile: lead.permission_profile.clone(),
         }
     }
@@ -173,8 +182,8 @@ impl LeadHandle {
             host: self.host.clone(),
             session: self.session.upgrade()?,
             thread: self.thread,
-            owner: "lead".into(),
-            depth: 0,
+            owner: self.owner.clone(),
+            depth: self.depth,
             permission_profile: self.permission_profile.clone(),
         })
     }
@@ -193,7 +202,32 @@ impl State {
             .lock()
             .ok()?
             .as_ref()
-            .and_then(LeadHandle::upgrade)
+            .and_then(|current| current.lead.upgrade())
+    }
+
+    pub(super) fn focus<R>(
+        &self,
+        lead: &Lead,
+        displayed: bool,
+        update: impl FnOnce(bool) -> R,
+    ) -> Option<R> {
+        let mut current = self
+            .current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous = current
+            .as_ref()
+            .filter(|previous| previous.lead.session.strong_count() > 0);
+        let changed = previous.is_none_or(|previous| previous.lead.thread != lead.thread);
+        let pinned = previous.is_some_and(|previous| previous.displayed);
+        if pinned && changed && !displayed {
+            return None;
+        }
+        *current = Some(CurrentLead {
+            lead: LeadHandle::new(lead),
+            displayed: pinned || displayed,
+        });
+        Some(update(changed))
     }
 
     pub(super) fn turn_running(&self, thread: ThreadId) -> bool {
@@ -207,25 +241,15 @@ impl State {
     }
 
     pub(super) fn thread(&self, thread: ThreadId) -> Option<Lead> {
-        let threads = self.threads.lock().ok()?;
-        let (handle, owner, depth) = threads.get(&thread)?;
-        Some(Lead {
-            owner: owner.clone(),
-            depth: *depth,
-            ..handle.upgrade()?
-        })
+        self.threads.lock().ok()?.get(&thread)?.upgrade()
     }
 
-    pub(super) fn select_thread(&self, core: &Arc<Core>, lead: &Lead) {
+    pub(super) fn prepare_thread(&self, core: &Arc<Core>, lead: &Lead) {
         let _ = self.core.set(Arc::downgrade(core));
         if let Ok(runtime) = core.runtime.try_lock() {
             self.refresh(&runtime);
         }
         delivery::ensure_delivery(core);
-        *self
-            .current
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(LeadHandle::new(lead));
         self.leads
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -234,11 +258,8 @@ impl State {
 
     pub(super) fn thread_started(&self, lead: &Lead) {
         if let Ok(mut threads) = self.threads.lock() {
-            threads.retain(|_, (handle, ..)| handle.session.strong_count() > 0);
-            threads.insert(
-                lead.thread,
-                (LeadHandle::new(lead), lead.owner.clone(), lead.depth),
-            );
+            threads.retain(|_, handle| handle.session.strong_count() > 0);
+            threads.insert(lead.thread, LeadHandle::new(lead));
         }
     }
 

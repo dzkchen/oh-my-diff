@@ -650,6 +650,13 @@ fn publish(
         "presentation": codex_omd::client_surface::presented(views.current_presentation()),
         "client": clients::client_facts(terminal_owner),
         "clients": codex_omd::client_surface::clients()});
+    if terminal_owner.is_some()
+        && input["ledger"]["thread_id"].is_string()
+        && input["presentation"]["thread_id"].is_string()
+        && input["ledger"]["thread_id"] != input["presentation"]["thread_id"]
+    {
+        return;
+    }
     let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
     let rendered_ms = codex_omd::peers::now_ms();
     let mut terminal = runtime.terminal_view(input.clone(), active);
@@ -1824,12 +1831,7 @@ impl TurnLifecycleContributor for Mods {
                 return UserInputDecision::Keep;
             };
             this.expansion.thread_started(&lead);
-            if this
-                .expansion
-                .current()
-                .as_ref()
-                .is_none_or(|current| current.thread != lead.thread)
-            {
+            if this.expansion.focus(&lead, false, |changed| changed) == Some(true) {
                 expansion::lead_started(&this.core, &lead, None);
             }
             let runtime = this.input_runtime.clone();
@@ -2125,16 +2127,14 @@ impl TurnLifecycleContributor for Mods {
                 return;
             }
             this.expansion.thread_started(&lead);
-            if this
-                .expansion
-                .current()
-                .as_ref()
-                .is_none_or(|current| current.thread != lead.thread)
+            if this.expansion.focus(&lead, false, |changed| {
+                this.views
+                    .presentation(&lead.thread.to_string(), Some("started"));
+                changed
+            }) == Some(true)
             {
                 expansion::lead_started(&this.core, &lead, None);
             }
-            this.views
-                .presentation(&lead.thread.to_string(), Some("started"));
             // Batches settle within their turn; calls an aborted turn left behind are dropped here.
             if let Ok(mut settled) = this.settled.lock() {
                 let thread = lead.thread.to_string();
@@ -2420,7 +2420,9 @@ impl ThreadLifecycleContributor<Config> for Mods {
             }
             if owner == "lead" {
                 if let Some(lead) = input.thread_store.get::<Lead>() {
-                    this.views.start_thread(input.thread_store);
+                    this.expansion.focus(&lead, false, |_| {
+                        this.views.start_thread(input.thread_store);
+                    });
                     let forked = input
                         .thread_store
                         .get::<codex_extension_api::ForkedFromThread>()
@@ -2471,8 +2473,10 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 .get::<Lead>()
                 .filter(|lead| lead.owner == "lead")
             {
-                this.views
-                    .presentation(&lead.thread.to_string(), Some("resumed"));
+                this.expansion.focus(&lead, false, |_| {
+                    this.views
+                        .presentation(&lead.thread.to_string(), Some("resumed"));
+                });
                 this.event(
                     "session",
                     json!({"phase":"resume","thread_id":lead.thread.to_string()}),
