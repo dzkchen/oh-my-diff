@@ -1,5 +1,23 @@
 [
   {
+    "version": "1.5.5",
+    "date": "2026-11-28",
+    "title": "Oh My Diff 1.5.5",
+    "summary": "OMD now runs Codex 0.172.0 and keeps theme backgrounds visible when native side panes are open.",
+    "sections": [
+      {
+        "label": "Changed",
+        "items": [
+          "Update Codex to 0.172.0 and fix sidebar backgrounds (#578)"
+        ]
+      }
+    ],
+    "commits": [
+      "f410032",
+      "2b60167"
+    ]
+  },
+  {
     "version": "1.5.4",
     "date": "2026-11-22",
     "title": "Oh My Diff 1.5.4",
