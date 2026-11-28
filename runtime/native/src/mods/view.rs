@@ -127,6 +127,13 @@ impl Views {
             .map(|(source, error)| (visible(&source, 512), visible(&error, 512)))
             .collect::<Vec<_>>();
         self.update(owner, |state| {
+            if !self.persist
+                && input["ledger"]["thread_id"].is_string()
+                && state.presentation["thread_id"].is_string()
+                && state.presentation["thread_id"] != input["ledger"]["thread_id"]
+            {
+                return false;
+            }
             let snapshot = &state.snapshot;
             if state.state_fingerprint != state_fingerprint
                 || snapshot.input["ledger"] != input["ledger"]

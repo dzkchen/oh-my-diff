@@ -21,6 +21,15 @@ const walk = (node, found = []) => {
 };
 const bytes = text => new TextEncoder().encode(text).length;
 
+test('a query whose event has no receiver leaves the working state', () => {
+  const hover = run('command', 'lsp', 'hover app.ts:1', null, call =>
+    call.operation === 'events.publish' ? { delivered: 0, dropped: 0 } : assert.fail(call.operation));
+  const { view } = hover.state;
+  assert.equal(view.status, 'error');
+  assert.equal(view.request, 0);
+  assert.match(view.message, /try again/i);
+});
+
 test('/lsp open clips a long excerpt path to the 128-byte label limit', () => {
   const path = `${'é'.repeat(100)}/${'n'.repeat(200)}.ts`;
   const opened = run('command', 'lsp', `open ${path}:2`, null, call => call.operation === 'exec.run' ? { exit_code: 0, stdout: 'one\ntwo\n' }

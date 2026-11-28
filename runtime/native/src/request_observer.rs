@@ -90,6 +90,10 @@ pub fn stream_control(message: &str) -> Option<serde_json::Value> {
 
 static OBSERVER: OnceLock<Arc<dyn ResponseObserver>> = OnceLock::new();
 
+pub(crate) fn permits_private_connector_results(headers: &http::HeaderMap) -> bool {
+    OBSERVER.get().is_none() && !headers.contains_key(STRIP_ITEM_METADATA)
+}
+
 pub fn install_response_observer(observer: Arc<dyn ResponseObserver>) -> Result<(), &'static str> {
     OBSERVER
         .set(observer)

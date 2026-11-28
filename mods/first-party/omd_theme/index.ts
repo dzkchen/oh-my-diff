@@ -132,15 +132,17 @@ export default function activate(api: ModAPI) {
     if (read().prefs?.scene !== 'off') api.host.tryCall('events.schedule', { key: tickKey(tick), delay_ms: Math.max(16, Math.round(delay)) });
   };
   const first = (run: number): Tick => ({ run, drawn: -1, width: 0, height: 0, look: '0', misses: 0 });
-  const bump = (resize: boolean) => {
+  const nextRun = () => Math.max(Date.now(), read().run + 1);
+  const bump = (resize: boolean, run = nextRun()) => {
     const s = read();
-    const run = Math.max(Date.now(), s.run + 1);
     write({ run, origin: resize ? s.origin ?? s.run : run, frame: resize ? s.frame : -1 });
     return run;
   };
   const restart = (resize = false) => {
-    const run = Math.max(Date.now(), read().run + 1);
-    if (api.host.tryCall('events.publish', { channel: 'wake', data: run }).ok) bump(resize);
+    const run = nextRun();
+    const wake = api.host.tryCall('events.publish', { channel: 'wake', data: run });
+    if (wake.ok && wake.value.delivered > 0) bump(resize, run);
+    else if (read().prefs?.scene !== 'off' && api.host.tryCall('events.schedule', { key: tickKey(first(run)), delay_ms: 16 }).ok) bump(resize, run);
   };
   const active = () => {
     const s = read();
@@ -149,7 +151,7 @@ export default function activate(api: ModAPI) {
     schedule(first(bump(true)), 16);
   };
   const begin = () => {
-    const run = Math.max(Date.now(), read().run + 1);
+    const run = nextRun();
     write({ prefs: load(), run, origin: run, frame: -1, busy: false });
     schedule(first(run), 16);
   };

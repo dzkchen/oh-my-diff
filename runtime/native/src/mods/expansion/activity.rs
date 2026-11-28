@@ -65,9 +65,7 @@ pub(in crate::mods) async fn turn_started(core: &Arc<Core>, lead: &Lead, turn_id
     if let Ok(mut running) = core.expansion.running.lock() {
         running.insert(thread, turn_id.to_owned());
     }
-    if let Ok(mut current) = core.expansion.current.lock() {
-        *current = Some(LeadHandle::new(lead));
-    }
+
     record(core, lead, |turn| ActivityRecord::TurnStarted {
         turn_id: turn.to_owned(),
         at: now(),

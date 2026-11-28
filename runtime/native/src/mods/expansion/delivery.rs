@@ -111,9 +111,7 @@ pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Optio
         let seen = restarted.contains_key(&thread);
         restarted.insert(thread.clone(), !seen);
     }
-    if let Ok(mut current) = state.current.lock() {
-        *current = Some(LeadHandle::new(lead));
-    }
+    state.focus(lead, false, |_| ());
     if let Ok(mut leads) = state.leads.lock() {
         leads.retain(|_, handle| handle.session.strong_count() > 0);
         leads.insert(lead.thread, LeadHandle::new(lead));

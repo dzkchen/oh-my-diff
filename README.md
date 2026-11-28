@@ -65,8 +65,8 @@ Experimental mods add other providers, a workspace dock, `/undo` and language-se
 
 ## Install
 
-You need an Apple Silicon Mac, Codex 0.171 (`npm install -g @openai/codex@0.171`, which needs Node, or Homebrew's
-Codex while it's on 0.171.x) and Python 3.12 or later. The [install guide](docs/install.md) lists every requirement.
+You need an Apple Silicon Mac, Codex 0.172 (`npm install -g @openai/codex@0.172`, which needs Node, or Homebrew's
+Codex while it's on 0.172.x) and Python 3.12 or later. The [install guide](docs/install.md) lists every requirement.
 
 ### OMD+ (recommended)
 

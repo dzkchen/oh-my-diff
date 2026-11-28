@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.171.0",
-  "commit": "ccf9be8cc458bd6b8336fe84d68d8893f2691a5e"
+  "tag": "rust-v0.172.0",
+  "commit": "3d86e43b075adeba2193ec5c22ac92f55afd82e6"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -1246,11 +1246,15 @@
     "effort",
     "expectedTurnId",
     "interruptOnCancel",
+    "model",
     "prompt",
     "responsesapiClientMetadata",
     "threadId",
     "threadSource",
     "turnTrigger"
+   ],
+   "route_fields": [
+    "model"
    ]
   },
   "thread/search": {
@@ -1658,6 +1662,7 @@
   "features.auth_elicitation",
   "features.browser_use_full_cdp_access",
   "features.cli_resume_account_check",
+  "features.connector_tool_result_passthrough",
   "features.credential_masking",
   "features.elevated_windows_sandbox",
   "features.enable_experimental_windows_sandbox",
@@ -1685,6 +1690,7 @@
   "features.network_proxy",
   "features.plugin_sharing",
   "features.prefer_mxc",
+  "features.realtime_frames_local",
   "features.remote_control",
   "features.request_permissions",
   "features.request_permissions_tool",

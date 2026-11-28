@@ -1357,7 +1357,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         }
     );
     assert_eq!(invoker.0.lock().unwrap()[2].0, "mod-probe-0");
-    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    fixture.core.expansion.focus(&fixture.lead, false, |_| ());
     delivery::publish(
         &fixture.core,
         &fixture.lead,
@@ -1793,7 +1793,7 @@ async fn channel_events_reach_subscribers_in_order() {
         return;
     };
     let core = &fixture.core;
-    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    core.expansion.focus(&fixture.lead, false, |_| ());
     assert!(!delivery::deliver(core).await);
     for data in [json!(1), json!({"n": 2})] {
         let delivered = delivery::publish(
@@ -2246,7 +2246,7 @@ async fn approval_middleware_tightens_and_reports_results() {
         })
         .await;
     }
-    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    fixture.core.expansion.focus(&fixture.lead, false, |_| ());
     delivery::deliver(&fixture.core).await;
     assert_eq!(
         command(&fixture.core, "auditor", "log"),
@@ -5422,7 +5422,7 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
     assert!(settings_change(&view("/r", json!([]), "a"), &view("/r", json!([]), "a")).is_none());
 
     let core = &fixture.core;
-    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    core.expansion.focus(&fixture.lead, false, |_| ());
     expansion::worktree(
         &core.expansion,
         "created",
@@ -5456,7 +5456,7 @@ async fn mods_changed_reports_the_first_active_set_and_each_change() {
         return;
     };
     let core = &fixture.core;
-    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    core.expansion.focus(&fixture.lead, false, |_| ());
     {
         let runtime = core.runtime.lock().unwrap();
         core.expansion.refresh(&runtime);
@@ -5930,6 +5930,291 @@ async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
     config.tool_output_token_limit = Some(200_000);
     prepare(&mut config);
     assert_eq!(config.tool_output_token_limit, Some(200_000));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_selects_attached_side_chat_and_returns_to_parent() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(&[], Some(&mut registry)) else {
+        return;
+    };
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-00000000000a".parse().unwrap(),
+    );
+    clients::bind("attached-side-chat", owner.clone()).unwrap();
+    let terminal = clients::for_owner(&owner).unwrap();
+    terminal.expansion.thread_started(&fixture.lead);
+    let config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    let parent = fixture.lead.thread;
+    clients::select_displayed_thread(owner.clone(), &parent.to_string())
+        .await
+        .unwrap();
+    let parent_store = ExtensionData::new(parent.to_string());
+    parent_store.insert(fixture.lead.clone());
+    parent_store.insert(owner.clone());
+    let assert_focused = |thread: ThreadId| {
+        assert_eq!(terminal.expansion.current().unwrap().thread, thread);
+        assert_eq!(
+            terminal.views.current_presentation()["thread_id"],
+            thread.to_string()
+        );
+    };
+    let background_turn = async |store: &ExtensionData| {
+        let turn = ExtensionData::new("delayed-turn");
+        turn.insert(owner.clone());
+        let decision = terminal
+            .intercept_user_input(UserInputInterceptInput {
+                terminal_owner: Some(owner.clone()),
+                text: "delayed",
+                attachments: 0,
+                client_id: None,
+                items: &[],
+                session_store: store,
+                thread_store: store,
+            })
+            .await;
+        assert_eq!(decision, UserInputDecision::Keep);
+        terminal
+            .on_turn_start(TurnStartInput {
+                turn_id: "delayed-turn",
+                collaboration_mode: &codex_protocol::config_types::CollaborationMode {
+                    mode: codex_protocol::config_types::ModeKind::Default,
+                    settings: codex_protocol::config_types::Settings {
+                        model: "test".into(),
+                        reasoning_effort: None,
+                        developer_instructions: None,
+                    },
+                },
+                token_usage_at_turn_start: None,
+                session_store: store,
+                thread_store: store,
+                turn_store: &turn,
+            })
+            .await;
+        assert!(
+            terminal
+                .expansion
+                .turn_running(store.get::<Lead>().unwrap().thread)
+        );
+    };
+    for (source, feature, forked, admitted) in [
+        (SessionSource::Cli, ATTACHED_SIDE_CHAT_SOURCE, false, false),
+        (SessionSource::Cli, "other_feature", true, false),
+        (
+            SessionSource::SubAgent(SubAgentSource::Review),
+            ATTACHED_SIDE_CHAT_SOURCE,
+            true,
+            false,
+        ),
+        (
+            SessionSource::Internal(codex_protocol::protocol::InternalSessionSource::Guardian),
+            ATTACHED_SIDE_CHAT_SOURCE,
+            true,
+            false,
+        ),
+        (SessionSource::Cli, ATTACHED_SIDE_CHAT_SOURCE, true, true),
+    ] {
+        let thread = ThreadId::new();
+        let store = ExtensionData::new(thread.to_string());
+        store.insert(owner.clone());
+        store.insert(ThreadSource::Feature(feature.to_owned()));
+        if forked {
+            store.insert(codex_extension_api::ForkedFromThread(parent));
+        }
+        let session = ExtensionData::new("attached-side-session");
+        codex_extension_api::ThreadLifecycleContributor::on_thread_start(
+            &mods(&fixture.core),
+            codex_extension_api::ThreadStartInput {
+                config: &config,
+                session_source: &source,
+                persistent_thread_state_available: true,
+                environments: &[],
+                mcp_resource_client: None,
+                extension_metrics: None,
+                session_store: &session,
+                thread_store: &store,
+            },
+        )
+        .await;
+        assert_eq!(
+            store.get::<Lead>().is_some(),
+            admitted,
+            "{source:?} {feature} {forked}"
+        );
+        assert_focused(parent);
+        if admitted {
+            clients::select_thread(owner.clone(), &thread.to_string())
+                .await
+                .unwrap();
+            background_turn(&store).await;
+            assert_focused(parent);
+        }
+        let result = clients::select_displayed_thread(owner.clone(), &thread.to_string()).await;
+        assert_eq!(result.is_ok(), admitted);
+        if admitted {
+            background_turn(&parent_store).await;
+            assert_focused(thread);
+            clients::select_displayed_thread(owner.clone(), &parent.to_string())
+                .await
+                .unwrap();
+        }
+        assert_eq!(terminal.expansion.current().unwrap().thread, parent);
+    }
+    clients::release_owner(owner);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn terminal_owner_implicit_focus_recovers_after_displayed_session_expires() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let thread = ThreadId::new();
+    {
+        let previous = Lead {
+            thread,
+            session: fixture.lead.host.open_session(thread, false).unwrap(),
+            ..fixture.lead.clone()
+        };
+        assert_eq!(
+            fixture
+                .core
+                .expansion
+                .focus(&previous, true, |changed| changed),
+            Some(true)
+        );
+        assert!(
+            fixture
+                .core
+                .expansion
+                .focus(&fixture.lead, false, |_| ())
+                .is_none()
+        );
+    }
+    assert!(fixture.core.expansion.current().is_none());
+    assert_eq!(
+        fixture
+            .core
+            .expansion
+            .focus(&fixture.lead, false, |changed| changed),
+        Some(true)
+    );
+    assert_eq!(
+        fixture.core.expansion.current().unwrap().thread,
+        fixture.lead.thread
+    );
+    let next = Lead {
+        thread,
+        ..fixture.lead.clone()
+    };
+    assert_eq!(
+        fixture
+            .core
+            .expansion
+            .focus(&next, false, |changed| changed),
+        Some(true)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
+async fn terminal_owner_displayed_subagent_keeps_its_role_in_callbacks() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let mut registry = ExtensionRegistryBuilder::new();
+    let Some(fixture) = fixture_with_registry(
+        &[Package {
+            id: "role_probe",
+            capabilities: &["events", "autonomous", "store"],
+            manifest: json!({"autonomy":{"max_queued":1,"max_turns":1,"max_continuations":1}}),
+            source: "export default api => api.on('timer', () => api.state.set(api.host.tryCall('turns.queued', {})));",
+        }],
+        Some(&mut registry),
+    ) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let owner = codex_protocol::turn_input::TerminalOwner(
+        "00000000-0000-4000-8000-00000000000b".parse().unwrap(),
+    );
+    clients::bind("role-probe", owner.clone()).unwrap();
+    let terminal = clients::for_owner(&owner).unwrap();
+    let thread = ThreadId::new();
+    let agent = Lead {
+        thread,
+        owner: format!("agent:{thread}"),
+        depth: 2,
+        ..fixture.lead.clone()
+    };
+    terminal.expansion.thread_started(&agent);
+    clients::select_displayed_thread(owner.clone(), &thread.to_string())
+        .await
+        .unwrap();
+    for context in [
+        terminal.expansion.thread(thread),
+        terminal.expansion.lead(thread),
+        terminal.expansion.current(),
+    ] {
+        let context = context.unwrap();
+        assert_eq!(
+            (context.owner.as_str(), context.depth),
+            (agent.owner.as_str(), 2)
+        );
+        assert!(Arc::ptr_eq(
+            &context.permission_profile,
+            &agent.permission_profile
+        ));
+    }
+    let invoke = async || {
+        let current = terminal.expansion.current().unwrap();
+        expansion::invoke_one(
+            &terminal.core,
+            &current,
+            "role_probe".into(),
+            "timer",
+            json!({"key":"probe"}),
+        )
+        .await;
+        let _thread = codex_omd::StateThread::enter(Some(current.thread.to_string()));
+        terminal
+            .runtime
+            .lock()
+            .unwrap()
+            .state("role_probe")
+            .cloned()
+            .unwrap()
+    };
+    let denied = invoke().await;
+    assert_eq!(denied["ok"], false, "{denied}");
+    assert!(
+        denied["error"]
+            .as_str()
+            .unwrap()
+            .contains("turn_queue_lead_only"),
+        "{denied}"
+    );
+    clients::select_displayed_thread(owner.clone(), &fixture.lead.thread.to_string())
+        .await
+        .unwrap();
+    let result = invoke().await;
+    assert_eq!(result["ok"], true, "{result}");
+    clients::release_owner(owner);
 }
 
 #[tokio::test(flavor = "multi_thread")]

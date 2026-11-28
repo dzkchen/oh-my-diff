@@ -409,6 +409,8 @@ deltae 0.3.2 | MIT | texts 8
 deno_core_icudata 0.78.0 | MIT | no license file in the crate; authors: the Deno authors
 der 0.7.10 | Apache-2.0 OR MIT | texts 1, 2
   Copyright (c) 2020-2023 The RustCrypto Project Developers
+der 0.8.3 | Apache-2.0 OR MIT | texts 1, 2
+  Copyright (c) 2020-2026 The RustCrypto Project Developers
 der-parser 10.0.0 | MIT OR Apache-2.0 | texts 1, 2
   Copyright (c) 2017 Pierre Chifflier
 deranged 0.5.9 | MIT OR Apache-2.0 | texts 18, 2
@@ -984,7 +986,7 @@ moxcms 0.7.11 | BSD-3-Clause OR Apache-2.0 | texts 18, 38
   Copyright (c) Radzivon Bartoshyk. All rights reserved.
 multimap 0.10.1 | MIT OR Apache-2.0 | texts 1, 2
   Copyright (c) 2016 multimap developers
-mxc-sdk 1.0.0 | MIT | no license file in the crate; authors: not declared
+mxc-sdk 1.1.0 | MIT | no license file in the crate; authors: not declared
 native-tls 0.2.14 | MIT OR Apache-2.0 | texts 9, 2
   Copyright (c) 2016 The rust-native-tls Developers
 new_debug_unreachable 1.0.6 | MIT | texts 2
@@ -1099,6 +1101,8 @@ pem 3.0.6 | MIT | texts 6
   Copyright (c) 2016 Jonathan Creekmore
 pem-rfc7468 0.7.0 | Apache-2.0 OR MIT | texts 1, 2
   Copyright (c) 2021 The RustCrypto Project Developers
+pem-rfc7468 1.0.0 | Apache-2.0 OR MIT | texts 1, 2
+  Copyright (c) 2021-2025 The RustCrypto Project Developers
 percent-encoding 2.3.2 | MIT OR Apache-2.0 | texts 1, 2
   Copyright (c) 2013-2025 The rust-url developers
 pest 2.8.7 | MIT OR Apache-2.0 | texts 1, 2
@@ -1765,12 +1769,17 @@ universal-hash 0.5.1 | MIT OR Apache-2.0 | texts 1, 2
 unsafe-libyaml 0.2.11 | MIT | texts 2
 untrusted 0.7.1 | ISC | texts 99
 untrusted 0.9.0 | ISC | texts 99
+ureq 3.3.0 | MIT OR Apache-2.0 | texts 1, 8
+  Copyright (c) 2019 Martin Algesten
+ureq-proto 0.6.0 | MIT OR Apache-2.0 | texts 2
+  Copyright 2022 Martin Algesten
 url 2.5.8 | MIT OR Apache-2.0 | texts 1, 2
   Copyright (c) 2013-2025 The rust-url developers
 urlencoding 2.1.3 | MIT | texts 2
   © 2016 Bertram Truong
   © 2021 Kornel Lesiński
 utf-8 0.7.6 | MIT OR Apache-2.0 | texts 7, 2
+utf8-zero 0.8.1 | MIT OR Apache-2.0 | texts 7, 2
 utf8_iter 1.0.4 | Apache-2.0 OR MIT | texts 100, 1, 2
   Copyright Mozilla Foundation
 utf8parse 0.2.2 | Apache-2.0 OR MIT | texts 7, 2
@@ -1797,6 +1806,7 @@ web-time 1.1.0 | MIT OR Apache-2.0 | texts 18, 8
   Copyright (c) 2023 dAxpeDDa
 webbrowser 1.2.4 | MIT OR Apache-2.0 | texts 42, 6
   Copyright (c) 2015-2022 Amod Malviya
+webpki-root-certs 1.0.10 | CDLA-Permissive-2.0 | texts 101
 webpki-roots 1.0.10 | CDLA-Permissive-2.0 | texts 101
 weezl 0.1.12 | MIT OR Apache-2.0 | texts 1, 6
   Copyright (c) HeroicKatora 2020

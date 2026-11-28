@@ -53,6 +53,7 @@ export default function activate(api: ModAPI) {
     show({ ...patch, request });
     const published = api.host.tryCall('events.publish', { channel: 'request', data: { ...data, request } });
     if (!published.ok) show({ status: 'error', message: published.error, request: 0 });
+    else if (!published.value.delivered) show({ status: 'error', message: 'The code intelligence request could not be delivered. Try again.', request: 0 });
   };
   const USAGE = 'usage: /lsp hover|definition|references|actions PATH:LINE[:COL] | open PATH[:LINE] | symbols|diagnostics|format PATH | diagnostics | workspace QUERY | servers | pane | close';
   api.command('lsp', value => {
