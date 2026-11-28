@@ -77417,7 +77417,7 @@ index 0000000000000000000000000000000000000000..371555c73dc29a4fc2a5d6b7fd2a5399
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5c6f91c2b2fadc4fe8136b986bd8fd6b5db8db67
+index 0000000000000000000000000000000000000000..1753df52fe4598fc2cf6d1884db0e930bdbb90e2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
 @@ -0,0 +1,1560 @@
@@ -77757,14 +77757,14 @@ index 0000000000000000000000000000000000000000..5c6f91c2b2fadc4fe8136b986bd8fd6b
 +    owner: codex_protocol::turn_input::TerminalOwner,
 +    thread: &str,
 +) -> Result<(), String> {
-+    select_thread_for(owner, thread, false).await
++    Box::pin(select_thread_for(owner, thread, false)).await
 +}
 +
 +pub async fn select_displayed_thread(
 +    owner: codex_protocol::turn_input::TerminalOwner,
 +    thread: &str,
 +) -> Result<(), String> {
-+    select_thread_for(owner, thread, true).await
++    Box::pin(select_thread_for(owner, thread, true)).await
 +}
 +
 +async fn select_thread_for(

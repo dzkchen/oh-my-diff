@@ -334,14 +334,14 @@ pub async fn select_thread(
     owner: codex_protocol::turn_input::TerminalOwner,
     thread: &str,
 ) -> Result<(), String> {
-    select_thread_for(owner, thread, false).await
+    Box::pin(select_thread_for(owner, thread, false)).await
 }
 
 pub async fn select_displayed_thread(
     owner: codex_protocol::turn_input::TerminalOwner,
     thread: &str,
 ) -> Result<(), String> {
-    select_thread_for(owner, thread, true).await
+    Box::pin(select_thread_for(owner, thread, true)).await
 }
 
 async fn select_thread_for(
