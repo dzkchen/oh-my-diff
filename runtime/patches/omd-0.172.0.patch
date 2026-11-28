@@ -38727,6 +38727,18 @@ index 301a23c4fe947250f9692247292091c6555708e5..e1e03f679efe2b014b6ee9944b19c8f7
                  executor.resume.notify_one();
              }
          );
+diff --git a/codex-rs/ext/skills/tests/skills_extension/tool_metrics_tests.rs b/codex-rs/ext/skills/tests/skills_extension/tool_metrics_tests.rs
+index 2cd8b4b41bd824aca3b56e99b8f24b6a4c75f1e4..5c6628788b04d06cee64f9341b9a4a4e38e61c16 100644
+--- a/codex-rs/ext/skills/tests/skills_extension/tool_metrics_tests.rs
++++ b/codex-rs/ext/skills/tests/skills_extension/tool_metrics_tests.rs
+@@ -99,6 +99,7 @@ async fn reads_report_outcomes_for_each_discovery_version() -> TestResult {
+                         cloud_skill_enabled: false,
+                         ..config.clone()
+                     },
++                    None,
+                 );
+             }
+             let result =
 diff --git a/codex-rs/ext/web-search/src/extension.rs b/codex-rs/ext/web-search/src/extension.rs
 index f5e172437dad0c7d84d8ee0c4cce80b99ec280f6..103c46b38a7cdf2ce374be7b52db1d1363305aa0 100644
 --- a/codex-rs/ext/web-search/src/extension.rs
@@ -59335,6 +59347,32 @@ index 0f7605b35360fe877522cca63ac32e4add7c0ae0..c322650001509aeb4c53e9bfe7eb67df
 
    Visit https://chatgpt.com/settings/usage for up-to-date
    information on rate limits and credits
+diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cloud_server.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cloud_server.snap
+index ce1efb6969914bfbb3b6242175b6f92e16133c59..80c30939ffa7cc86002ed2ae265c68f8783a9781 100644
+--- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cloud_server.snap
++++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cloud_server.snap
+@@ -4,7 +4,7 @@ expression: sanitized
+ ---
+ /status
+
+-  >_ OpenAI Codex (v0.0.0)
++  >_ OpenAI Codex (v0.172.0)
+
+   Visit https://chatgpt.com/settings/usage for up-to-date
+   information on rate limits and credits
+diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cloud_server_with_version.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cloud_server_with_version.snap
+index 8a3f71505de6ef60f6eaca0b6635b7ae9840e889..ca3e9e4a3f1a476bb2d704351fce56d73dcc57fe 100644
+--- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cloud_server_with_version.snap
++++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_cloud_server_with_version.snap
+@@ -4,7 +4,7 @@ expression: sanitized
+ ---
+ /status
+
+-  >_ OpenAI Codex (v0.0.0)
++  >_ OpenAI Codex (v0.172.0)
+
+   Visit https://chatgpt.com/settings/usage for up-to-date
+   information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_credits_and_limits.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_credits_and_limits.snap
 index 6783811c535b14bdb5d4bbb6d422fd0dbd9b3db6..66fdd1ab047039ebb8d2b79a22a90dd02ffcce0f 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_credits_and_limits.snap
@@ -59417,6 +59455,19 @@ diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_
 index 57c04829f560ccb30afa1a0c5614f4d7534bfca3..afab98dd07b115aed354911b8b17e9f3969468b0 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server.snap
 +++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server.snap
+@@ -4,7 +4,7 @@ expression: sanitized
+ ---
+ /status
+
+-  >_ OpenAI Codex (v0.0.0)
++  >_ OpenAI Codex (v0.172.0)
+
+   Visit https://chatgpt.com/settings/usage for up-to-date
+   information on rate limits and credits
+diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server_without_version.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server_without_version.snap
+index 832b4ce6a925cfe2cf71cc6d19902a1dd9ae2950..93ea0c29c9b287d261da20f49fa050ff60f56cd9 100644
+--- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server_without_version.snap
++++ b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_remote_server_without_version.snap
 @@ -4,7 +4,7 @@ expression: sanitized
  ---
  /status
