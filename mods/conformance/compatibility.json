@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "as_of": "2026-11-11",
+  "as_of": "2026-11-28",
   "host": {
     "codex": "0.172.0",
-    "omd": "1.5.4",
-    "release_status": "development",
-    "latest_stable": "1.5.0",
+    "omd": "1.5.5",
+    "release_status": "stable",
+    "latest_stable": "1.5.5",
     "stability": "stable",
     "current_api": "1.0.0",
     "package_schemas": [
@@ -205,7 +205,7 @@
   "transitions": {
     "real_supported_release": {
       "available": false,
-      "reason": "No earlier public stable OMD mod release exists. Run this gate when the first supported successor ships."
+      "reason": "The retained mod compatibility fixtures cover each supported host individually. This matrix has no cross-release execution receipt for the same mod."
     },
     "synthetic_fixtures": [
       "old API mod on compatible new host",

@@ -2,6 +2,22 @@
 
 Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.5.5](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.5) — 2026-11-28
+
+OMD now runs Codex 0.172.0 and keeps theme backgrounds visible when native side panes are open.
+
+### Changed
+
+- OMD now uses Codex 0.172.0.
+
+### Fixed
+
+- Theme backgrounds keep animating when you open, resize or focus a native side chat and when you return to its parent. Animations also resume when a theme wake event has no listener.
+- The Git status line counts a partially staged or conflicted file once and shows changes before the first commit.
+- The LSP panel reports when a code intelligence request could not be delivered, so you can retry it.
+- Forking a conversation after a provider switch keeps encrypted history tied to the provider that produced it.
+- Request-editing middleware preserves the privacy of connector tool results.
+
 ## [1.5.4](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.5.4) — 2026-11-22
 
 Codex 0.171.0, app-style tool activity rows, and a fix for the theme and status line flickering.

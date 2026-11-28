@@ -1,5 +1,33 @@
 [
   {
+    "version": "1.5.5",
+    "date": "2026-11-28",
+    "title": "Oh My Diff 1.5.5",
+    "summary": "OMD now runs Codex 0.172.0 and keeps theme backgrounds visible when native side panes are open.",
+    "sections": [
+      {
+        "label": "Changed",
+        "items": [
+          "OMD now uses Codex 0.172.0."
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Theme backgrounds keep animating when you open, resize or focus a native side chat and when you return to its parent. Animations also resume when a theme wake event has no listener.",
+          "The Git status line counts a partially staged or conflicted file once and shows changes before the first commit.",
+          "The LSP panel reports when a code intelligence request could not be delivered, so you can retry it.",
+          "Forking a conversation after a provider switch keeps encrypted history tied to the provider that produced it.",
+          "Request-editing middleware preserves the privacy of connector tool results."
+        ]
+      }
+    ],
+    "commits": [
+      "f410032",
+      "2b60167"
+    ]
+  },
+  {
     "version": "1.5.4",
     "date": "2026-11-22",
     "title": "Oh My Diff 1.5.4",
